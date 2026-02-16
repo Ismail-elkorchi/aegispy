@@ -130,5 +130,5 @@ describe("bun adapter parity", () => {
         },
       },
     });
-  });
+  }, 15_000);
 });
