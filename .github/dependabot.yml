@@ -3,24 +3,52 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "UTC"
+    rebase-strategy: "disabled"
     labels:
       - dependencies
       - security
-    open-pull-requests-limit: 10
+    groups:
+      actions-rollup:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 2
 
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "05:20"
+      timezone: "UTC"
+    rebase-strategy: "disabled"
+    allow:
+      - dependency-type: "direct"
     labels:
       - dependencies
-    open-pull-requests-limit: 10
+      - security
+    groups:
+      npm-rollup:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 2
 
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "05:40"
+      timezone: "UTC"
+    rebase-strategy: "disabled"
     labels:
       - dependencies
-    open-pull-requests-limit: 10
+      - security
+    groups:
+      cargo-rollup:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 2
