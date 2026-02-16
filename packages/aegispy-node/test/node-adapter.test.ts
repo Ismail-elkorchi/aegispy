@@ -80,4 +80,54 @@ describe("node adapter", () => {
       selftest,
     });
   });
+
+  it("runs via process worker transport when configured", async () => {
+    const prev = process.env.AEGISPY_NODE_TRANSPORT;
+    process.env.AEGISPY_NODE_TRANSPORT = "process";
+
+    const runtime: AegisPyRuntime = await createRuntime({ host: "node" });
+    const result = await runtime.run({
+      host: "node",
+      code: 'print("process-transport")',
+      argv: ["python"],
+      stdinUtf8: "",
+      permissions: {
+        fs: null,
+        http: null,
+        env: null,
+      },
+      limits: {
+        time: {
+          wallMs: 1000,
+          cpuMs: 1000,
+        },
+        bytes: {
+          memoryBytes: 1024 * 1024,
+          stdoutBytes: 2048,
+          stderrBytes: 2048,
+        },
+      },
+      determinism: {
+        enabled: false,
+        epochMs: 0,
+        rngSeedHex: "deadbeef",
+      },
+    });
+
+    await runtime.close();
+    expect(result.status).toBe("ok");
+
+    writeArtifact("artifacts/tests/node-process-transport.json", {
+      ok: true,
+      invariants: ["INV-FEAT-0009", "INV-SECU-0004"],
+      termination: result.meta.termination,
+      status: result.status,
+    });
+
+    if (typeof prev === "string") {
+      process.env.AEGISPY_NODE_TRANSPORT = prev;
+    } else {
+      delete process.env.AEGISPY_NODE_TRANSPORT;
+    }
+  }, 120000);
 });

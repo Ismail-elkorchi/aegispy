@@ -1,4 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  spawn,
+  spawnSync,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import type { RunRequest, RunResult } from "@aegispy/core";
@@ -38,12 +43,40 @@ export class RustWorkerTransport implements WorkerTransport {
     this.options = options;
   }
 
+  private hasCcInPath(env: NodeJS.ProcessEnv): boolean {
+    const check = spawnSync("bash", ["-lc", "command -v cc >/dev/null 2>&1"], {
+      env,
+      stdio: "ignore",
+    });
+    return (check.status ?? 1) === 0;
+  }
+
+  private buildWorkerEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (this.hasCcInPath(env)) return env;
+
+    const setup = spawnSync("bash", ["scripts/setup_zig_cc"], {
+      env,
+      encoding: "utf8",
+    });
+    if ((setup.status ?? 1) !== 0) return env;
+
+    const ccWrapper = (setup.stdout ?? "").trim();
+    if (ccWrapper.length === 0) return env;
+
+    env.CC = ccWrapper;
+    env.CXX = path.join(path.dirname(ccWrapper), "cxx");
+    env.CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = ccWrapper;
+    return env;
+  }
+
   private ensureStarted(): ChildProcessWithoutNullStreams {
     if (this.child !== null) return this.child;
 
+    const env = this.buildWorkerEnv();
     const child = spawn(this.options.command, this.options.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env,
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
