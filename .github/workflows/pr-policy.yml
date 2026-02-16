@@ -1,0 +1,50 @@
+name: pr-policy
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - ready_for_review
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  enforce:
+    name: enforce
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+
+      - name: PR Policy
+        run: bash scripts/pr_policy_check
+
+      - name: Banned Token Scan
+        run: bash scripts/banned_token_scan
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-policy-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/**
+          if-no-files-found: ignore
+          retention-days: 14

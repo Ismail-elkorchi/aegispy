@@ -1,0 +1,19 @@
+{
+  "name": "@aegispy/node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "cd ../.. && pnpm vitest run packages/aegispy-node/test/*.test.ts packages/aegispy-node/test/e2e/*.test.ts",
+    "test:e2e": "cd ../.. && pnpm vitest run packages/aegispy-node/test/e2e/node-e2e.test.ts"
+  },
+  "dependencies": {
+    "@aegispy/core": "workspace:*"
+  }
+}

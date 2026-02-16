@@ -1,0 +1,46 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const repoRoot = path.resolve(__dirname, "..");
+const outPath = path.join(repoRoot, "artifacts", "gates", "docs-complete.json");
+
+function ensureDir(p) {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+}
+
+function main() {
+  const required = [
+    "docs/architecture.md",
+    "docs/security.md",
+    "docs/gates.md",
+    "docs/runbook.md",
+    "docs/support-matrix.md",
+  ];
+
+  const missing = [];
+  for (const r of required) {
+    const full = path.join(repoRoot, r);
+    if (!fs.existsSync(full)) missing.push(r);
+  }
+
+  const payload = missing.length === 0 ? { ok: true } : { ok: false, missing };
+  ensureDir(outPath);
+  fs.writeFileSync(outPath, JSON.stringify(payload, null, 2) + "\n", "utf8");
+  if (missing.length > 0) process.exitCode = 1;
+}
+
+Promise.resolve()
+  .then(() => main())
+  .catch((e) => {
+    ensureDir(outPath);
+    fs.writeFileSync(
+      outPath,
+      JSON.stringify({ ok: false, error: String(e) }, null, 2) + "\n",
+      "utf8",
+    );
+    process.exitCode = 1;
+  });

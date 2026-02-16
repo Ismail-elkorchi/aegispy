@@ -1,0 +1,19 @@
+{
+  "name": "@aegispy/browser",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "cd ../.. && pnpm vitest run packages/aegispy-browser/test/*.test.ts packages/aegispy-browser/test/e2e/*.test.ts",
+    "test:e2e": "cd ../.. && pnpm vitest run packages/aegispy-browser/test/e2e/browser-run.test.ts"
+  },
+  "dependencies": {
+    "@aegispy/core": "workspace:*"
+  }
+}

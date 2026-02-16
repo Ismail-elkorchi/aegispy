@@ -1,0 +1,83 @@
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "..");
+const outPath = path.join(
+  repoRoot,
+  "artifacts",
+  "gates",
+  "release-claims.json",
+);
+
+function run(command) {
+  const res = spawnSync("bash", ["-lc", command], { stdio: "inherit" });
+  return (res.status ?? 1) === 0;
+}
+
+function ensureDir(p) {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+}
+
+function readGate(relPath) {
+  const full = path.join(repoRoot, relPath);
+  if (!fs.existsSync(full)) return { ok: false, missing: true };
+  const doc = JSON.parse(fs.readFileSync(full, "utf8"));
+  return { ok: doc.ok === true, missing: false };
+}
+
+function main() {
+  const checks = [
+    "node scripts/release_evidence.mjs",
+    "bash scripts/benchmarks_check",
+    "bash scripts/security_claims_check",
+    "bash scripts/compat_check",
+  ];
+  const gateFiles = {
+    benchmarks: "artifacts/gates/benchmarks-check.json",
+    security: "artifacts/gates/security-claims-check.json",
+    compatibility: "artifacts/gates/compat-check.json",
+  };
+
+  let ok = true;
+  for (const check of checks) {
+    if (!run(check)) ok = false;
+  }
+
+  const gateStatus = {
+    benchmarks: readGate(gateFiles.benchmarks),
+    security: readGate(gateFiles.security),
+    compatibility: readGate(gateFiles.compatibility),
+  };
+  if (
+    !gateStatus.benchmarks.ok ||
+    !gateStatus.security.ok ||
+    !gateStatus.compatibility.ok
+  )
+    ok = false;
+
+  const payload = {
+    ok,
+    gates: gateStatus,
+    artifacts: gateFiles,
+  };
+  ensureDir(outPath);
+  fs.writeFileSync(outPath, JSON.stringify(payload, null, 2) + "\n", "utf8");
+
+  if (!ok) process.exitCode = 1;
+}
+
+Promise.resolve()
+  .then(() => main())
+  .catch((e) => {
+    ensureDir(outPath);
+    fs.writeFileSync(
+      outPath,
+      JSON.stringify({ ok: false, error: String(e) }, null, 2) + "\n",
+      "utf8",
+    );
+    process.exitCode = 1;
+  });

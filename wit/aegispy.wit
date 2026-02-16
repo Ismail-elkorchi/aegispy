@@ -1,0 +1,30 @@
+package aegispy:runtime;
+
+interface capability {
+  record fs-read {
+    path: string,
+  }
+
+  record fs-write {
+    path: string,
+    data-utf8: string,
+  }
+
+  record http-get {
+    url: string,
+  }
+
+  record cap-result {
+    ok: bool,
+    payload-utf8: string,
+    error-code: string,
+  }
+
+  fs-read: func(input: fs-read) -> cap-result;
+  fs-write: func(input: fs-write) -> cap-result;
+  http-get: func(input: http-get) -> cap-result;
+}
+
+world aegispy {
+  export capability;
+}
