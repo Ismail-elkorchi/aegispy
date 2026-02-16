@@ -8,6 +8,9 @@ on:
       - synchronize
       - edited
       - ready_for_review
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -24,4 +27,9 @@ jobs:
           persist-credentials: false
 
       - name: Dependency Review
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@3c4e3dcb1aa7874d2c16be7d79418e9b7efd6261 # v4
+
+      - name: Skip dependency review on push
+        if: github.event_name != 'pull_request'
+        run: echo "dependency-review is only meaningful for pull requests"
