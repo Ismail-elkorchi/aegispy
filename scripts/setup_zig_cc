@@ -17,20 +17,82 @@ if [ ! -x "$ZIG_EXTRACTED_DIR/zig" ]; then
   tar -xf "$ZIG_ARCHIVE_PATH" -C "$TOOLS_DIR"
 fi
 
-if [ ! -x "$CC_WRAPPER" ]; then
-  cat > "$CC_WRAPPER" <<SCRIPT
+cat > "$CC_WRAPPER" <<SCRIPT
 #!/usr/bin/env bash
-exec "$ZIG_EXTRACTED_DIR/zig" cc "\$@"
-SCRIPT
-  chmod +x "$CC_WRAPPER"
-fi
+set -euo pipefail
 
-if [ ! -x "$CXX_WRAPPER" ]; then
-  cat > "$CXX_WRAPPER" <<SCRIPT
-#!/usr/bin/env bash
-exec "$ZIG_EXTRACTED_DIR/zig" c++ "\$@"
+map_target() {
+  case "\$1" in
+    x86_64-unknown-linux-gnu) echo "x86_64-linux-gnu" ;;
+    aarch64-unknown-linux-gnu) echo "aarch64-linux-gnu" ;;
+    *) echo "\$1" ;;
+  esac
+}
+
+args=()
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --target=*)
+      target="\${1#--target=}"
+      args+=("--target=\$(map_target "\$target")")
+      shift
+      ;;
+    --target)
+      shift
+      if [ "\$#" -eq 0 ]; then
+        break
+      fi
+      args+=("--target" "\$(map_target "\$1")")
+      shift
+      ;;
+    *)
+      args+=("\$1")
+      shift
+      ;;
+  esac
+done
+
+exec "$ZIG_EXTRACTED_DIR/zig" cc "\${args[@]}"
 SCRIPT
-  chmod +x "$CXX_WRAPPER"
-fi
+chmod +x "$CC_WRAPPER"
+
+cat > "$CXX_WRAPPER" <<SCRIPT
+#!/usr/bin/env bash
+set -euo pipefail
+
+map_target() {
+  case "\$1" in
+    x86_64-unknown-linux-gnu) echo "x86_64-linux-gnu" ;;
+    aarch64-unknown-linux-gnu) echo "aarch64-linux-gnu" ;;
+    *) echo "\$1" ;;
+  esac
+}
+
+args=()
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --target=*)
+      target="\${1#--target=}"
+      args+=("--target=\$(map_target "\$target")")
+      shift
+      ;;
+    --target)
+      shift
+      if [ "\$#" -eq 0 ]; then
+        break
+      fi
+      args+=("--target" "\$(map_target "\$1")")
+      shift
+      ;;
+    *)
+      args+=("\$1")
+      shift
+      ;;
+  esac
+done
+
+exec "$ZIG_EXTRACTED_DIR/zig" c++ "\${args[@]}"
+SCRIPT
+chmod +x "$CXX_WRAPPER"
 
 echo "$CC_WRAPPER"

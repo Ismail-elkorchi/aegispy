@@ -21,6 +21,25 @@ bash scripts/no_stub_path_check
 pnpm lint
 pnpm format:check
 pnpm typecheck
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "cargo command is missing" >&2
+  exit 1
+fi
+
+if ! command -v cc >/dev/null 2>&1; then
+  cc_wrapper="$(bash scripts/setup_zig_cc)"
+  export CC="$cc_wrapper"
+  export CXX="$(dirname "$cc_wrapper")/cxx"
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$cc_wrapper"
+fi
+
+cargo build -q -p aegispy_worker
+node scripts/engine/build-wasi.mjs
+if [ ! -f artifacts/engine/cpython-wasi.cwasm ]; then
+  timeout 600s ./target/debug/aegispy_worker < /dev/null >/dev/null 2>/dev/null
+fi
+
 pnpm test
 bash scripts/real_execution_check
 
