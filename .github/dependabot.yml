@@ -15,7 +15,7 @@ updates:
       actions-rollup:
         patterns:
           - "*"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
 
   - package-ecosystem: "npm"
     directory: "/"
@@ -27,6 +27,7 @@ updates:
     rebase-strategy: "disabled"
     allow:
       - dependency-type: "direct"
+      - dependency-type: "indirect"
     labels:
       - dependencies
       - security
@@ -34,7 +35,7 @@ updates:
       npm-rollup:
         patterns:
           - "*"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
 
   - package-ecosystem: "cargo"
     directory: "/"
@@ -51,4 +52,4 @@ updates:
       cargo-rollup:
         patterns:
           - "*"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
