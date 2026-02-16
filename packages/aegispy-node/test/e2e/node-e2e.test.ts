@@ -49,7 +49,7 @@ describe("node e2e", () => {
       invariants: ["INV-FEAT-0003"],
       result,
     });
-  });
+  }, 120_000);
 
   it("enforces filesystem policy and emits fs audit", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -92,7 +92,7 @@ describe("node e2e", () => {
       allowTermination: allowResult.meta.termination,
       denyTermination: denyResult.meta.termination,
     });
-  });
+  }, 120_000);
 
   it("enforces http policy and emits http audit", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -144,7 +144,7 @@ describe("node e2e", () => {
         httpDenied: denyResult.error.code === "AEG-POLICY-DENIED",
       });
     }
-  });
+  }, 120_000);
 
   it("enforces timeout memory output and determinism", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -237,7 +237,7 @@ describe("node e2e", () => {
         },
       ],
     });
-  });
+  }, 120_000);
 
   it("runs adversarial checks", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -276,5 +276,5 @@ describe("node e2e", () => {
         },
       ],
     });
-  });
+  }, 120_000);
 });

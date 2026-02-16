@@ -28,12 +28,6 @@ function main() {
     executed: ["json", "hashlib", "math"],
     generatedAt: new Date().toISOString(),
   });
-
-  write("artifacts/security/policy-denials.json", {
-    fsDenied: true,
-    httpDenied: true,
-    generatedAt: new Date().toISOString(),
-  });
 }
 
 main();

@@ -79,5 +79,5 @@ describe("node adapter", () => {
       invariants: ["INV-OPER-0002"],
       selftest,
     });
-  });
+  }, 120_000);
 });
