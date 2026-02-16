@@ -25,11 +25,11 @@ cat > "$tmp_json" <<JSON
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "ci / check",
-      "pr-policy / enforce",
-      "dependency-review / dependency-review",
-      "codeql / analyze (javascript-typescript)",
-      "codeql / analyze (rust)"
+      "check",
+      "enforce",
+      "dependency-review",
+      "analyze (javascript-typescript)",
+      "analyze (rust)"
     ]
   },
   "enforce_admins": true,
