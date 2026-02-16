@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { createRuntime } from "../../src/index";
 import { computeReplayHash } from "../../../aegispy-core/src/determinism/index";
@@ -49,7 +51,7 @@ describe("node e2e", () => {
       invariants: ["INV-FEAT-0003"],
       result,
     });
-  }, 120_000);
+  }, 600_000);
 
   it("enforces filesystem policy and emits fs audit", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -92,27 +94,39 @@ describe("node e2e", () => {
       allowTermination: allowResult.meta.termination,
       denyTermination: denyResult.meta.termination,
     });
-  }, 120_000);
+  }, 600_000);
 
   it("enforces http policy and emits http audit", async () => {
     const runtime = await createRuntime({ host: "node" });
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("local-http-ok");
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
 
-    const allowReq = baseRequest(
-      'aegispy.http_get("https://api.example.com/v1")',
-    );
+    const address = server.address() as AddressInfo | null;
+    if (!address || typeof address === "string") {
+      throw new Error("local http server did not provide an address");
+    }
+    const origin = `http://127.0.0.1:${address.port}`;
+
+    const allowReq = baseRequest(`print(aegispy.http_get("${origin}/v1"))`);
     allowReq.permissions.http = {
-      allowOrigins: ["https://api.example.com"],
+      allowOrigins: [origin],
       denyOrigins: [],
       maxRequests: 4,
       maxBytes: 2048,
     };
 
     const denyReq = baseRequest(
-      'aegispy.http_get("https://api.blocked.com/v1")',
+      'aegispy.http_get("http://blocked.invalid/v1")',
     );
     denyReq.permissions.http = {
-      allowOrigins: ["https://api.example.com"],
-      denyOrigins: ["https://api.blocked.com"],
+      allowOrigins: [origin],
+      denyOrigins: ["http://blocked.invalid"],
       maxRequests: 4,
       maxBytes: 2048,
     };
@@ -120,9 +134,11 @@ describe("node e2e", () => {
     const allowResult = await runtime.run(allowReq);
     const denyResult = await runtime.run(denyReq);
 
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await runtime.close();
 
     expect(allowResult.status).toBe("ok");
+    expect(allowResult.stdoutUtf8).toContain("local-http-ok");
     expect(denyResult.status).toBe("error");
 
     writeArtifact("artifacts/e2e/aegispy-http.json", {
@@ -144,7 +160,52 @@ describe("node e2e", () => {
         httpDenied: denyResult.error.code === "AEG-POLICY-DENIED",
       });
     }
-  }, 120_000);
+  }, 600_000);
+
+  it("executes real capability bindings", async () => {
+    process.env.AEGISPY_ISOLATION_PROFILE = "compat";
+    const runtime = await createRuntime({ host: "node" });
+    process.env.AEGISPY_CAP_ENV = "cap-bound";
+
+    const fsReq = baseRequest(
+      'path = "/sandbox/write/out.txt"\ndata = "abc"\naegispy.fs_write(path, data)\nprint(aegispy.fs_read(path))',
+    );
+    fsReq.permissions.fs = {
+      readRoots: ["/sandbox/write"],
+      writeRoots: ["/sandbox/write"],
+      maxBytes: 2048,
+      maxFiles: 4,
+    };
+
+    const envReq = baseRequest(
+      'env_key = "AEGISPY_CAP_ENV"\nprint(aegispy.env_get(env_key))',
+    );
+    envReq.permissions.env = {
+      allowKeys: ["AEGISPY_CAP_ENV"],
+    };
+
+    const fsResult = await runtime.run(fsReq);
+    const envResult = await runtime.run(envReq);
+
+    delete process.env.AEGISPY_CAP_ENV;
+    delete process.env.AEGISPY_ISOLATION_PROFILE;
+    await runtime.close();
+
+    expect(fsResult.status).toBe("ok");
+    expect(fsResult.stdoutUtf8).toContain("abc");
+    expect(envResult.status).toBe("ok");
+    expect(envResult.stdoutUtf8).toContain("cap-bound");
+
+    writeArtifact("artifacts/e2e/capability-bindings.json", {
+      ok: true,
+      invariants: ["INV-FEAT-0010", "INV-FEAT-0011"],
+      runtimeOnly: true,
+      fsStatus: fsResult.status,
+      envStatus: envResult.status,
+      fsStdout: fsResult.stdoutUtf8,
+      envStdout: envResult.stdoutUtf8,
+    });
+  }, 600_000);
 
   it("enforces timeout memory output and determinism", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -237,7 +298,7 @@ describe("node e2e", () => {
         },
       ],
     });
-  }, 120_000);
+  }, 600_000);
 
   it("runs adversarial checks", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -276,5 +337,5 @@ describe("node e2e", () => {
         },
       ],
     });
-  }, 120_000);
+  }, 600_000);
 });

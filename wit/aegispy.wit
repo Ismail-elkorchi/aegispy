@@ -14,6 +14,10 @@ interface capability {
     url: string,
   }
 
+  record env-get {
+    key: string,
+  }
+
   record cap-result {
     ok: bool,
     payload-utf8: string,
@@ -23,6 +27,7 @@ interface capability {
   fs-read: func(input: fs-read) -> cap-result;
   fs-write: func(input: fs-write) -> cap-result;
   http-get: func(input: http-get) -> cap-result;
+  env-get: func(input: env-get) -> cap-result;
 }
 
 world aegispy {

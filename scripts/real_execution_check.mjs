@@ -88,6 +88,7 @@ function main() {
   const nodeRuntime = readText(
     "packages/aegispy-node/src/runtime/node-runtime.ts",
   );
+  const workerMain = readText("rust/aegispy-worker/src/main.rs");
   const simulationSignals = {
     coreFactoryContainsSimulatedRuntimeClass: coreFactory.includes(
       "class SimulatedRuntime",
@@ -100,6 +101,13 @@ function main() {
     nodeRuntimeContainsDefaultInProcessPath: nodeRuntime.includes(
       "return new InProcessTransport();",
     ),
+    workerExecutorDefaultsToSimulation: workerMain.includes(
+      'unwrap_or_else(|_| "simulation".to_string())',
+    ),
+    workerExecutorDefaultsToWasi: workerMain.includes(
+      'unwrap_or_else(|_| "wasi".to_string())',
+    ),
+    workerWasiExecutorPresent: workerMain.includes("impl WasiExecutor"),
   };
 
   if (simulationSignals.coreFactoryContainsSimulatedRuntimeClass) {
@@ -113,6 +121,15 @@ function main() {
   }
   if (simulationSignals.nodeRuntimeContainsDefaultInProcessPath) {
     failures.push({ error: "node_runtime_default_inprocess_detected" });
+  }
+  if (simulationSignals.workerExecutorDefaultsToSimulation) {
+    failures.push({ error: "worker_executor_default_simulation_detected" });
+  }
+  if (!simulationSignals.workerExecutorDefaultsToWasi) {
+    failures.push({ error: "worker_executor_default_not_wasi" });
+  }
+  if (!simulationSignals.workerWasiExecutorPresent) {
+    failures.push({ error: "worker_wasi_executor_missing" });
   }
 
   const payload = {
