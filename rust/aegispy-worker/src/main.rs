@@ -24,6 +24,84 @@ struct RunResponseEnvelope {
     result: Value,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct IsolationProfile {
+    name: String,
+    max_wall_ms: u64,
+    max_cpu_ms: u64,
+    max_memory_bytes: u64,
+    max_stdout_bytes: u64,
+    max_stderr_bytes: u64,
+    deny_env_capability: bool,
+}
+
+fn parse_positive_env_u64(key: &str, default: u64) -> Result<u64, String> {
+    let raw = match std::env::var(key) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(default),
+        Err(error) => return Err(format!("failed to read {key}: {error}")),
+    };
+
+    let parsed = raw
+        .parse::<u64>()
+        .map_err(|_| format!("invalid numeric value for {key}"))?;
+    if parsed == 0 {
+        return Err(format!("invalid numeric value for {key}"));
+    }
+    Ok(parsed)
+}
+
+fn parse_bool_env(key: &str, default: bool) -> Result<bool, String> {
+    let raw = match std::env::var(key) {
+        Ok(value) => value.trim().to_string(),
+        Err(std::env::VarError::NotPresent) => return Ok(default),
+        Err(error) => return Err(format!("failed to read {key}: {error}")),
+    };
+
+    match raw.as_str() {
+        "1" | "true" | "TRUE" | "True" => Ok(true),
+        "0" | "false" | "FALSE" | "False" => Ok(false),
+        _ => Err(format!("invalid boolean value for {key}")),
+    }
+}
+
+fn load_isolation_profile() -> Result<IsolationProfile, String> {
+    let profile = std::env::var("AEGISPY_WORKER_ISOLATION_PROFILE")
+        .unwrap_or_else(|_| "strict".to_string())
+        .trim()
+        .to_lowercase();
+
+    let (defaults, deny_env_capability) = match profile.as_str() {
+        "strict" => (
+            (5000_u64, 5000_u64, 64 * 1024 * 1024, 2 * 1024 * 1024),
+            true,
+        ),
+        "compat" => (
+            (10000_u64, 10000_u64, 256 * 1024 * 1024, 8 * 1024 * 1024),
+            false,
+        ),
+        _ => return Err("invalid AEGISPY_WORKER_ISOLATION_PROFILE".to_string()),
+    };
+
+    let max_wall_ms = parse_positive_env_u64("AEGISPY_WORKER_MAX_WALL_MS", defaults.0)?;
+    let max_cpu_ms = parse_positive_env_u64("AEGISPY_WORKER_MAX_CPU_MS", defaults.1)?;
+    let max_memory_bytes = parse_positive_env_u64("AEGISPY_WORKER_MAX_MEMORY_BYTES", defaults.2)?;
+    let max_stdout_bytes = parse_positive_env_u64("AEGISPY_WORKER_MAX_STDOUT_BYTES", defaults.3)?;
+    let max_stderr_bytes = parse_positive_env_u64("AEGISPY_WORKER_MAX_STDERR_BYTES", defaults.3)?;
+    let deny_env_capability =
+        parse_bool_env("AEGISPY_WORKER_DENY_ENV_CAPABILITY", deny_env_capability)?;
+
+    Ok(IsolationProfile {
+        name: profile,
+        max_wall_ms,
+        max_cpu_ms,
+        max_memory_bytes,
+        max_stdout_bytes,
+        max_stderr_bytes,
+        deny_env_capability,
+    })
+}
+
 fn encode_frame(payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + payload.len());
     let len = payload.len() as u32;
@@ -86,6 +164,90 @@ fn parse_marker_u64(code: &str, marker: &str) -> Option<u64> {
         return None;
     }
     digits.parse::<u64>().ok()
+}
+
+fn extract_first_quoted_value(input: &str) -> Option<String> {
+    let start_double = input.find('"').map(|index| (index, '"'));
+    let start_single = input.find('\'').map(|index| (index, '\''));
+
+    let (start_index, quote) = match (start_double, start_single) {
+        (Some(double), Some(single)) => {
+            if double.0 < single.0 {
+                double
+            } else {
+                single
+            }
+        }
+        (Some(double), None) => double,
+        (None, Some(single)) => single,
+        (None, None) => return None,
+    };
+
+    let tail = &input[start_index + 1..];
+    let end_index = tail.find(quote)?;
+    Some(tail[..end_index].to_string())
+}
+
+fn collect_call_targets(code: &str, call_marker: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cursor = code;
+
+    loop {
+        let Some(call_index) = cursor.find(call_marker) else {
+            break;
+        };
+        let after_call = &cursor[call_index + call_marker.len()..];
+        let Some(open_paren) = after_call.find('(') else {
+            break;
+        };
+        let args = &after_call[open_paren + 1..];
+        if let Some(target) = extract_first_quoted_value(args) {
+            out.push(target);
+        }
+        cursor = args;
+    }
+
+    out
+}
+
+fn value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn string_list_at_path(value: &Value, path: &[&str]) -> Vec<String> {
+    value_at_path(value, path)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn path_under_roots(target: &str, roots: &[String]) -> bool {
+    roots.iter().any(|root| target.starts_with(root))
+}
+
+fn has_path_traversal(target: &str) -> bool {
+    target.contains("/../") || target.starts_with("../") || target.ends_with("/..")
+}
+
+fn extract_http_origin(target: &str) -> Option<String> {
+    let scheme_end = target.find("://")?;
+    let after_scheme = &target[scheme_end + 3..];
+    let slash = after_scheme.find('/').unwrap_or(after_scheme.len());
+    Some(format!(
+        "{}://{}",
+        &target[..scheme_end],
+        &after_scheme[..slash]
+    ))
 }
 
 fn extract_print_value(code: &str) -> String {
@@ -191,7 +353,71 @@ fn validate_run_payload(run: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn run_simulation(run: &Value) -> Value {
+fn enforce_isolation_profile(
+    run: &Value,
+    profile: &IsolationProfile,
+    started_ts_ms: u64,
+    audit: &mut Vec<Value>,
+) -> Option<Value> {
+    let wall_ms = required_non_negative_u64(run, &["limits", "time", "wallMs"]).ok()?;
+    let cpu_ms = required_non_negative_u64(run, &["limits", "time", "cpuMs"]).ok()?;
+    let memory_bytes = required_non_negative_u64(run, &["limits", "bytes", "memoryBytes"]).ok()?;
+    let stdout_bytes = required_non_negative_u64(run, &["limits", "bytes", "stdoutBytes"]).ok()?;
+    let stderr_bytes = required_non_negative_u64(run, &["limits", "bytes", "stderrBytes"]).ok()?;
+
+    let deny_reason = if wall_ms > profile.max_wall_ms {
+        Some("isolation_wall_limit_exceeded")
+    } else if cpu_ms > profile.max_cpu_ms {
+        Some("isolation_cpu_limit_exceeded")
+    } else if memory_bytes > profile.max_memory_bytes {
+        Some("isolation_memory_limit_exceeded")
+    } else if stdout_bytes > profile.max_stdout_bytes {
+        Some("isolation_stdout_limit_exceeded")
+    } else if stderr_bytes > profile.max_stderr_bytes {
+        Some("isolation_stderr_limit_exceeded")
+    } else {
+        None
+    };
+
+    if let Some(reason) = deny_reason {
+        audit.push(json!({
+          "kind": "policy_denied",
+          "detailJson": format!("isolation_profile_denied:{reason}")
+        }));
+        return Some(make_error_result(
+            "AEG-POLICY-DENIED",
+            reason,
+            "policy_denied",
+            started_ts_ms,
+            started_ts_ms + 1,
+            audit.clone(),
+        ));
+    }
+
+    let env_capability_present = run
+        .get("permissions")
+        .and_then(|value| value.get("env"))
+        .map(|value| !value.is_null())
+        .unwrap_or(false);
+    if profile.deny_env_capability && env_capability_present {
+        audit.push(json!({
+          "kind": "policy_denied",
+          "detailJson": "isolation_profile_denied:env_capability_blocked"
+        }));
+        return Some(make_error_result(
+            "AEG-POLICY-DENIED",
+            "env capability blocked by strict isolation profile",
+            "policy_denied",
+            started_ts_ms,
+            started_ts_ms + 1,
+            audit.clone(),
+        ));
+    }
+
+    None
+}
+
+fn run_simulation(run: &Value, profile: &IsolationProfile) -> Value {
     let started_ts_ms = run
         .get("determinism")
         .and_then(|value| value.get("epochMs"))
@@ -209,7 +435,13 @@ fn run_simulation(run: &Value) -> Value {
     let code = required_string(run, &["code"]).unwrap_or("");
     let mut audit: Vec<Value> = Vec::new();
 
-    if code.contains("aegispy.fs_") {
+    if let Some(result) = enforce_isolation_profile(run, profile, started_ts_ms, &mut audit) {
+        return result;
+    }
+
+    let fs_write_targets = collect_call_targets(code, "aegispy.fs_write");
+    let fs_read_targets = collect_call_targets(code, "aegispy.fs_read");
+    if !fs_write_targets.is_empty() || !fs_read_targets.is_empty() {
         let fs_is_null = run
             .get("permissions")
             .and_then(|value| value.get("fs"))
@@ -226,10 +458,49 @@ fn run_simulation(run: &Value) -> Value {
                 audit,
             );
         }
-        audit.push(json!({ "kind": "fs_write", "detailJson": "allow" }));
+
+        let write_roots = string_list_at_path(run, &["permissions", "fs", "writeRoots"]);
+        let read_roots = string_list_at_path(run, &["permissions", "fs", "readRoots"]);
+
+        for target in fs_write_targets {
+            if has_path_traversal(&target) || !path_under_roots(&target, &write_roots) {
+                audit.push(json!({
+                  "kind": "policy_denied",
+                  "detailJson": format!("fs_path_denied:{target}")
+                }));
+                return make_error_result(
+                    "AEG-POLICY-DENIED",
+                    "fs_path_denied",
+                    "policy_denied",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+            audit.push(json!({ "kind": "fs_write", "detailJson": "allow" }));
+        }
+
+        for target in fs_read_targets {
+            if has_path_traversal(&target) || !path_under_roots(&target, &read_roots) {
+                audit.push(json!({
+                  "kind": "policy_denied",
+                  "detailJson": format!("fs_path_denied:{target}")
+                }));
+                return make_error_result(
+                    "AEG-POLICY-DENIED",
+                    "fs_path_denied",
+                    "policy_denied",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+            audit.push(json!({ "kind": "fs_read", "detailJson": "allow" }));
+        }
     }
 
-    if code.contains("aegispy.http_") {
+    let http_targets = collect_call_targets(code, "aegispy.http_get");
+    if !http_targets.is_empty() {
         let http_is_null = run
             .get("permissions")
             .and_then(|value| value.get("http"))
@@ -246,7 +517,31 @@ fn run_simulation(run: &Value) -> Value {
                 audit,
             );
         }
-        audit.push(json!({ "kind": "http_request", "detailJson": "allow" }));
+
+        let allow_origins = string_list_at_path(run, &["permissions", "http", "allowOrigins"]);
+        let deny_origins = string_list_at_path(run, &["permissions", "http", "denyOrigins"]);
+
+        for target in http_targets {
+            let origin = extract_http_origin(&target).unwrap_or(target.clone());
+            if deny_origins.iter().any(|blocked| blocked == &origin)
+                || !allow_origins.iter().any(|allowed| allowed == &origin)
+            {
+                audit.push(json!({
+                  "kind": "policy_denied",
+                  "detailJson": format!("http_origin_denied:{origin}")
+                }));
+                return make_error_result(
+                    "AEG-POLICY-DENIED",
+                    "http_origin_denied",
+                    "policy_denied",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+
+            audit.push(json!({ "kind": "http_request", "detailJson": "allow" }));
+        }
     }
 
     if code.contains("while True") && wall_ms > 0 {
@@ -304,7 +599,10 @@ fn run_simulation(run: &Value) -> Value {
     })
 }
 
-fn handle_request(req: RunRequestEnvelope) -> RunResponseEnvelope {
+fn handle_request(
+    req: RunRequestEnvelope,
+    isolation_profile: &IsolationProfile,
+) -> RunResponseEnvelope {
     let result = if req.kind != "run" {
         make_error_result(
             "AEG-INVALID-REQUEST",
@@ -316,7 +614,7 @@ fn handle_request(req: RunRequestEnvelope) -> RunResponseEnvelope {
         )
     } else {
         match validate_run_payload(&req.run) {
-            Ok(()) => run_simulation(&req.run),
+            Ok(()) => run_simulation(&req.run, isolation_profile),
             Err(message) => make_error_result(
                 "AEG-INVALID-REQUEST",
                 &message,
@@ -340,7 +638,8 @@ fn handle_request(req: RunRequestEnvelope) -> RunResponseEnvelope {
           "level": "info",
           "event": "worker_run",
           "requestId": req.request_id,
-          "termination": termination
+          "termination": termination,
+          "isolationProfile": isolation_profile.name
         })
     );
 
@@ -393,6 +692,8 @@ fn verify_engine_if_present() -> Result<(), String> {
 fn run_worker() -> io::Result<()> {
     verify_engine_if_present()
         .map_err(|error| io::Error::new(ErrorKind::PermissionDenied, error))?;
+    let isolation_profile = load_isolation_profile()
+        .map_err(|error| io::Error::new(ErrorKind::PermissionDenied, error))?;
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -403,7 +704,7 @@ fn run_worker() -> io::Result<()> {
     while let Some(frame) = read_frame(&mut reader)? {
         let parsed = serde_json::from_slice::<RunRequestEnvelope>(&frame);
         let response = match parsed {
-            Ok(req) => handle_request(req),
+            Ok(req) => handle_request(req, &isolation_profile),
             Err(_) => RunResponseEnvelope {
                 kind: "run_result",
                 request_id: "invalid-request-id".to_string(),
@@ -470,6 +771,18 @@ mod tests {
         dir
     }
 
+    fn test_isolation_profile() -> IsolationProfile {
+        IsolationProfile {
+            name: "strict".to_string(),
+            max_wall_ms: 5000,
+            max_cpu_ms: 5000,
+            max_memory_bytes: 64 * 1024 * 1024,
+            max_stdout_bytes: 2 * 1024 * 1024,
+            max_stderr_bytes: 2 * 1024 * 1024,
+            deny_env_capability: true,
+        }
+    }
+
     #[test]
     fn frame_roundtrip() {
         let payload = br#"{"x":1}"#;
@@ -500,7 +813,7 @@ mod tests {
             run: json!({ "code": 1 }),
         };
 
-        let res = handle_request(req);
+        let res = handle_request(req, &test_isolation_profile());
         let status = res
             .result
             .get("status")

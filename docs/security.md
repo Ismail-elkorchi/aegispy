@@ -23,7 +23,9 @@
 ## Security Evidence
 
 - `artifacts/tests/engine-hash-verify.json`
-- `artifacts/security/policy-denials.json`
+- `artifacts/security/runtime-policy-denials.json`
+- `artifacts/security/isolation-profile.json`
+- `artifacts/tests/real-engine-default.json`
 - `artifacts/security/adversarial-suite.json`
 
 ## Invariants

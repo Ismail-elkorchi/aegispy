@@ -23,8 +23,11 @@ import {
   type TimeLimits,
 } from "../src/index";
 import { writeArtifact } from "./helpers/artifact";
+import { registerCoreTestRuntimeFactories } from "./helpers/register-test-runtime";
 
 const invariants = ["INV-FEAT-0001", "INV-FEAT-0002"];
+
+registerCoreTestRuntimeFactories();
 
 type CoverageTuple = [
   AegisPyError,

@@ -9,6 +9,7 @@ import type {
 import { InProcessTransport } from "./in-process-transport";
 import { RustWorkerTransport } from "./rust-worker-transport";
 import type { WorkerTransport } from "./worker-transport";
+import type { IsolationProfile } from "./isolation-profile";
 
 function engineErrorResult(message: string): RunResult {
   const now = Date.now();
@@ -34,11 +35,40 @@ function engineErrorResult(message: string): RunResult {
   };
 }
 
-function createTransport(): WorkerTransport {
-  if (process.env.AEGISPY_NODE_TRANSPORT === "process") {
-    return new RustWorkerTransport();
+export type NodeTransportMode = "process" | "inprocess";
+
+interface TransportSelection {
+  transport: WorkerTransport;
+  mode: NodeTransportMode;
+  isolationProfile: IsolationProfile | null;
+}
+
+export function resolveNodeTransportMode(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeTransportMode {
+  const raw = (env.AEGISPY_NODE_TRANSPORT ?? "process").trim().toLowerCase();
+  if (raw === "process") return "process";
+  if (raw === "inprocess") return "inprocess";
+  throw new Error(
+    "invalid AEGISPY_NODE_TRANSPORT value, expected process or inprocess",
+  );
+}
+
+function createTransport(): TransportSelection {
+  const mode = resolveNodeTransportMode();
+  if (mode === "process") {
+    const transport = new RustWorkerTransport();
+    return {
+      transport,
+      mode,
+      isolationProfile: transport.isolationProfile,
+    };
   }
-  return new InProcessTransport();
+  return {
+    transport: new InProcessTransport(),
+    mode,
+    isolationProfile: null,
+  };
 }
 
 export class NodeRuntime implements AegisPyRuntime {
@@ -46,10 +76,16 @@ export class NodeRuntime implements AegisPyRuntime {
 
   private readonly transport: WorkerTransport;
 
+  public readonly transportKind: NodeTransportMode;
+
+  public readonly isolationProfile: IsolationProfile | null;
+
   private closed = false;
 
-  public constructor(transport: WorkerTransport = createTransport()) {
-    this.transport = transport;
+  public constructor(selection: TransportSelection = createTransport()) {
+    this.transport = selection.transport;
+    this.transportKind = selection.mode;
+    this.isolationProfile = selection.isolationProfile;
   }
 
   public async run(req: RunRequest): Promise<RunResult> {
@@ -102,7 +138,9 @@ export async function createNodeRuntime(
   opts: CreateRuntimeOptions,
 ): Promise<AegisPyRuntime> {
   if (opts.host !== "node") {
-    return new NodeRuntime(new InProcessTransport());
+    throw makeAegisPyError("AEG-UNSUPPORTED-HOST", "unsupported host", {
+      host: opts.host,
+    });
   }
   return new NodeRuntime();
 }

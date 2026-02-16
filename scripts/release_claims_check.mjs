@@ -35,12 +35,14 @@ function main() {
     "bash scripts/claim_alignment_check",
     "bash scripts/benchmarks_check",
     "bash scripts/security_claims_check",
+    "bash scripts/real_execution_check",
     "bash scripts/compat_check",
   ];
   const gateFiles = {
     claims: "artifacts/gates/claim-alignment-check.json",
     benchmarks: "artifacts/gates/benchmarks-check.json",
     security: "artifacts/gates/security-claims-check.json",
+    realExecution: "artifacts/gates/real-execution-check.json",
     compatibility: "artifacts/gates/compat-check.json",
   };
 
@@ -53,12 +55,14 @@ function main() {
     claims: readGate(gateFiles.claims),
     benchmarks: readGate(gateFiles.benchmarks),
     security: readGate(gateFiles.security),
+    realExecution: readGate(gateFiles.realExecution),
     compatibility: readGate(gateFiles.compatibility),
   };
   if (
     !gateStatus.claims.ok ||
     !gateStatus.benchmarks.ok ||
     !gateStatus.security.ok ||
+    !gateStatus.realExecution.ok ||
     !gateStatus.compatibility.ok
   )
     ok = false;

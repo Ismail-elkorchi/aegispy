@@ -1,6 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { RunRequest, RunResult } from "@aegispy/core";
 import {
   decodeFrames,
@@ -9,6 +12,15 @@ import {
 } from "../protocol/framing";
 import type { WorkerRunRequest, WorkerRunResponse } from "../protocol/messages";
 import type { WorkerTransport } from "./worker-transport";
+import {
+  resolveIsolationProfile,
+  toWorkerIsolationEnv,
+  type IsolationProfile,
+} from "./isolation-profile";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "../../../../");
 
 interface PendingRequest {
   resolve: (result: RunResult) => void;
@@ -18,10 +30,13 @@ interface PendingRequest {
 export interface RustWorkerTransportOptions {
   command: string;
   args: string[];
+  isolationProfile?: IsolationProfile;
 }
 
 export class RustWorkerTransport implements WorkerTransport {
   private readonly options: RustWorkerTransportOptions;
+
+  public readonly isolationProfile: IsolationProfile;
 
   private child: ChildProcessWithoutNullStreams | null = null;
 
@@ -36,14 +51,54 @@ export class RustWorkerTransport implements WorkerTransport {
     },
   ) {
     this.options = options;
+    this.isolationProfile =
+      options.isolationProfile ?? resolveIsolationProfile();
+  }
+
+  private resolveLinkerEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const hasCc = spawnSync("bash", ["-lc", "command -v cc >/dev/null 2>&1"], {
+      env: baseEnv,
+      cwd: repoRoot,
+    }).status;
+    if (hasCc === 0) return baseEnv;
+
+    const bootstrap = spawnSync("bash", ["-lc", "bash scripts/setup_zig_cc"], {
+      cwd: repoRoot,
+      env: baseEnv,
+      encoding: "utf8",
+    });
+    if ((bootstrap.status ?? 1) !== 0) {
+      const message = bootstrap.stderr.trim() || bootstrap.stdout.trim();
+      throw new Error(`failed to bootstrap linker: ${message}`);
+    }
+
+    const ccWrapper =
+      bootstrap.stdout.trim().split(/\r?\n/).at(-1)?.trim() ?? "";
+    if (!ccWrapper) {
+      throw new Error("failed to bootstrap linker: wrapper path missing");
+    }
+
+    return {
+      ...baseEnv,
+      CC: ccWrapper,
+      CXX: path.join(path.dirname(ccWrapper), "cxx"),
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: ccWrapper,
+    };
   }
 
   private ensureStarted(): ChildProcessWithoutNullStreams {
     if (this.child !== null) return this.child;
 
+    const baseEnv = {
+      ...process.env,
+      ...toWorkerIsolationEnv(this.isolationProfile),
+    };
+    const env = this.resolveLinkerEnv(baseEnv);
+
     const child = spawn(this.options.command, this.options.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      cwd: repoRoot,
+      env,
     });
 
     child.stdout.on("data", (chunk: Buffer) => {

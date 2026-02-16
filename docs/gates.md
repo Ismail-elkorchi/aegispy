@@ -25,7 +25,8 @@
 2. `scripts/claim_alignment_check`
 3. `scripts/benchmarks_check`
 4. `scripts/security_claims_check`
-5. `scripts/compat_check`
+5. `scripts/real_execution_check`
+6. `scripts/compat_check`
 
 - Output artifact: `artifacts/gates/release-claims.json`.
 
@@ -33,8 +34,11 @@
 
 - `artifacts/benchmarks/core-run.json`
 - `artifacts/compat/stdlib-smoke.json`
-- `artifacts/security/policy-denials.json`
+- `artifacts/security/runtime-policy-denials.json`
+- `artifacts/security/isolation-profile.json`
+- `artifacts/tests/real-engine-default.json`
 - `artifacts/gates/claim-alignment-check.json`
+- `artifacts/gates/real-execution-check.json`
 
 ## Invariants
 

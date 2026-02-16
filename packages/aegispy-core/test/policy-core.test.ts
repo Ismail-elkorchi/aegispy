@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createRuntime, type RunRequest } from "../src/index";
 import { writeArtifact } from "./helpers/artifact";
+import { registerCoreTestRuntimeFactories } from "./helpers/register-test-runtime";
 
 const denyInvariants = ["INV-SECU-0001"];
 const provenanceInvariant = ["INV-OPER-0004"];
+
+registerCoreTestRuntimeFactories();
 
 describe("policy core", () => {
   it("denies filesystem and http by default", async () => {
