@@ -180,6 +180,12 @@ function main() {
   const isPullRequestEvent =
     eventName === "pull_request" || eventName === "pull_request_target";
   const isMergeGroupEvent = eventName === "merge_group";
+  const refNameFromEvent =
+    typeof event.ref === "string"
+      ? event.ref.replace("refs/heads/", "")
+      : undefined;
+  const refName = process.env.GITHUB_REF_NAME || refNameFromEvent || "";
+  const isPushToMain = eventName === "push" && refName === "main";
   const isDependabotPr =
     isPullRequestEvent && event.pull_request?.user?.login === "dependabot[bot]";
 
@@ -227,7 +233,7 @@ function main() {
         );
       }
     }
-  } else if (!isMergeGroupEvent) {
+  } else if (!isMergeGroupEvent && !isPushToMain) {
     validateBranch(headRef, failures);
     const commits = listLocalCommitMessages();
     if (commits.length > 0) {
@@ -254,6 +260,7 @@ function main() {
         event: eventName || "local",
         branch: headRef,
         merge_group_bypass: isMergeGroupEvent,
+        push_main_bypass: isPushToMain,
         dependabot_bypass: isDependabotPr,
       },
       null,

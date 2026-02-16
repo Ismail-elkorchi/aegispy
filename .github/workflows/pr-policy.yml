@@ -9,6 +9,9 @@ on:
       - edited
       - ready_for_review
   merge_group:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
