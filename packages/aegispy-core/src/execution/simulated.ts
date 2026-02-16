@@ -58,18 +58,41 @@ function parseQuotedParts(input: string): string[] {
     .filter((part) => part.length > 0);
 }
 
+function collectCallArgs(code: string, functionName: string): string[] {
+  const args: string[] = [];
+  const needle = `${functionName}(`;
+  let cursor = 0;
+
+  while (cursor < code.length) {
+    const start = code.indexOf(needle, cursor);
+    if (start === -1) {
+      break;
+    }
+
+    const openParen = start + needle.length;
+    const closeParen = code.indexOf(")", openParen);
+    if (closeParen === -1) {
+      break;
+    }
+
+    args.push(code.slice(openParen, closeParen));
+    cursor = closeParen + 1;
+  }
+
+  return args;
+}
+
 function collectPrints(
   code: string,
   deterministic: { enabled: boolean; epochMs: number; rngSeedHex: string },
 ): string[] {
   const lines: string[] = [];
-  const printRegex = /print\(([^)]*)\)/g;
+  const printArgs = collectCallArgs(code, "print");
   const rng = makeDeterministicRng(deterministic.rngSeedHex);
-  let match = printRegex.exec(code);
   let deterministicStep = 0;
 
-  while (match) {
-    const rawArgs = match[1].trim();
+  for (const printArg of printArgs) {
+    const rawArgs = printArg.trim();
 
     if (rawArgs.includes("time.time")) {
       if (deterministic.enabled) {
@@ -91,8 +114,6 @@ function collectPrints(
         lines.push(parts.join(" "));
       }
     }
-
-    match = printRegex.exec(code);
   }
 
   return lines;
@@ -101,10 +122,8 @@ function collectPrints(
 function collectAttempts(code: string): CapabilityAttempt[] {
   const attempts: CapabilityAttempt[] = [];
 
-  const fsWriteRegex = /aegispy\.fs_write\(([^)]*)\)/g;
-  let fsWriteMatch = fsWriteRegex.exec(code);
-  while (fsWriteMatch) {
-    const parts = parseQuotedParts(fsWriteMatch[1]);
+  for (const arg of collectCallArgs(code, "aegispy.fs_write")) {
+    const parts = parseQuotedParts(arg);
     const target = parts[0] ?? "/blocked/out.txt";
     const content = parts[1] ?? "";
     attempts.push({
@@ -112,34 +131,24 @@ function collectAttempts(code: string): CapabilityAttempt[] {
       target,
       bytes: Buffer.byteLength(content, "utf8"),
     });
-    fsWriteMatch = fsWriteRegex.exec(code);
   }
 
-  const fsReadRegex = /aegispy\.fs_read\(([^)]*)\)/g;
-  let fsReadMatch = fsReadRegex.exec(code);
-  while (fsReadMatch) {
-    const parts = parseQuotedParts(fsReadMatch[1]);
+  for (const arg of collectCallArgs(code, "aegispy.fs_read")) {
+    const parts = parseQuotedParts(arg);
     const target = parts[0] ?? "/blocked/in.txt";
     attempts.push({ kind: "fs_read", target, bytes: 1 });
-    fsReadMatch = fsReadRegex.exec(code);
   }
 
-  const httpRegex = /aegispy\.http_get\(([^)]*)\)/g;
-  let httpMatch = httpRegex.exec(code);
-  while (httpMatch) {
-    const parts = parseQuotedParts(httpMatch[1]);
+  for (const arg of collectCallArgs(code, "aegispy.http_get")) {
+    const parts = parseQuotedParts(arg);
     const target = parts[0] ?? "https://blocked.invalid/";
     attempts.push({ kind: "http_request", target, bytes: 256 });
-    httpMatch = httpRegex.exec(code);
   }
 
-  const envRegex = /aegispy\.env_get\(([^)]*)\)/g;
-  let envMatch = envRegex.exec(code);
-  while (envMatch) {
-    const parts = parseQuotedParts(envMatch[1]);
+  for (const arg of collectCallArgs(code, "aegispy.env_get")) {
+    const parts = parseQuotedParts(arg);
     const target = parts[0] ?? "HOME";
     attempts.push({ kind: "env_read", target, bytes: 1 });
-    envMatch = envRegex.exec(code);
   }
 
   return attempts;
