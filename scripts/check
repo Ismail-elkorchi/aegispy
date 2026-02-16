@@ -12,6 +12,7 @@ bash scripts/req_coverage_check
 bash scripts/entrypoint_check
 bash scripts/core_io_scan
 bash scripts/docs_check
+bash scripts/claim_alignment_check
 bash scripts/repo_layout_check
 bash scripts/dependency_boundary_check
 bash scripts/no_control_plane_ref_check

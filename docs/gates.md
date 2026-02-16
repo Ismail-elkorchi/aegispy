@@ -11,6 +11,7 @@
 - `scripts/entrypoint_check`
 - `scripts/core_io_scan`
 - `scripts/docs_check`
+- `scripts/claim_alignment_check`
 - `scripts/repo_layout_check`
 - `scripts/dependency_boundary_check`
 - `scripts/no_control_plane_ref_check`
@@ -21,9 +22,10 @@
 - `bash scripts/release_claims_check` runs:
 
 1. `node scripts/release_evidence.mjs`
-2. `scripts/benchmarks_check`
-3. `scripts/security_claims_check`
-4. `scripts/compat_check`
+2. `scripts/claim_alignment_check`
+3. `scripts/benchmarks_check`
+4. `scripts/security_claims_check`
+5. `scripts/compat_check`
 
 - Output artifact: `artifacts/gates/release-claims.json`.
 
@@ -32,6 +34,7 @@
 - `artifacts/benchmarks/core-run.json`
 - `artifacts/compat/stdlib-smoke.json`
 - `artifacts/security/policy-denials.json`
+- `artifacts/gates/claim-alignment-check.json`
 
 ## Invariants
 

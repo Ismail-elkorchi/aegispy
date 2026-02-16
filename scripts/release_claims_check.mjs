@@ -32,11 +32,13 @@ function readGate(relPath) {
 function main() {
   const checks = [
     "node scripts/release_evidence.mjs",
+    "bash scripts/claim_alignment_check",
     "bash scripts/benchmarks_check",
     "bash scripts/security_claims_check",
     "bash scripts/compat_check",
   ];
   const gateFiles = {
+    claims: "artifacts/gates/claim-alignment-check.json",
     benchmarks: "artifacts/gates/benchmarks-check.json",
     security: "artifacts/gates/security-claims-check.json",
     compatibility: "artifacts/gates/compat-check.json",
@@ -48,11 +50,13 @@ function main() {
   }
 
   const gateStatus = {
+    claims: readGate(gateFiles.claims),
     benchmarks: readGate(gateFiles.benchmarks),
     security: readGate(gateFiles.security),
     compatibility: readGate(gateFiles.compatibility),
   };
   if (
+    !gateStatus.claims.ok ||
     !gateStatus.benchmarks.ok ||
     !gateStatus.security.ok ||
     !gateStatus.compatibility.ok
