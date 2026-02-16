@@ -21,6 +21,12 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../../../../");
+const defaultWorkerBinary = path.join(
+  repoRoot,
+  "target",
+  "debug",
+  "aegispy_worker",
+);
 
 interface PendingRequest {
   resolve: (result: RunResult) => void;
@@ -46,13 +52,35 @@ export class RustWorkerTransport implements WorkerTransport {
 
   public constructor(
     options: RustWorkerTransportOptions = {
-      command: "cargo",
-      args: ["run", "-q", "-p", "aegispy_worker"],
+      command: defaultWorkerBinary,
+      args: [],
     },
   ) {
     this.options = options;
     this.isolationProfile =
       options.isolationProfile ?? resolveIsolationProfile();
+  }
+
+  private ensureWorkerBinary(env: NodeJS.ProcessEnv): void {
+    if (this.options.command !== defaultWorkerBinary) return;
+    if (
+      spawnSync("bash", ["-lc", `test -x "${defaultWorkerBinary}"`], {
+        env,
+        cwd: repoRoot,
+      }).status === 0
+    ) {
+      return;
+    }
+
+    const build = spawnSync("cargo", ["build", "-q", "-p", "aegispy_worker"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+    });
+    if ((build.status ?? 1) !== 0) {
+      const message = build.stderr.trim() || build.stdout.trim();
+      throw new Error(`failed to build worker binary: ${message}`);
+    }
   }
 
   private resolveLinkerEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -94,6 +122,7 @@ export class RustWorkerTransport implements WorkerTransport {
       ...toWorkerIsolationEnv(this.isolationProfile),
     };
     const env = this.resolveLinkerEnv(baseEnv);
+    this.ensureWorkerBinary(env);
 
     const child = spawn(this.options.command, this.options.args, {
       stdio: ["pipe", "pipe", "pipe"],

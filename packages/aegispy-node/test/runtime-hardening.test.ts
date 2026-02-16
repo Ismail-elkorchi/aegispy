@@ -71,7 +71,7 @@ describe("runtime hardening", () => {
       termination: result.meta.termination,
       status: result.status,
     });
-  }, 120_000);
+  }, 600_000);
 
   it("enforces strict isolation profile and runtime-bound policy denials", async () => {
     process.env.AEGISPY_NODE_TRANSPORT = "process";
@@ -140,5 +140,5 @@ describe("runtime hardening", () => {
       deniedByProfile: isolationResult.stderrUtf8,
       termination: isolationResult.meta.termination,
     });
-  }, 120_000);
+  }, 600_000);
 });

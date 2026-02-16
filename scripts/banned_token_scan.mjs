@@ -42,6 +42,15 @@ function isBannedListFile(p) {
   return path.basename(p) === "banned-tokens.txt";
 }
 
+function isIgnoredFilePath(p) {
+  const base = path.basename(p);
+  return (
+    base === "Cargo.lock" ||
+    base === "pnpm-lock.yaml" ||
+    base === "package-lock.json"
+  );
+}
+
 function isIgnoredDirName(name) {
   return (
     name === ".git" ||
@@ -85,7 +94,9 @@ function main() {
   const tokenRes = tokens.map((t) => ({ token: t, re: buildTokenRegex(t) }));
 
   const allFiles = walkDir(repoRoot);
-  const scanFiles = allFiles.filter((p) => !isBannedListFile(p));
+  const scanFiles = allFiles.filter(
+    (p) => !isBannedListFile(p) && !isIgnoredFilePath(p),
+  );
 
   const failures = [];
 

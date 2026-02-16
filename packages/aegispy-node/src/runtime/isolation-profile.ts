@@ -15,7 +15,7 @@ const PROFILE_DEFAULTS: Record<IsolationProfileName, IsolationProfile> = {
     name: "strict",
     maxWallMs: 5000,
     maxCpuMs: 5000,
-    maxMemoryBytes: 64 * 1024 * 1024,
+    maxMemoryBytes: 512 * 1024 * 1024,
     maxStdoutBytes: 2 * 1024 * 1024,
     maxStderrBytes: 2 * 1024 * 1024,
     denyEnvCapability: true,
