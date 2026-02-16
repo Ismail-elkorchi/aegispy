@@ -24,6 +24,7 @@ AegisPy provides a capability-gated Python runtime API across Node, Deno, Bun, a
 
 - `docs/architecture.md`
 - `docs/security.md`
+- `docs/security-controls.md`
 - `docs/gates.md`
 - `docs/runbook.md`
 - `docs/support-matrix.md`
