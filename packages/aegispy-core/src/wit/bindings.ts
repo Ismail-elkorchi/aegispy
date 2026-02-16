@@ -11,6 +11,10 @@ export interface WITHttpGet {
   url: string;
 }
 
+export interface WITEnvGet {
+  key: string;
+}
+
 export interface WITCapabilityResult {
   ok: boolean;
   payloadUtf8: string;
@@ -21,4 +25,5 @@ export interface WITHost {
   fs_read(input: WITFsRead): WITCapabilityResult;
   fs_write(input: WITFsWrite): WITCapabilityResult;
   http_get(input: WITHttpGet): WITCapabilityResult;
+  env_get(input: WITEnvGet): WITCapabilityResult;
 }
