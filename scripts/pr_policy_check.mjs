@@ -5,7 +5,7 @@ import process from "node:process";
 const TYPE_PART =
   "(feat|fix|refactor|perf|test|docs|build|ci|chore|revert|security)";
 const SCOPE_PART =
-  "(repo|core|node|deno|bun|browser|worker|pack|runtime|docs|release|deps|ci|security)";
+  "(repo|core|node|deno|bun|browser|worker|pack|runtime|docs|release|deps|deps-dev|ci|security)";
 const BRANCH_RE = new RegExp(`^${TYPE_PART}\\/([a-z0-9]+(?:-[a-z0-9]+)*)$`);
 const TITLE_RE = new RegExp(`^${TYPE_PART}\\(${SCOPE_PART}\\)(!)?: (.+)$`);
 const COMMIT_RE = new RegExp(`^${TYPE_PART}\\(${SCOPE_PART}\\)(!)?: (.+)$`);
@@ -180,6 +180,8 @@ function main() {
   const isPullRequestEvent =
     eventName === "pull_request" || eventName === "pull_request_target";
   const isMergeGroupEvent = eventName === "merge_group";
+  const isDependabotPr =
+    isPullRequestEvent && event.pull_request?.user?.login === "dependabot[bot]";
 
   const headRef =
     process.env.GITHUB_HEAD_REF ||
@@ -188,45 +190,45 @@ function main() {
     getCurrentBranch();
   const prTitle = event.pull_request?.title || "";
 
-  let branchMeta = null;
-  let titleMeta = null;
-
   if (isPullRequestEvent) {
-    branchMeta = validateBranch(headRef, failures);
-    titleMeta = validatePrTitle(prTitle, failures);
-
-    if (branchMeta && titleMeta) {
-      if (branchMeta.type !== titleMeta.type) {
-        failures.push({
-          error: "type_mismatch_between_branch_and_pr_title",
-          branch_type: branchMeta.type,
-          pr_title_type: titleMeta.type,
-        });
-      }
-    }
-
     const baseSha = event.pull_request?.base?.sha || "";
     const prHeadSha = event.pull_request?.head?.sha || "";
     const changedFiles = listChangedFiles(baseSha, prHeadSha);
-    const commits = listCommitMessages(baseSha, prHeadSha);
     for (const file of changedFiles) {
       if (file.startsWith(CONTROL_PLANE_DIR)) {
         failures.push({ error: "control_plane_path_in_pr_diff", file });
       }
     }
-    if (commits.length === 0) {
-      failures.push({
-        error: "unable_to_collect_pr_commit_subjects",
-        base_sha: baseSha,
-        head_sha: prHeadSha,
-      });
-    } else {
-      commits.forEach((commit, idx) =>
-        validateCommitMessage(commit, failures, idx),
-      );
+
+    if (!isDependabotPr) {
+      const branchMeta = validateBranch(headRef, failures);
+      const titleMeta = validatePrTitle(prTitle, failures);
+
+      if (branchMeta && titleMeta) {
+        if (branchMeta.type !== titleMeta.type) {
+          failures.push({
+            error: "type_mismatch_between_branch_and_pr_title",
+            branch_type: branchMeta.type,
+            pr_title_type: titleMeta.type,
+          });
+        }
+      }
+
+      const commits = listCommitMessages(baseSha, prHeadSha);
+      if (commits.length === 0) {
+        failures.push({
+          error: "unable_to_collect_pr_commit_subjects",
+          base_sha: baseSha,
+          head_sha: prHeadSha,
+        });
+      } else {
+        commits.forEach((commit, idx) =>
+          validateCommitMessage(commit, failures, idx),
+        );
+      }
     }
   } else if (!isMergeGroupEvent) {
-    branchMeta = validateBranch(headRef, failures);
+    validateBranch(headRef, failures);
     const commits = listLocalCommitMessages();
     if (commits.length > 0) {
       validateCommitMessage(commits[0], failures, 0);
@@ -252,6 +254,7 @@ function main() {
         event: eventName || "local",
         branch: headRef,
         merge_group_bypass: isMergeGroupEvent,
+        dependabot_bypass: isDependabotPr,
       },
       null,
       2,
