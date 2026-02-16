@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+node scripts/no_control_plane_ref_check.mjs

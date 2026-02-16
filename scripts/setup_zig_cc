@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TOOLS_DIR="$ROOT_DIR/.tools/zig"
+ZIG_VERSION="0.13.0"
+ZIG_ARCHIVE_NAME="zig-linux-x86_64-$ZIG_VERSION"
+ZIG_ARCHIVE_PATH="$TOOLS_DIR/zig.tar.xz"
+ZIG_EXTRACTED_DIR="$TOOLS_DIR/$ZIG_ARCHIVE_NAME"
+CC_WRAPPER="$TOOLS_DIR/cc"
+CXX_WRAPPER="$TOOLS_DIR/cxx"
+
+mkdir -p "$TOOLS_DIR"
+
+if [ ! -x "$ZIG_EXTRACTED_DIR/zig" ]; then
+  curl -L "https://ziglang.org/download/$ZIG_VERSION/$ZIG_ARCHIVE_NAME.tar.xz" -o "$ZIG_ARCHIVE_PATH"
+  tar -xf "$ZIG_ARCHIVE_PATH" -C "$TOOLS_DIR"
+fi
+
+if [ ! -x "$CC_WRAPPER" ]; then
+  cat > "$CC_WRAPPER" <<SCRIPT
+#!/usr/bin/env bash
+exec "$ZIG_EXTRACTED_DIR/zig" cc "\$@"
+SCRIPT
+  chmod +x "$CC_WRAPPER"
+fi
+
+if [ ! -x "$CXX_WRAPPER" ]; then
+  cat > "$CXX_WRAPPER" <<SCRIPT
+#!/usr/bin/env bash
+exec "$ZIG_EXTRACTED_DIR/zig" c++ "\$@"
+SCRIPT
+  chmod +x "$CXX_WRAPPER"
+fi
+
+echo "$CC_WRAPPER"

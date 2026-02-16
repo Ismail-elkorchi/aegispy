@@ -1,0 +1,3 @@
+[workspace]
+members = ["rust/aegispy-worker"]
+resolver = "2"

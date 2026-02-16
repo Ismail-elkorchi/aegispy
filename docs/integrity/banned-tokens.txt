@@ -1,0 +1,22 @@
+should
+could
+maybe
+prefer
+try
+if possible
+as needed
+where appropriate
+etc.
+at least
+minimum
+TBD
+TODO
+FIXME
+HACK
+WIP
+later
+soon
+paste commands
+fill this
+placeholder
+lorem

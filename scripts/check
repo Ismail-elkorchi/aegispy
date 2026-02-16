@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'status=$?; node scripts/check_summary.mjs "$status"' EXIT
+
+if [ -f "$HOME/.cargo/env" ]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.cargo/env"
+fi
+
+bash scripts/banned_token_scan
+bash scripts/req_coverage_check
+bash scripts/entrypoint_check
+bash scripts/core_io_scan
+bash scripts/docs_check
+bash scripts/repo_layout_check
+bash scripts/dependency_boundary_check
+bash scripts/no_control_plane_ref_check
+bash scripts/no_stub_path_check
+
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "cargo command is missing" >&2
+  exit 1
+fi
+
+if ! command -v cc >/dev/null 2>&1; then
+  cc_wrapper="$(bash scripts/setup_zig_cc)"
+  export CC="$cc_wrapper"
+  export CXX="$(dirname "$cc_wrapper")/cxx"
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$cc_wrapper"
+fi
+
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
