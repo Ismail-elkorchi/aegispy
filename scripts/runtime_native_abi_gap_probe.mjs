@@ -9,18 +9,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const workerPath = path.join(repoRoot, "target", "debug", "aegispy_worker");
-const dynloadDir = path.join(
-  repoRoot,
-  "artifacts",
-  "engine",
-  "wasi-python",
-  "lib",
-  "python3.14",
-  "lib-dynload",
-);
-const probeModuleStem = "_aegispy_dlopen_probe";
-const probeModuleFile = `${probeModuleStem}.cpython-314-wasm32-wasi.so`;
-const probeModulePath = path.join(dynloadDir, probeModuleFile);
 const outPath = path.join(
   repoRoot,
   "artifacts",
@@ -56,13 +44,19 @@ function decodeFrames(buffer) {
 }
 
 function buildProbeRequest() {
-  const pyTryToken = ["tr", "y"].join("");
   const code = [
-    `${pyTryToken}:`,
-    `    import ${probeModuleStem}`,
-    `    print("native_loader_probe_unexpected_success")`,
-    `except Exception as exc:`,
-    `    print("native_loader_probe_error", repr(exc))`,
+    "import aegispy",
+    "meta = aegispy._bridge_info()",
+    'path = "/sandbox/write/native-abi.txt"',
+    'payload = "native-abi-ok"',
+    "aegispy.fs_write(path, payload)",
+    "print(aegispy.fs_read(path))",
+    'print(aegispy.env_get("AEGISPY_NATIVE_ABI_ENV"))',
+    'print(meta.get("bridge_kind", ""))',
+    'print(meta.get("capability_channel", ""))',
+    'print(meta.get("dispatch_mode", ""))',
+    'print(str(meta.get("dlopen_dependency", True)).lower())',
+    'print(getattr(aegispy, "__file__", ""))',
   ].join("\n");
   return {
     type: "run",
@@ -72,9 +66,16 @@ function buildProbeRequest() {
       argv: ["python"],
       stdinUtf8: "",
       permissions: {
-        fs: null,
+        fs: {
+          readRoots: ["/sandbox/write"],
+          writeRoots: ["/sandbox/write"],
+          maxBytes: 2048,
+          maxFiles: 8,
+        },
         http: null,
-        env: null,
+        env: {
+          allowKeys: ["AEGISPY_NATIVE_ABI_ENV"],
+        },
       },
       limits: {
         time: {
@@ -105,14 +106,6 @@ async function runProbe() {
   if (!fs.existsSync(workerPath)) {
     throw new Error("missing_worker_binary");
   }
-  if (!fs.existsSync(dynloadDir)) {
-    throw new Error("missing_wasi_dynload_dir");
-  }
-
-  fs.writeFileSync(
-    probeModulePath,
-    Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
-  );
 
   const child = spawn(workerPath, [], {
     cwd: repoRoot,
@@ -122,6 +115,7 @@ async function runProbe() {
       AEGISPY_WORKER_EXECUTOR: "wasi",
       AEGISPY_WORKER_CAPABILITY_BINDING_MODE: "guest-runtime-abi",
       AEGISPY_WORKER_ISOLATION_PROFILE: "compat",
+      AEGISPY_NATIVE_ABI_ENV: "native-abi-env-ok",
     },
   });
 
@@ -169,31 +163,69 @@ async function runProbe() {
 runProbe()
   .then((response) => {
     const result = response?.result ?? {};
+    if (result.status !== "ok") {
+      throw new Error(
+        result?.error?.message ||
+          result?.stderrUtf8 ||
+          "probe_runtime_returned_error",
+      );
+    }
+
     const stdoutUtf8 = String(result.stdoutUtf8 ?? "");
     const stderrUtf8 = String(result.stderrUtf8 ?? "");
-    const combined = `${stdoutUtf8}\n${stderrUtf8}`;
-    const dlopenNotImplementedDetected = /dlopen not implemented/u.test(
-      combined,
+    const outputLines = stdoutUtf8
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const fsRoundTripDetected = outputLines.includes("native-abi-ok");
+    const envRoundTripDetected = outputLines.includes("native-abi-env-ok");
+    const bridgeKindDetected = outputLines.includes(
+      "builtin-capability-bridge",
     );
+    const capabilityChannelDetected = outputLines.includes("component-wit");
+    const dispatchModeDetected = outputLines.includes("host-plan-dispatch");
+    const dlopenDependencyRequired = outputLines.includes("true");
+    const moduleFileLine =
+      outputLines.find((line) => line.includes("/aegispy/__init__.py")) ?? "";
+    const builtinBridgeRuntimePathDetected =
+      moduleFileLine.includes("/runtime/lib/python") &&
+      moduleFileLine.endsWith("/aegispy/__init__.py");
+    const runtimeNativeAbiAvailable =
+      fsRoundTripDetected &&
+      envRoundTripDetected &&
+      bridgeKindDetected &&
+      capabilityChannelDetected &&
+      dispatchModeDetected &&
+      !dlopenDependencyRequired &&
+      builtinBridgeRuntimePathDetected;
 
     const payload = {
-      ok: result.status === "ok" && dlopenNotImplementedDetected,
+      ok: runtimeNativeAbiAvailable,
       generatedAt: new Date().toISOString(),
       transport: "process",
       capabilityChannel: "component-wit",
       bindingModeProbe: "guest-runtime-abi",
-      probeModuleFile,
+      outputLines,
       workerStatus: result.status ?? null,
       stdoutUtf8,
       stderrUtf8,
-      dlopenNotImplementedDetected,
-      runtimeNativeAbiAvailable: false,
-      blocker: dlopenNotImplementedDetected ? "dlopen_not_implemented" : null,
-      conclusion: dlopenNotImplementedDetected
-        ? "native_dynamic_extension_loader_unavailable"
-        : "native_dynamic_extension_loader_status_unknown",
-      nextMilestone:
-        "enable_guest_callable_native_host_abi_without_dlopen_dependency",
+      bridgeKind: bridgeKindDetected ? "builtin-capability-bridge" : "unknown",
+      bridgeDispatchMode: dispatchModeDetected
+        ? "host-plan-dispatch"
+        : "unknown",
+      fsRoundTripDetected,
+      envRoundTripDetected,
+      builtinBridgeModuleFile: moduleFileLine,
+      builtinBridgeRuntimePathDetected,
+      dlopenDependencyRequired,
+      runtimeNativeAbiAvailable,
+      blocker: runtimeNativeAbiAvailable ? null : "native_abi_probe_incomplete",
+      conclusion: runtimeNativeAbiAvailable
+        ? "guest_callable_native_host_abi_available_without_dlopen"
+        : "guest_callable_native_host_abi_not_ready",
+      nextMilestone: runtimeNativeAbiAvailable
+        ? "expand_native_host_abi_fuzz_and_adversarial_coverage"
+        : "stabilize_builtin_guest_callable_host_abi",
     };
 
     writeResult(payload);
@@ -209,7 +241,4 @@ runProbe()
       blocker: "probe_execution_failed",
     });
     process.exitCode = 1;
-  })
-  .finally(() => {
-    fs.rmSync(probeModulePath, { force: true });
   });

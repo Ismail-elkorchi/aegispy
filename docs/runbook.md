@@ -48,7 +48,7 @@
 - Runtime source-injection bridge loading is not used by the default hardened path.
 - Worker capability binding mode is controlled by `AEGISPY_WORKER_CAPABILITY_BINDING_MODE`:
 - `guest-runtime-abi` is default and enforced.
-- `rewrite` and `rewrite-dispatch` select explicit legacy rewrite mode.
+- `rewrite` and `rewrite-dispatch` are rejected (legacy mode removed).
 - Native host-import gate command: `AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict bash scripts/native_host_import_check`.
 - Native dynamic extension loader gap probe: `node scripts/runtime_native_abi_gap_probe.mjs`.
-- Current blocker evidence: `artifacts/research/runtime-native-abi-gap.json` reports `dlopen_not_implemented`.
+- Native ABI readiness evidence: `artifacts/research/runtime-native-abi-gap.json` reports `runtimeNativeAbiAvailable: true` and `dlopenDependencyRequired: false`.

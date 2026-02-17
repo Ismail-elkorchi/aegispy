@@ -36,8 +36,8 @@ function readNativeAbiGap(relPath) {
   return {
     ok:
       doc.ok === true &&
-      doc.dlopenNotImplementedDetected === true &&
-      doc.runtimeNativeAbiAvailable === false,
+      doc.runtimeNativeAbiAvailable === true &&
+      doc.dlopenDependencyRequired === false,
     missing: false,
   };
 }

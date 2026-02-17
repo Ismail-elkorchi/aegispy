@@ -90,7 +90,6 @@ impl WorkerExecutorMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CapabilityBindingMode {
     GuestRuntimeAbi,
-    RewriteDispatch,
 }
 
 impl FromStr for CapabilityBindingMode {
@@ -99,7 +98,6 @@ impl FromStr for CapabilityBindingMode {
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         match raw.trim().to_lowercase().as_str() {
             "guest-runtime-abi" | "guest-abi" => Ok(Self::GuestRuntimeAbi),
-            "rewrite" | "rewrite-dispatch" => Ok(Self::RewriteDispatch),
             _ => Err("invalid AEGISPY_WORKER_CAPABILITY_BINDING_MODE".to_string()),
         }
     }
@@ -109,7 +107,6 @@ impl CapabilityBindingMode {
     fn as_str(self) -> &'static str {
         match self {
             Self::GuestRuntimeAbi => "guest-runtime-abi",
-            Self::RewriteDispatch => "rewrite-dispatch",
         }
     }
 }
@@ -1385,6 +1382,104 @@ fn is_python_identifier(token: &str) -> bool {
     chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
+fn split_top_level_plus(input: &str) -> Vec<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::<String>::new();
+    let mut start = 0;
+    let mut index = 0;
+    let mut depth = 0_i64;
+    let mut quote: Option<u8> = None;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(active) = quote {
+            if byte == b'\\' && index + 1 < bytes.len() {
+                index += 2;
+                continue;
+            }
+            if byte == active {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if byte == b'(' || byte == b'[' || byte == b'{' {
+            depth += 1;
+            index += 1;
+            continue;
+        }
+        if byte == b')' || byte == b']' || byte == b'}' {
+            depth -= 1;
+            index += 1;
+            continue;
+        }
+        if byte == b'+' && depth == 0 {
+            out.push(input[start..index].trim().to_string());
+            start = index + 1;
+        }
+        index += 1;
+    }
+
+    if start <= input.len() {
+        out.push(input[start..].trim().to_string());
+    }
+
+    if out.len() <= 1 {
+        return vec![input.trim().to_string()];
+    }
+    out
+}
+
+fn trim_wrapping_parens(input: &str) -> &str {
+    let mut out = input.trim();
+    loop {
+        if !(out.starts_with('(') && out.ends_with(')')) {
+            return out;
+        }
+        let Some(end) = find_matching_paren(out, 0) else {
+            return out;
+        };
+        if end + 1 != out.len() {
+            return out;
+        }
+        out = out[1..out.len() - 1].trim();
+    }
+}
+
+fn evaluate_python_string_expr(
+    token: &str,
+    literal_bindings: &BTreeMap<String, String>,
+) -> Option<String> {
+    let trimmed = trim_wrapping_parens(token);
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(value) = decode_quoted_literal(trimmed) {
+        return Some(value);
+    }
+    if is_python_identifier(trimmed) {
+        return literal_bindings.get(trimmed).cloned();
+    }
+
+    let parts = split_top_level_plus(trimmed);
+    if parts.len() <= 1 {
+        return None;
+    }
+
+    let mut out = String::new();
+    for part in parts {
+        let value = evaluate_python_string_expr(&part, literal_bindings)?;
+        out.push_str(&value);
+    }
+    Some(out)
+}
+
 fn collect_literal_bindings(code: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for line in code.lines() {
@@ -1400,7 +1495,7 @@ fn collect_literal_bindings(code: &str) -> BTreeMap<String, String> {
         if !is_python_identifier(lhs) {
             continue;
         }
-        if let Some(value) = decode_quoted_literal(rhs) {
+        if let Some(value) = evaluate_python_string_expr(rhs, &out) {
             out.insert(lhs.to_string(), value);
         }
     }
@@ -1411,15 +1506,8 @@ fn resolve_capability_argument(
     token: &str,
     literal_bindings: &BTreeMap<String, String>,
 ) -> Result<String, String> {
-    if let Some(value) = decode_quoted_literal(token) {
-        return Ok(value);
-    }
-    if is_python_identifier(token) {
-        if let Some(value) = literal_bindings.get(token) {
-            return Ok(value.clone());
-        }
-    }
-    Err("capability_dynamic_binding_unsupported".to_string())
+    evaluate_python_string_expr(token, literal_bindings)
+        .ok_or_else(|| "capability_dynamic_binding_unsupported".to_string())
 }
 
 fn encode_python_single_quoted_literal(value: &str) -> String {
@@ -1463,13 +1551,6 @@ fn encode_guest_capability_plan_python_literal(plan: &[GuestCapabilityPlanEntry]
     }
     out.push(']');
     out
-}
-
-fn host_value_to_python_expr(value: HostCapabilityValue) -> String {
-    match value {
-        HostCapabilityValue::None => "None".to_string(),
-        HostCapabilityValue::Utf8(payload) => encode_python_single_quoted_literal(&payload),
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1597,69 +1678,6 @@ aegispy = _aegispy\n\
 del _aegispy\n\
 {code}\n",
     ))
-}
-
-fn rewrite_capability_bindings_wit_host_abi(
-    code: &str,
-    native_capability: &mut NativeHostCapabilityState,
-) -> Result<String, String> {
-    let literal_bindings = collect_literal_bindings(code);
-    let mut cursor = 0;
-    let mut out = String::with_capacity(code.len());
-
-    while cursor < code.len() {
-        let mut next_match: Option<(usize, CapabilityBindingMarker)> = None;
-        for marker in CAPABILITY_BINDING_MARKERS {
-            let needle = format!("{}(", marker.marker);
-            if let Some(found) = code[cursor..].find(&needle) {
-                let absolute = cursor + found;
-                match next_match {
-                    None => {
-                        next_match = Some((absolute, marker));
-                    }
-                    Some((idx, _)) if absolute < idx => {
-                        next_match = Some((absolute, marker));
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let Some((call_start, marker)) = next_match else {
-            out.push_str(&code[cursor..]);
-            break;
-        };
-
-        out.push_str(&code[cursor..call_start]);
-        let needle_len = marker.marker.len() + 1;
-        let open_paren_index = call_start + needle_len - 1;
-        let Some(close_paren_index) = find_matching_paren(code, open_paren_index) else {
-            return Err("capability_dynamic_binding_unsupported".to_string());
-        };
-        let args_raw = &code[open_paren_index + 1..close_paren_index];
-        let args = extract_argument_tokens(args_raw);
-        if args.len() != marker.arg_count {
-            return Err("capability_dynamic_binding_unsupported".to_string());
-        }
-
-        let field_a = resolve_capability_argument(args[0].as_str(), &literal_bindings)?;
-        let field_b = if marker.arg_count > 1 {
-            resolve_capability_argument(args[1].as_str(), &literal_bindings)?
-        } else {
-            String::new()
-        };
-
-        let replacement =
-            match native_capability.invoke_internal(marker.capability, field_a, field_b) {
-                Ok(value) => host_value_to_python_expr(value),
-                Err(_) => return Err("capability_runtime_binding_failed".to_string()),
-            };
-
-        out.push_str(&replacement);
-        cursor = close_paren_index + 1;
-    }
-
-    Ok(out)
 }
 
 fn detect_python_stdlib_guest_path(python_home: &Path, guest_root: &str) -> Option<String> {
@@ -2190,133 +2208,84 @@ impl WasiExecutor {
         let mut native_capability =
             NativeHostCapabilityState::new(capability_config.clone(), capability_fs_root);
         let deterministic_code = rewrite_code_for_determinism(code, run);
-        let runtime_code = match self.capability_binding_mode {
-            CapabilityBindingMode::GuestRuntimeAbi => {
-                let guest_capability_plan = match build_guest_runtime_capability_plan(
-                    &deterministic_code,
-                    &mut native_capability,
-                ) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        audit.extend(native_capability.audit.clone());
-                        let policy_denial = native_capability.policy_denial.clone();
-                        let engine_error = native_capability.engine_error.clone();
-                        let _ = fs::remove_dir_all(&capability_host_root);
-                        if let Some(detail) = policy_denial {
-                            return make_error_result(
-                                "AEG-POLICY-DENIED",
-                                &detail,
-                                "policy_denied",
-                                started_ts_ms,
-                                started_ts_ms + 1,
-                                audit,
-                            );
-                        }
-                        if let Some(detail) = engine_error {
-                            return make_error_result(
-                                "AEG-ENGINE",
-                                &detail,
-                                "engine_error",
-                                started_ts_ms,
-                                started_ts_ms + 1,
-                                audit,
-                            );
-                        }
-                        return make_error_result(
-                            "AEG-ENGINE",
-                            &message,
-                            "engine_error",
-                            started_ts_ms,
-                            started_ts_ms + 1,
-                            audit,
-                        );
-                    }
-                };
-                if guest_capability_plan.is_empty() {
-                    deterministic_code.clone()
-                } else {
-                    match build_guest_runtime_bootstrap_code(
-                        &deterministic_code,
-                        &guest_capability_plan,
-                    ) {
-                        Ok(value) => value,
-                        Err(message) => {
-                            audit.extend(native_capability.audit.clone());
-                            let policy_denial = native_capability.policy_denial.clone();
-                            let engine_error = native_capability.engine_error.clone();
-                            let _ = fs::remove_dir_all(&capability_host_root);
-                            if let Some(detail) = policy_denial {
-                                return make_error_result(
-                                    "AEG-POLICY-DENIED",
-                                    &detail,
-                                    "policy_denied",
-                                    started_ts_ms,
-                                    started_ts_ms + 1,
-                                    audit,
-                                );
-                            }
-                            if let Some(detail) = engine_error {
-                                return make_error_result(
-                                    "AEG-ENGINE",
-                                    &detail,
-                                    "engine_error",
-                                    started_ts_ms,
-                                    started_ts_ms + 1,
-                                    audit,
-                                );
-                            }
-                            return make_error_result(
-                                "AEG-ENGINE",
-                                &message,
-                                "engine_error",
-                                started_ts_ms,
-                                started_ts_ms + 1,
-                                audit,
-                            );
-                        }
-                    }
+        let guest_capability_plan = match build_guest_runtime_capability_plan(
+            &deterministic_code,
+            &mut native_capability,
+        ) {
+            Ok(value) => value,
+            Err(message) => {
+                audit.extend(native_capability.audit.clone());
+                let policy_denial = native_capability.policy_denial.clone();
+                let engine_error = native_capability.engine_error.clone();
+                let _ = fs::remove_dir_all(&capability_host_root);
+                if let Some(detail) = policy_denial {
+                    return make_error_result(
+                        "AEG-POLICY-DENIED",
+                        &detail,
+                        "policy_denied",
+                        started_ts_ms,
+                        started_ts_ms + 1,
+                        audit,
+                    );
                 }
+                if let Some(detail) = engine_error {
+                    return make_error_result(
+                        "AEG-ENGINE",
+                        &detail,
+                        "engine_error",
+                        started_ts_ms,
+                        started_ts_ms + 1,
+                        audit,
+                    );
+                }
+                return make_error_result(
+                    "AEG-ENGINE",
+                    &message,
+                    "engine_error",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
             }
-            CapabilityBindingMode::RewriteDispatch => {
-                match rewrite_capability_bindings_wit_host_abi(
-                    &deterministic_code,
-                    &mut native_capability,
-                ) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        audit.extend(native_capability.audit.clone());
-                        let policy_denial = native_capability.policy_denial.clone();
-                        let engine_error = native_capability.engine_error.clone();
-                        let _ = fs::remove_dir_all(&capability_host_root);
-                        if let Some(detail) = policy_denial {
-                            return make_error_result(
-                                "AEG-POLICY-DENIED",
-                                &detail,
-                                "policy_denied",
-                                started_ts_ms,
-                                started_ts_ms + 1,
-                                audit,
-                            );
-                        }
-                        if let Some(detail) = engine_error {
-                            return make_error_result(
-                                "AEG-ENGINE",
-                                &detail,
-                                "engine_error",
-                                started_ts_ms,
-                                started_ts_ms + 1,
-                                audit,
-                            );
-                        }
+        };
+        let runtime_code = if guest_capability_plan.is_empty() {
+            deterministic_code.clone()
+        } else {
+            match build_guest_runtime_bootstrap_code(&deterministic_code, &guest_capability_plan) {
+                Ok(value) => value,
+                Err(message) => {
+                    audit.extend(native_capability.audit.clone());
+                    let policy_denial = native_capability.policy_denial.clone();
+                    let engine_error = native_capability.engine_error.clone();
+                    let _ = fs::remove_dir_all(&capability_host_root);
+                    if let Some(detail) = policy_denial {
+                        return make_error_result(
+                            "AEG-POLICY-DENIED",
+                            &detail,
+                            "policy_denied",
+                            started_ts_ms,
+                            started_ts_ms + 1,
+                            audit,
+                        );
+                    }
+                    if let Some(detail) = engine_error {
                         return make_error_result(
                             "AEG-ENGINE",
-                            &message,
+                            &detail,
                             "engine_error",
                             started_ts_ms,
                             started_ts_ms + 1,
                             audit,
                         );
                     }
+                    return make_error_result(
+                        "AEG-ENGINE",
+                        &message,
+                        "engine_error",
+                        started_ts_ms,
+                        started_ts_ms + 1,
+                        audit,
+                    );
                 }
             }
         };
@@ -3030,19 +2999,22 @@ mod tests {
     }
 
     #[test]
-    fn capability_binding_mode_accepts_rewrite_dispatch_aliases() {
+    fn capability_binding_mode_rejects_legacy_rewrite_dispatch_aliases() {
         let _env_guard = env_mutation_lock().lock().expect("env lock");
         let _restore = EnvVarRestore::capture("AEGISPY_WORKER_CAPABILITY_BINDING_MODE");
         std::env::set_var("AEGISPY_WORKER_CAPABILITY_BINDING_MODE", "rewrite-dispatch");
-        let rewrite_dispatch_mode =
-            load_capability_binding_mode().expect("parse rewrite-dispatch alias");
+        let rewrite_dispatch_error =
+            load_capability_binding_mode().expect_err("reject rewrite-dispatch alias");
         assert_eq!(
-            rewrite_dispatch_mode,
-            CapabilityBindingMode::RewriteDispatch
+            rewrite_dispatch_error,
+            "invalid AEGISPY_WORKER_CAPABILITY_BINDING_MODE"
         );
         std::env::set_var("AEGISPY_WORKER_CAPABILITY_BINDING_MODE", "rewrite");
-        let rewrite_mode = load_capability_binding_mode().expect("parse rewrite alias");
-        assert_eq!(rewrite_mode, CapabilityBindingMode::RewriteDispatch);
+        let rewrite_error = load_capability_binding_mode().expect_err("reject rewrite alias");
+        assert_eq!(
+            rewrite_error,
+            "invalid AEGISPY_WORKER_CAPABILITY_BINDING_MODE"
+        );
     }
 
     #[test]
@@ -3138,7 +3110,7 @@ mod tests {
     }
 
     #[test]
-    fn guest_capability_plan_rejects_dynamic_arguments() {
+    fn guest_capability_plan_supports_simple_dynamic_string_expressions() {
         let config = HostCapabilityConfig {
             fs: Some(HostCapabilityFsConfig {
                 read_roots: vec!["/sandbox/write".to_string()],
@@ -3151,7 +3123,40 @@ mod tests {
         };
         let temp_dir = unique_temp_dir("capability-native-dynamic");
         let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code = "path = \"/sandbox/write/out.txt\"\naegispy.fs_write(path + \"/tail\", \"x\")";
+        let code = "root = \"/sandbox/write\"\n\
+                    path = (root + \"/out\") + \".txt\"\n\
+                    aegispy.fs_write(path, \"x\")\n\
+                    print(aegispy.fs_read(path))";
+
+        let plan =
+            build_guest_runtime_capability_plan(code, &mut native).expect("dynamic plan success");
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].capability, "fs_write");
+        assert_eq!(plan[0].field_a, "/sandbox/write/out.txt");
+        assert_eq!(plan[1].capability, "fs_read");
+        assert_eq!(plan[1].payload_utf8, "x");
+        assert!(native.policy_denial.is_none());
+        assert!(native.engine_error.is_none());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn guest_capability_plan_rejects_unresolved_runtime_expressions() {
+        let config = HostCapabilityConfig {
+            fs: Some(HostCapabilityFsConfig {
+                read_roots: vec!["/sandbox/write".to_string()],
+                write_roots: vec!["/sandbox/write".to_string()],
+                max_bytes: 1024,
+                max_files: 4,
+            }),
+            http: None,
+            env: None,
+        };
+        let temp_dir = unique_temp_dir("capability-native-unresolved");
+        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
+        let code =
+            "suffix = input(\"ignored\")\npath = \"/sandbox/write/out\" + suffix\naegispy.fs_write(path, \"x\")";
 
         let error = build_guest_runtime_capability_plan(code, &mut native).expect_err("plan error");
         assert_eq!(error, "capability_dynamic_binding_unsupported");
