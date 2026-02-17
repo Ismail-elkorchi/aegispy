@@ -36,7 +36,9 @@ fi
 
 cargo build -q -p aegispy_worker
 node scripts/engine/build-wasi.mjs
-if [ ! -f artifacts/engine/cpython-wasi.cwasm ]; then
+pnpm component:build
+bash scripts/component_artifact_check
+if [ ! -f artifacts/component/aegispy.component.cwasm ]; then
   timeout 600s ./target/debug/aegispy_worker < /dev/null >/dev/null 2>/dev/null
 fi
 
