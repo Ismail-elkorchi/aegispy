@@ -41,7 +41,8 @@
 ## Capability Channel Controls
 
 - Channel: `component-wit` (runtime default and enforced path).
-- Runtime bridge: `component-wit-stream` until direct WIT host imports land.
+- Runtime bridge: `component-wit-stream` for Python capability requests.
+- Component artifact now includes a typed `aegispy:runtime/capability` import contract and worker host-linker bindings.
 - File-bridge fallback channel is removed.
 - Capability bindings are loaded from runtime-mounted `aegispy.py` and `sitecustomize.py` modules, not pre-execution code injection.
-- Native host-import gate command: `bash scripts/native_host_import_check` (`AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict` enables blocking mode).
+- Native host-import gate command: `AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict bash scripts/native_host_import_check`.

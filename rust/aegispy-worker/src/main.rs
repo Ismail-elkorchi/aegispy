@@ -14,13 +14,22 @@ use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, ReadBuf};
-use wasmtime::component::{Component as WasmComponent, Linker as ComponentLinker, ResourceTable};
+use wasmtime::component::{
+    Component as WasmComponent, HasSelf, Linker as ComponentLinker, ResourceTable,
+};
 use wasmtime::{Config, Engine, OptLevel, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::cli::AsyncStdinStream;
 use wasmtime_wasi::p2::add_to_linker_sync as add_to_component_linker_sync;
 use wasmtime_wasi::p2::bindings::sync::Command as WasiCommand;
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+
+mod component_host_bindings {
+    wasmtime::component::bindgen!({
+        path: "../../wit",
+        world: "aegispy-runtime",
+    });
+}
 
 #[derive(Debug, Deserialize)]
 struct RunRequestEnvelope {
@@ -94,6 +103,7 @@ struct WasiStoreState {
     stdout: MemoryOutputPipe,
     stderr: MemoryOutputPipe,
     limits: StoreLimits,
+    native_capability: NativeHostCapabilityState,
 }
 
 impl WasiView for WasiStoreState {
@@ -760,12 +770,12 @@ const CAPABILITY_WIT_REQ_PREFIX: &str = "__AEGISPY_HOST_REQ__";
 const CAPABILITY_WIT_RES_PREFIX: &str = "__AEGISPY_HOST_RES__";
 const CAPABILITY_WIT_STDOUT_OVERHEAD_BYTES: u64 = 512 * 1024;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct HostCapabilityHttpState {
     requests_used: u64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct HostCapabilityFsState {
     bytes_used: u64,
     written_files: BTreeSet<String>,
@@ -806,6 +816,18 @@ struct HostCapabilityRunState {
     policy_denial: Option<String>,
     engine_error: Option<String>,
     filtered_stdout_utf8: Option<String>,
+}
+
+#[derive(Clone)]
+struct NativeHostCapabilityState {
+    config: HostCapabilityConfig,
+    fs_root: PathBuf,
+    fs_state: HostCapabilityFsState,
+    http_state: HostCapabilityHttpState,
+    next_request_id: u64,
+    audit: Vec<Value>,
+    policy_denial: Option<String>,
+    engine_error: Option<String>,
 }
 
 struct HostCapabilityServer {
@@ -1048,6 +1070,123 @@ fn build_host_capability_config(run: &Value, wall_ms: u64) -> HostCapabilityConf
         });
 
     HostCapabilityConfig { fs, http, env }
+}
+
+impl NativeHostCapabilityState {
+    fn new(config: HostCapabilityConfig, fs_root: PathBuf) -> Self {
+        Self {
+            config,
+            fs_root,
+            fs_state: HostCapabilityFsState::default(),
+            http_state: HostCapabilityHttpState::default(),
+            next_request_id: 1,
+            audit: Vec::new(),
+            policy_denial: None,
+            engine_error: None,
+        }
+    }
+
+    fn invoke(
+        &mut self,
+        capability: &str,
+        field_a: String,
+        field_b: String,
+    ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+        let request_id = self.next_request_id;
+        self.next_request_id = self.next_request_id.saturating_add(1);
+        let request = HostCapabilityRequest {
+            request_id,
+            capability: capability.to_string(),
+            field_a,
+            field_b,
+        };
+
+        let mut runtime_audit = Vec::new();
+        let response = match process_host_capability_request(
+            &request,
+            &self.config,
+            &self.fs_root,
+            &mut self.fs_state,
+            &mut self.http_state,
+            &mut runtime_audit,
+        ) {
+            Ok(value) => {
+                let payload_utf8 = match value {
+                    HostCapabilityValue::None => String::new(),
+                    HostCapabilityValue::Utf8(payload) => payload,
+                };
+                component_host_bindings::aegispy::runtime::capability::CapResult {
+                    ok: true,
+                    payload_utf8,
+                    error_code: String::new(),
+                }
+            }
+            Err(failure) => {
+                let detail = failure.code.clone();
+                let audit_kind = if failure.kind == HostCapabilityFailureKind::PolicyDenied {
+                    "policy_denied"
+                } else {
+                    "engine_error"
+                };
+                runtime_audit.push(json!({
+                  "kind": audit_kind,
+                  "detailJson": format!("runtime_denied:{detail}")
+                }));
+                if failure.kind == HostCapabilityFailureKind::PolicyDenied
+                    && self.policy_denial.is_none()
+                {
+                    self.policy_denial = Some(detail.clone());
+                }
+                if failure.kind == HostCapabilityFailureKind::EngineError
+                    && self.engine_error.is_none()
+                {
+                    self.engine_error = Some(detail.clone());
+                }
+                component_host_bindings::aegispy::runtime::capability::CapResult {
+                    ok: false,
+                    payload_utf8: String::new(),
+                    error_code: detail,
+                }
+            }
+        };
+
+        self.audit.extend(runtime_audit);
+        response
+    }
+}
+
+impl component_host_bindings::aegispy::runtime::capability::Host for WasiStoreState {
+    fn fs_read(
+        &mut self,
+        input: component_host_bindings::aegispy::runtime::capability::FsReadInput,
+    ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+        self.native_capability
+            .invoke("fs_read", input.path, String::new())
+    }
+
+    fn fs_write(
+        &mut self,
+        input: component_host_bindings::aegispy::runtime::capability::FsWriteInput,
+    ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+        self.native_capability
+            .invoke("fs_write", input.path, input.data_utf8)
+    }
+
+    fn http_get(
+        &mut self,
+        input: component_host_bindings::aegispy::runtime::capability::HttpGetInput,
+    ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+        self.native_capability
+            .invoke("http_get", input.url, String::new())
+    }
+
+    fn env_get(
+        &mut self,
+        input: component_host_bindings::aegispy::runtime::capability::EnvGetInput,
+    ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+        self.native_capability
+            .invoke("env_get", input.key, String::new())
+    }
 }
 
 fn build_runtime_capability_module_wit_host_abi() -> String {
@@ -1626,8 +1765,7 @@ impl HostCapabilityServer {
     }
 
     fn start(
-        run: &Value,
-        wall_ms: u64,
+        config: HostCapabilityConfig,
         stdout: MemoryOutputPipe,
         stdin_sender: DynamicInputSender,
     ) -> Result<Self, String> {
@@ -1635,8 +1773,6 @@ impl HostCapabilityServer {
         let fs_dir = host_root.join(CAPABILITY_FS_DIR);
         fs::create_dir_all(&fs_dir)
             .map_err(|error| format!("failed to create capability fs dir: {error}"))?;
-
-        let config = build_host_capability_config(run, wall_ms);
         let run_state = Arc::new(Mutex::new(HostCapabilityRunState::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let thread_run_state = Arc::clone(&run_state);
@@ -2165,9 +2301,9 @@ impl WasiExecutor {
         let stderr_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stderr_limit));
         let (runtime_stdin_reader, runtime_stdin_sender) =
             DynamicInputReader::with_initial(stdin_utf8.as_bytes());
+        let capability_config = build_host_capability_config(run, wall_ms);
         let mut capability_server = match HostCapabilityServer::start(
-            run,
-            wall_ms,
+            capability_config.clone(),
             stdout_pipe.clone(),
             runtime_stdin_sender.clone(),
         ) {
@@ -2261,6 +2397,10 @@ impl WasiExecutor {
             );
         }
         let wasi = builder.build();
+        let native_capability = NativeHostCapabilityState::new(
+            capability_config,
+            capability_server.host_root().join(CAPABILITY_FS_DIR),
+        );
         let runtime_memory_limit = min(
             profile.max_memory_bytes,
             memory_limit.max(ENGINE_MIN_MEMORY_BYTES),
@@ -2279,6 +2419,7 @@ impl WasiExecutor {
                 stdout: stdout_pipe,
                 stderr: stderr_pipe,
                 limits,
+                native_capability,
             },
         );
         if self.enable_store_limits {
@@ -2336,9 +2477,31 @@ impl WasiExecutor {
                 audit,
             );
         }
+        if component_host_bindings::AegispyRuntime::add_to_linker::<_, HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .is_err()
+        {
+            stop.store(true, Ordering::Relaxed);
+            if let Some(handle) = ticker {
+                let _ = handle.join();
+            }
+            let capability_state = capability_server.stop_and_collect();
+            audit.extend(capability_state.audit);
+            return make_error_result(
+                "AEG-ENGINE",
+                "failed to initialize native host import linker",
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
 
         let run_outcome = WasiCommand::instantiate(&mut store, &self.component, &linker)
             .and_then(|command| command.wasi_cli_run().call_run(&mut store));
+        let native_capability_state = store.data().native_capability.clone();
 
         stop.store(true, Ordering::Relaxed);
         if let Some(handle) = ticker {
@@ -2346,6 +2509,7 @@ impl WasiExecutor {
         }
         let capability_state = capability_server.stop_and_collect();
         audit.extend(capability_state.audit);
+        audit.extend(native_capability_state.audit.clone());
 
         let stdout_bytes = store.data().stdout.contents();
         let stderr_bytes = store.data().stderr.contents();
@@ -2367,11 +2531,31 @@ impl WasiExecutor {
                 audit,
             );
         }
+        if let Some(detail) = native_capability_state.policy_denial {
+            return make_error_result(
+                "AEG-POLICY-DENIED",
+                &detail,
+                "policy_denied",
+                started_ts_ms,
+                ended_ts_ms,
+                audit,
+            );
+        }
         if let Some(detail) = capability_state.policy_denial {
             return make_error_result(
                 "AEG-POLICY-DENIED",
                 &detail,
                 "policy_denied",
+                started_ts_ms,
+                ended_ts_ms,
+                audit,
+            );
+        }
+        if let Some(detail) = native_capability_state.engine_error {
+            return make_error_result(
+                "AEG-ENGINE",
+                &detail,
+                "engine_error",
                 started_ts_ms,
                 ended_ts_ms,
                 audit,

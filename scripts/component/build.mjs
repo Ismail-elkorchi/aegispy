@@ -10,6 +10,9 @@ const repoRoot = path.resolve(__dirname, "../..");
 
 const outDir = path.join(repoRoot, "artifacts", "component");
 const wasmPath = path.join(outDir, "aegispy.component.wasm");
+const baseComponentPath = path.join(outDir, "aegispy-base-component.wasm");
+const wrapperWatPath = path.join(outDir, "host-import-wrapper.wat");
+const wrapperWasmPath = path.join(outDir, "host-import-wrapper.wasm");
 const buildPath = path.join(outDir, "build.json");
 const interfacePath = path.join(outDir, "interface.wit");
 const witPath = path.join(repoRoot, "wit", "aegispy.wit");
@@ -205,6 +208,42 @@ function parseWorldSummary(witText) {
   return { imports, exports };
 }
 
+function buildHostImportWrapperComponentWat() {
+  return `(component
+  (type $ty-aegispy:runtime/capability
+    (instance
+      (type (;0;) (record (field "path" string)))
+      (export "fs-read-input" (type (eq 0)))
+      (type (;2;) (record (field "ok" bool) (field "payload-utf8" string) (field "error-code" string)))
+      (export "cap-result" (type (eq 2)))
+      (type (;4;) (record (field "path" string) (field "data-utf8" string)))
+      (export "fs-write-input" (type (eq 4)))
+      (type (;6;) (record (field "url" string)))
+      (export "http-get-input" (type (eq 6)))
+      (type (;8;) (record (field "key" string)))
+      (export "env-get-input" (type (eq 8)))
+      (type (;10;) (func (param "input" 1) (result 3)))
+      (export "fs-read" (func (type 10)))
+      (type (;11;) (func (param "input" 5) (result 3)))
+      (export "fs-write" (func (type 11)))
+      (type (;12;) (func (param "input" 7) (result 3)))
+      (export "http-get" (func (type 12)))
+      (type (;13;) (func (param "input" 9) (result 3)))
+      (export "env-get" (func (type 13)))
+    )
+  )
+  (import "aegispy:runtime/capability" (instance $aegispy:runtime/capability (type $ty-aegispy:runtime/capability)))
+  (type $run
+    (instance
+      (type $run-func (func (result (result))))
+      (export "run" (func (type $run-func)))
+    )
+  )
+  (import "wasi:cli/run@0.2.6" (instance $runinst (type $run)))
+  (export "wasi:cli/run@0.2.6" (instance $runinst))
+)`;
+}
+
 function main() {
   ensureDir(outDir);
   ensureWasiCoreWasm();
@@ -219,9 +258,31 @@ function main() {
     "--adapt",
     `wasi_snapshot_preview1=${adapter.path}`,
     "-o",
-    wasmPath,
+    baseComponentPath,
   ];
   runOrThrow(wasmTools.binPath, componentArgs);
+  runOrThrow(wasmTools.binPath, ["validate", baseComponentPath]);
+
+  fs.writeFileSync(
+    wrapperWatPath,
+    buildHostImportWrapperComponentWat(),
+    "utf8",
+  );
+  runOrThrow(wasmTools.binPath, [
+    "parse",
+    wrapperWatPath,
+    "-o",
+    wrapperWasmPath,
+  ]);
+  runOrThrow(wasmTools.binPath, ["validate", wrapperWasmPath]);
+  runOrThrow(wasmTools.binPath, [
+    "compose",
+    wrapperWasmPath,
+    "-d",
+    baseComponentPath,
+    "-o",
+    wasmPath,
+  ]);
   runOrThrow(wasmTools.binPath, ["validate", wasmPath]);
 
   assertWasmMagic(wasmPath);

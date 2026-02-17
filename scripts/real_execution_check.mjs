@@ -106,6 +106,8 @@ function main() {
       componentBuild.requiredHostImportContract !== "aegispy:runtime/capability"
     )
       failures.push({ error: "component_required_host_import_contract_unset" });
+    if (componentBuild.nativeHostImportDetected !== true)
+      failures.push({ error: "component_native_host_import_not_detected" });
     const imports = Array.isArray(componentBuild.worldImports)
       ? componentBuild.worldImports
       : [];
@@ -150,6 +152,9 @@ function main() {
     workerRuntimeSupportModulePresent: workerMain.includes(
       "prepare_runtime_support_bindings",
     ),
+    workerNativeHostImportBindingPresent: workerMain.includes(
+      "AegispyRuntime::add_to_linker",
+    ),
     workerSitecustomizeBindingPresent: workerMain.includes("sitecustomize.py"),
     workerWasiExecutorPresent: workerMain.includes("impl WasiExecutor"),
     workerUsesComponentModel: workerMain.includes("WasmComponent::from_file"),
@@ -186,6 +191,9 @@ function main() {
   }
   if (!simulationSignals.workerRuntimeSupportModulePresent) {
     failures.push({ error: "worker_runtime_support_module_missing" });
+  }
+  if (!simulationSignals.workerNativeHostImportBindingPresent) {
+    failures.push({ error: "worker_native_host_import_binding_missing" });
   }
   if (!simulationSignals.workerSitecustomizeBindingPresent) {
     failures.push({ error: "worker_sitecustomize_binding_missing" });

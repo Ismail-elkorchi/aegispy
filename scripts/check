@@ -38,7 +38,7 @@ cargo build -q -p aegispy_worker
 node scripts/engine/build-wasi.mjs
 pnpm component:build
 bash scripts/component_artifact_check
-bash scripts/native_host_import_check
+AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict bash scripts/native_host_import_check
 if [ ! -f artifacts/component/aegispy.component.cwasm ]; then
   timeout 600s ./target/debug/aegispy_worker < /dev/null >/dev/null 2>/dev/null
 fi
