@@ -5,8 +5,8 @@
 | Host    | Runtime Path                                   | Status | Exception Tag |
 | ------- | ---------------------------------------------- | ------ | ------------- |
 | node    | Node adapter with framed worker protocol       | pass   | none          |
-| deno    | Deno adapter parity wrapper                    | pass   | none          |
-| bun     | Bun adapter parity wrapper                     | pass   | none          |
+| deno    | Deno adapter with framed worker protocol       | pass   | none          |
+| bun     | Bun adapter with framed worker protocol        | pass   | none          |
 | browser | Browser adapter with worker-style timeout race | pass   | none          |
 
 ## Capability Status

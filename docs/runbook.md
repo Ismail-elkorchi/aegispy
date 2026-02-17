@@ -41,8 +41,14 @@
 ## Capability Channel Controls
 
 - Channel: `component-wit` (runtime default and enforced path).
-- Runtime bridge: `component-wit-json-request-stream` for Python capability requests.
+- Runtime bridge: `component-host-guest-runtime-module-plan-dispatch` (guest module runtime path; no stream bridge).
 - Component artifact now includes a typed `aegispy:runtime/capability` import contract and worker host-linker bindings.
 - File-bridge fallback channel is removed.
-- Capability bindings are loaded from runtime-mounted `aegispy.py` and `sitecustomize.py` modules, not pre-execution code injection.
+- Capability calls are served by a host-built runtime plan consumed by the guest `aegispy` module imported from the shipped WASI Python runtime path.
+- Runtime source-injection bridge loading is not used by the default hardened path.
+- Worker capability binding mode is controlled by `AEGISPY_WORKER_CAPABILITY_BINDING_MODE`:
+- `guest-runtime-abi` is default and enforced.
+- `rewrite` and `rewrite-dispatch` select explicit legacy rewrite mode.
 - Native host-import gate command: `AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict bash scripts/native_host_import_check`.
+- Native dynamic extension loader gap probe: `node scripts/runtime_native_abi_gap_probe.mjs`.
+- Current blocker evidence: `artifacts/research/runtime-native-abi-gap.json` reports `dlopen_not_implemented`.

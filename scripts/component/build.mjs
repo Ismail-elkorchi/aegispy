@@ -331,7 +331,7 @@ function main() {
       },
     },
     hostImportChannelDefault: "component-wit",
-    runtimeBridge: "component-wit-json-request-stream",
+    runtimeBridge: "component-host-guest-runtime-module-plan-dispatch",
     requiredHostImportContract: nativeHostImportPath,
     nativeHostImportDetected,
     generatedAt: new Date().toISOString(),

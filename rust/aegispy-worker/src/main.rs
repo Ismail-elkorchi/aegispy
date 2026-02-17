@@ -2,16 +2,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::cmp::min;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, ReadBuf};
 use wasmtime::component::{
@@ -87,6 +87,33 @@ impl WorkerExecutorMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CapabilityBindingMode {
+    GuestRuntimeAbi,
+    RewriteDispatch,
+}
+
+impl FromStr for CapabilityBindingMode {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw.trim().to_lowercase().as_str() {
+            "guest-runtime-abi" | "guest-abi" => Ok(Self::GuestRuntimeAbi),
+            "rewrite" | "rewrite-dispatch" => Ok(Self::RewriteDispatch),
+            _ => Err("invalid AEGISPY_WORKER_CAPABILITY_BINDING_MODE".to_string()),
+        }
+    }
+}
+
+impl CapabilityBindingMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::GuestRuntimeAbi => "guest-runtime-abi",
+            Self::RewriteDispatch => "rewrite-dispatch",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct WasiExecutor {
     engine: Engine,
@@ -95,6 +122,7 @@ struct WasiExecutor {
     enable_fuel: bool,
     enable_epoch: bool,
     enable_store_limits: bool,
+    capability_binding_mode: CapabilityBindingMode,
 }
 
 struct WasiStoreState {
@@ -187,6 +215,12 @@ fn load_isolation_profile() -> Result<IsolationProfile, String> {
 fn load_executor_mode() -> Result<WorkerExecutorMode, String> {
     let raw = std::env::var("AEGISPY_WORKER_EXECUTOR").unwrap_or_else(|_| "wasi".to_string());
     WorkerExecutorMode::from_str(&raw)
+}
+
+fn load_capability_binding_mode() -> Result<CapabilityBindingMode, String> {
+    let raw = std::env::var("AEGISPY_WORKER_CAPABILITY_BINDING_MODE")
+        .unwrap_or_else(|_| "guest-runtime-abi".to_string());
+    CapabilityBindingMode::from_str(&raw)
 }
 
 fn encode_frame(payload: &[u8]) -> Vec<u8> {
@@ -764,11 +798,6 @@ fn rewrite_code_for_determinism(code: &str, run: &Value) -> String {
 }
 
 const CAPABILITY_FS_DIR: &str = "fs";
-const CAPABILITY_RUNTIME_SUPPORT_DIR: &str = "runtime-support";
-const CAPABILITY_RUNTIME_SUPPORT_GUEST_ROOT: &str = "/aegispy-runtime-support";
-const CAPABILITY_WIT_REQ_PREFIX: &str = "__AEGISPY_HOST_REQ__";
-const CAPABILITY_WIT_RES_PREFIX: &str = "__AEGISPY_HOST_RES__";
-const CAPABILITY_WIT_STDOUT_OVERHEAD_BYTES: u64 = 512 * 1024;
 
 #[derive(Clone, Default)]
 struct HostCapabilityHttpState {
@@ -810,70 +839,24 @@ struct HostCapabilityConfig {
     env: Option<HostCapabilityEnvConfig>,
 }
 
-#[derive(Clone, Default)]
-struct HostCapabilityRunState {
-    audit: Vec<Value>,
-    policy_denial: Option<String>,
-    engine_error: Option<String>,
-    filtered_stdout_utf8: Option<String>,
-}
-
 #[derive(Clone)]
 struct NativeHostCapabilityState {
     config: HostCapabilityConfig,
     fs_root: PathBuf,
     fs_state: HostCapabilityFsState,
     http_state: HostCapabilityHttpState,
-    next_request_id: u64,
     audit: Vec<Value>,
     policy_denial: Option<String>,
     engine_error: Option<String>,
 }
 
-struct HostCapabilityServer {
-    host_root: PathBuf,
-    stop: Arc<AtomicBool>,
-    run_state: Arc<Mutex<HostCapabilityRunState>>,
-    handle: Option<JoinHandle<()>>,
-}
-
-#[derive(Clone)]
-struct DynamicInputReader {
-    shared: Arc<Mutex<DynamicInputState>>,
-}
-
-#[derive(Default)]
-struct DynamicInputState {
-    bytes: VecDeque<u8>,
-    closed: bool,
-    waker: Option<Waker>,
-}
-
-#[derive(Clone)]
-struct DynamicInputSender {
-    shared: Arc<Mutex<DynamicInputState>>,
+struct StaticInputReader {
+    bytes: Vec<u8>,
+    offset: usize,
 }
 
 #[derive(Debug)]
 struct HostCapabilityRequest {
-    request_id: u64,
-    capability: String,
-    field_a: String,
-    field_b: String,
-}
-
-#[derive(Debug)]
-struct HostCapabilityResponse {
-    ok: bool,
-    value_kind: String,
-    payload_utf8: String,
-    error_code: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HostCapabilityWireRequest {
-    id: u64,
     capability: String,
     field_a: String,
     field_b: String,
@@ -904,80 +887,31 @@ fn create_temp_binding_dir(prefix: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-impl DynamicInputReader {
-    fn with_initial(initial: &[u8]) -> (Self, DynamicInputSender) {
-        let mut state = DynamicInputState::default();
-        for byte in initial {
-            state.bytes.push_back(*byte);
-        }
-        let shared = Arc::new(Mutex::new(state));
-        (
-            Self {
-                shared: Arc::clone(&shared),
-            },
-            DynamicInputSender { shared },
-        )
-    }
-}
-
-impl DynamicInputSender {
-    fn push_bytes(&self, payload: &[u8]) {
-        let mut wake = None;
-        if let Ok(mut guard) = self.shared.lock() {
-            for byte in payload {
-                guard.bytes.push_back(*byte);
-            }
-            wake = guard.waker.take();
-        }
-        if let Some(waker) = wake {
-            waker.wake();
-        }
-    }
-
-    fn push_line(&self, payload: &str) {
-        self.push_bytes(payload.as_bytes());
-        self.push_bytes(b"\n");
-    }
-
-    fn close(&self) {
-        let mut wake = None;
-        if let Ok(mut guard) = self.shared.lock() {
-            guard.closed = true;
-            wake = guard.waker.take();
-        }
-        if let Some(waker) = wake {
-            waker.wake();
+impl StaticInputReader {
+    fn from_utf8(input: &str) -> Self {
+        Self {
+            bytes: input.as_bytes().to_vec(),
+            offset: 0,
         }
     }
 }
 
-impl AsyncRead for DynamicInputReader {
+impl AsyncRead for StaticInputReader {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        _cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut guard = match self.shared.lock() {
-            Ok(value) => value,
-            Err(_) => {
-                return Poll::Ready(Err(io::Error::other("stdin channel poisoned")));
-            }
-        };
-
-        if guard.bytes.is_empty() {
-            if guard.closed {
-                return Poll::Ready(Ok(()));
-            }
-            guard.waker = Some(cx.waker().clone());
-            return Poll::Pending;
+        let this = self.get_mut();
+        if this.offset >= this.bytes.len() {
+            return Poll::Ready(Ok(()));
         }
 
-        while buf.remaining() > 0 {
-            let Some(byte) = guard.bytes.pop_front() else {
-                break;
-            };
-            buf.put_slice(&[byte]);
-        }
+        let available = this.bytes.len() - this.offset;
+        let chunk_len = min(available, buf.remaining());
+        let end = this.offset + chunk_len;
+        buf.put_slice(&this.bytes[this.offset..end]);
+        this.offset = end;
         Poll::Ready(Ok(()))
     }
 }
@@ -1088,11 +1022,57 @@ impl NativeHostCapabilityState {
             fs_root,
             fs_state: HostCapabilityFsState::default(),
             http_state: HostCapabilityHttpState::default(),
-            next_request_id: 1,
             audit: Vec::new(),
             policy_denial: None,
             engine_error: None,
         }
+    }
+
+    fn invoke_internal(
+        &mut self,
+        capability: &str,
+        field_a: String,
+        field_b: String,
+    ) -> Result<HostCapabilityValue, HostCapabilityFailure> {
+        let request = HostCapabilityRequest {
+            capability: capability.to_string(),
+            field_a,
+            field_b,
+        };
+
+        let mut runtime_audit = Vec::new();
+        let response = process_host_capability_request(
+            &request,
+            &self.config,
+            &self.fs_root,
+            &mut self.fs_state,
+            &mut self.http_state,
+            &mut runtime_audit,
+        );
+        if let Err(failure) = &response {
+            let detail = failure.code.clone();
+            let audit_kind = if failure.kind == HostCapabilityFailureKind::PolicyDenied {
+                "policy_denied"
+            } else {
+                "engine_error"
+            };
+            runtime_audit.push(json!({
+              "kind": audit_kind,
+              "detailJson": format!("runtime_denied:{detail}")
+            }));
+            if failure.kind == HostCapabilityFailureKind::PolicyDenied
+                && self.policy_denial.is_none()
+            {
+                self.policy_denial = Some(detail.clone());
+            }
+            if failure.kind == HostCapabilityFailureKind::EngineError && self.engine_error.is_none()
+            {
+                self.engine_error = Some(detail);
+            }
+        }
+
+        self.audit.extend(runtime_audit);
+        response
     }
 
     fn invoke(
@@ -1101,24 +1081,7 @@ impl NativeHostCapabilityState {
         field_a: String,
         field_b: String,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        let request_id = self.next_request_id;
-        self.next_request_id = self.next_request_id.saturating_add(1);
-        let request = HostCapabilityRequest {
-            request_id,
-            capability: capability.to_string(),
-            field_a,
-            field_b,
-        };
-
-        let mut runtime_audit = Vec::new();
-        let response = match process_host_capability_request(
-            &request,
-            &self.config,
-            &self.fs_root,
-            &mut self.fs_state,
-            &mut self.http_state,
-            &mut runtime_audit,
-        ) {
+        match self.invoke_internal(capability, field_a, field_b) {
             Ok(value) => {
                 let payload_utf8 = match value {
                     HostCapabilityValue::None => String::new(),
@@ -1130,37 +1093,12 @@ impl NativeHostCapabilityState {
                     error_code: String::new(),
                 }
             }
-            Err(failure) => {
-                let detail = failure.code.clone();
-                let audit_kind = if failure.kind == HostCapabilityFailureKind::PolicyDenied {
-                    "policy_denied"
-                } else {
-                    "engine_error"
-                };
-                runtime_audit.push(json!({
-                  "kind": audit_kind,
-                  "detailJson": format!("runtime_denied:{detail}")
-                }));
-                if failure.kind == HostCapabilityFailureKind::PolicyDenied
-                    && self.policy_denial.is_none()
-                {
-                    self.policy_denial = Some(detail.clone());
-                }
-                if failure.kind == HostCapabilityFailureKind::EngineError
-                    && self.engine_error.is_none()
-                {
-                    self.engine_error = Some(detail.clone());
-                }
-                component_host_bindings::aegispy::runtime::capability::CapResult {
-                    ok: false,
-                    payload_utf8: String::new(),
-                    error_code: detail,
-                }
-            }
-        };
-
-        self.audit.extend(runtime_audit);
-        response
+            Err(failure) => component_host_bindings::aegispy::runtime::capability::CapResult {
+                ok: false,
+                payload_utf8: String::new(),
+                error_code: failure.code,
+            },
+        }
     }
 }
 
@@ -1198,147 +1136,6 @@ impl component_host_bindings::aegispy::runtime::capability::Host for WasiStoreSt
     }
 }
 
-fn build_runtime_capability_module_wit_host_abi() -> String {
-    format!(
-        r#"
-import sys
-
-_AEGISPY_REQ_PREFIX = "{req_prefix}"
-_AEGISPY_RES_PREFIX = "{res_prefix}"
-_AEGISPY_SEQ = 0
-
-def _aegispy_json_escape(value):
-    return (
-        value.replace("\\", "\\\\")
-        .replace("\"", "\\\"")
-        .replace("\b", "\\b")
-        .replace("\f", "\\f")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-
-def _aegispy_wire_unescape(value):
-    out = []
-    index = 0
-    while index < len(value):
-        ch = value[index]
-        if ch == "\\" and index + 1 < len(value):
-            esc = value[index + 1]
-            if esc == "n":
-                out.append("\n")
-            elif esc == "r":
-                out.append("\r")
-            elif esc == "t":
-                out.append("\t")
-            elif esc == "\\":
-                out.append("\\")
-            else:
-                out.append(esc)
-            index = index + 2
-            continue
-        out.append(ch)
-        index = index + 1
-    return "".join(out)
-
-def _aegispy_host_call(capability, field_a, field_b):
-    global _AEGISPY_SEQ
-    _AEGISPY_SEQ = _AEGISPY_SEQ + 1
-    req_id = _AEGISPY_SEQ
-    packet = (
-        "{{\"id\":"
-        + str(req_id)
-        + ",\"capability\":\""
-        + _aegispy_json_escape(capability)
-        + "\",\"fieldA\":\""
-        + _aegispy_json_escape(field_a)
-        + "\",\"fieldB\":\""
-        + _aegispy_json_escape(field_b)
-        + "\"}}"
-    )
-    sys.stdout.write(_AEGISPY_REQ_PREFIX + packet + "\n")
-    sys.stdout.flush()
-
-    while True:
-        line = sys.stdin.readline()
-        if line == "":
-            raise RuntimeError("capability_channel_closed")
-        line = line.rstrip("\r\n")
-        if not line.startswith(_AEGISPY_RES_PREFIX):
-            continue
-        raw = line[len(_AEGISPY_RES_PREFIX):]
-        parts = raw.split("\t", 4)
-        if len(parts) < 5:
-            continue
-        if parts[0] != str(req_id):
-            continue
-        status = parts[1]
-        value_kind = parts[2]
-        error_code = _aegispy_wire_unescape(parts[3])
-        payload = _aegispy_wire_unescape(parts[4])
-        if status == "ok":
-            if value_kind == "none":
-                return None
-            return payload
-        raise RuntimeError(error_code or "capability_error")
-
-def _aegispy_fs_write(path, data_utf8):
-    _aegispy_host_call("fs_write", path, data_utf8)
-    return None
-
-def _aegispy_fs_read(path):
-    return _aegispy_host_call("fs_read", path, "")
-
-def _aegispy_http_get(url):
-    return _aegispy_host_call("http_get", url, "")
-
-def _aegispy_env_get(key):
-    return _aegispy_host_call("env_get", key, "")
-
-fs_write = _aegispy_fs_write
-fs_read = _aegispy_fs_read
-http_get = _aegispy_http_get
-env_get = _aegispy_env_get
-__all__ = ["fs_write", "fs_read", "http_get", "env_get"]
-"#,
-        req_prefix = CAPABILITY_WIT_REQ_PREFIX,
-        res_prefix = CAPABILITY_WIT_RES_PREFIX
-    )
-}
-
-fn build_runtime_sitecustomize_wit_host_abi() -> String {
-    r#"
-import builtins
-import importlib
-
-_aegispy_module = importlib.import_module("aegispy")
-builtins.aegispy = _aegispy_module
-"#
-    .to_string()
-}
-
-fn prepare_runtime_support_bindings(host_root: &Path) -> Result<PathBuf, String> {
-    let support_dir = host_root.join(CAPABILITY_RUNTIME_SUPPORT_DIR);
-    fs::create_dir_all(&support_dir)
-        .map_err(|error| format!("failed to create runtime support dir: {error}"))?;
-
-    let aegispy_module_path = support_dir.join("aegispy.py");
-    fs::write(
-        &aegispy_module_path,
-        build_runtime_capability_module_wit_host_abi(),
-    )
-    .map_err(|error| format!("failed to write runtime support module: {error}"))?;
-
-    let sitecustomize_path = support_dir.join("sitecustomize.py");
-    fs::write(
-        &sitecustomize_path,
-        build_runtime_sitecustomize_wit_host_abi(),
-    )
-    .map_err(|error| format!("failed to write runtime sitecustomize: {error}"))?;
-
-    Ok(support_dir)
-}
-
 fn host_capability_failure_policy(code: impl Into<String>) -> HostCapabilityFailure {
     HostCapabilityFailure {
         kind: HostCapabilityFailureKind::PolicyDenied,
@@ -1350,54 +1147,6 @@ fn host_capability_failure_engine(code: impl Into<String>) -> HostCapabilityFail
     HostCapabilityFailure {
         kind: HostCapabilityFailureKind::EngineError,
         code: code.into(),
-    }
-}
-
-fn host_capability_response_ok(value: HostCapabilityValue) -> HostCapabilityResponse {
-    match value {
-        HostCapabilityValue::None => HostCapabilityResponse {
-            ok: true,
-            value_kind: "none".to_string(),
-            payload_utf8: String::new(),
-            error_code: String::new(),
-        },
-        HostCapabilityValue::Utf8(payload) => HostCapabilityResponse {
-            ok: true,
-            value_kind: "utf8".to_string(),
-            payload_utf8: payload,
-            error_code: String::new(),
-        },
-    }
-}
-
-fn host_capability_response_error(code: &str) -> HostCapabilityResponse {
-    HostCapabilityResponse {
-        ok: false,
-        value_kind: "none".to_string(),
-        payload_utf8: String::new(),
-        error_code: code.to_string(),
-    }
-}
-
-fn escape_wire_text(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
-fn set_run_state_engine_error(run_state: &Arc<Mutex<HostCapabilityRunState>>, detail: &str) {
-    if let Ok(mut guard) = run_state.lock() {
-        if guard.engine_error.is_none() {
-            guard.engine_error = Some(detail.to_string());
-        }
     }
 }
 
@@ -1567,211 +1316,350 @@ fn process_host_capability_request(
     }
 }
 
-fn parse_line_bytes(line: &[u8]) -> String {
-    String::from_utf8_lossy(line)
-        .trim_end_matches('\r')
-        .to_string()
+fn extract_argument_tokens(input: &str) -> Vec<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    let mut depth = 0_i64;
+    let mut quote: Option<u8> = None;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(active) = quote {
+            if byte == b'\\' && index + 1 < bytes.len() {
+                index += 2;
+                continue;
+            }
+            if byte == active {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if byte == b'(' || byte == b'[' || byte == b'{' {
+            depth += 1;
+            index += 1;
+            continue;
+        }
+        if byte == b')' || byte == b']' || byte == b'}' {
+            depth -= 1;
+            index += 1;
+            continue;
+        }
+        if byte == b',' && depth == 0 {
+            out.push(input[start..index].trim().to_string());
+            start = index + 1;
+        }
+        index += 1;
+    }
+
+    if start < input.len() {
+        out.push(input[start..].trim().to_string());
+    } else if input.trim().is_empty() {
+        out.clear();
+    } else {
+        out.push(String::new());
+    }
+
+    out
 }
 
-fn process_wit_line(
-    line: &[u8],
-    config: &HostCapabilityConfig,
-    fs_root: &Path,
-    fs_state: &mut HostCapabilityFsState,
-    http_state: &mut HostCapabilityHttpState,
-    run_state: &Arc<Mutex<HostCapabilityRunState>>,
-    stdin_sender: &DynamicInputSender,
-) -> bool {
-    let text = parse_line_bytes(line);
-    if !text.starts_with(CAPABILITY_WIT_REQ_PREFIX) {
+fn is_python_identifier(token: &str) -> bool {
+    if token.is_empty() {
         return false;
     }
-
-    let payload = &text[CAPABILITY_WIT_REQ_PREFIX.len()..];
-    let wire_request = match serde_json::from_str::<HostCapabilityWireRequest>(payload) {
-        Ok(request) => request,
-        Err(_) => {
-            set_run_state_engine_error(run_state, "capability_request_decode_failed:invalid_json");
-            return true;
-        }
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return false;
     };
-
-    let request = HostCapabilityRequest {
-        request_id: wire_request.id,
-        capability: wire_request.capability,
-        field_a: wire_request.field_a,
-        field_b: wire_request.field_b,
-    };
-    let mut runtime_audit = Vec::new();
-    let response = match process_host_capability_request(
-        &request,
-        config,
-        fs_root,
-        fs_state,
-        http_state,
-        &mut runtime_audit,
-    ) {
-        Ok(value) => host_capability_response_ok(value),
-        Err(failure) => {
-            let audit_kind = if failure.kind == HostCapabilityFailureKind::PolicyDenied {
-                "policy_denied"
-            } else {
-                "engine_error"
-            };
-            runtime_audit.push(json!({
-              "kind": audit_kind,
-              "detailJson": format!("runtime_denied:{}", failure.code)
-            }));
-            if let Ok(mut guard) = run_state.lock() {
-                if failure.kind == HostCapabilityFailureKind::PolicyDenied
-                    && guard.policy_denial.is_none()
-                {
-                    guard.policy_denial = Some(failure.code.clone());
-                }
-                if failure.kind == HostCapabilityFailureKind::EngineError
-                    && guard.engine_error.is_none()
-                {
-                    guard.engine_error = Some(failure.code.clone());
-                }
-            }
-            host_capability_response_error(&failure.code)
-        }
-    };
-
-    if let Ok(mut guard) = run_state.lock() {
-        guard.audit.extend(runtime_audit);
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return false;
     }
-
-    let status = if response.ok { "ok" } else { "err" };
-    let encoded = format!(
-        "{}\t{}\t{}\t{}\t{}",
-        request.request_id,
-        status,
-        response.value_kind,
-        escape_wire_text(&response.error_code),
-        escape_wire_text(&response.payload_utf8)
-    );
-    stdin_sender.push_line(&format!("{CAPABILITY_WIT_RES_PREFIX}{encoded}"));
-
-    true
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn run_host_capability_wit_server(
-    stdout: MemoryOutputPipe,
-    stdin_sender: DynamicInputSender,
-    fs_root: PathBuf,
-    config: HostCapabilityConfig,
-    run_state: Arc<Mutex<HostCapabilityRunState>>,
-    stop: Arc<AtomicBool>,
-) {
-    let mut fs_state = HostCapabilityFsState::default();
-    let mut http_state = HostCapabilityHttpState::default();
-    let mut consumed = 0_usize;
-    let mut buffer = Vec::<u8>::new();
-    let mut user_stdout = Vec::<u8>::new();
+fn collect_literal_bindings(code: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for line in code.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((lhs_raw, rhs_raw)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let lhs = lhs_raw.trim();
+        let rhs = rhs_raw.trim();
+        if !is_python_identifier(lhs) {
+            continue;
+        }
+        if let Some(value) = decode_quoted_literal(rhs) {
+            out.insert(lhs.to_string(), value);
+        }
+    }
+    out
+}
 
-    loop {
-        let snapshot = stdout.contents();
-        if snapshot.len() > consumed {
-            buffer.extend_from_slice(&snapshot[consumed..]);
-            consumed = snapshot.len();
+fn resolve_capability_argument(
+    token: &str,
+    literal_bindings: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    if let Some(value) = decode_quoted_literal(token) {
+        return Ok(value);
+    }
+    if is_python_identifier(token) {
+        if let Some(value) = literal_bindings.get(token) {
+            return Ok(value.clone());
+        }
+    }
+    Err("capability_dynamic_binding_unsupported".to_string())
+}
 
-            while let Some(newline_index) = buffer.iter().position(|byte| *byte == b'\n') {
-                let mut line = buffer.drain(..=newline_index).collect::<Vec<u8>>();
-                if line.last() == Some(&b'\n') {
-                    line.pop();
-                }
-                let is_protocol_line = process_wit_line(
-                    &line,
-                    &config,
-                    &fs_root,
-                    &mut fs_state,
-                    &mut http_state,
-                    &run_state,
-                    &stdin_sender,
-                );
-                if !is_protocol_line {
-                    user_stdout.extend_from_slice(&line);
-                    user_stdout.push(b'\n');
+fn encode_python_single_quoted_literal(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("'{escaped}'")
+}
+
+fn encode_python_bool_literal(value: bool) -> &'static str {
+    if value {
+        "True"
+    } else {
+        "False"
+    }
+}
+
+fn encode_guest_capability_plan_python_literal(plan: &[GuestCapabilityPlanEntry]) -> String {
+    let mut out = String::from("[");
+    for (index, entry) in plan.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        out.push('{');
+        out.push_str("'capability': ");
+        out.push_str(&encode_python_single_quoted_literal(&entry.capability));
+        out.push_str(", 'field_a': ");
+        out.push_str(&encode_python_single_quoted_literal(&entry.field_a));
+        out.push_str(", 'field_b': ");
+        out.push_str(&encode_python_single_quoted_literal(&entry.field_b));
+        out.push_str(", 'ok': ");
+        out.push_str(encode_python_bool_literal(entry.ok));
+        out.push_str(", 'payload_utf8': ");
+        out.push_str(&encode_python_single_quoted_literal(&entry.payload_utf8));
+        out.push_str(", 'error_code': ");
+        out.push_str(&encode_python_single_quoted_literal(&entry.error_code));
+        out.push('}');
+    }
+    out.push(']');
+    out
+}
+
+fn host_value_to_python_expr(value: HostCapabilityValue) -> String {
+    match value {
+        HostCapabilityValue::None => "None".to_string(),
+        HostCapabilityValue::Utf8(payload) => encode_python_single_quoted_literal(&payload),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CapabilityBindingMarker {
+    marker: &'static str,
+    capability: &'static str,
+    arg_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct GuestCapabilityPlanEntry {
+    capability: String,
+    field_a: String,
+    field_b: String,
+    ok: bool,
+    payload_utf8: String,
+    error_code: String,
+}
+
+const CAPABILITY_BINDING_MARKERS: [CapabilityBindingMarker; 4] = [
+    CapabilityBindingMarker {
+        marker: "aegispy.fs_write",
+        capability: "fs_write",
+        arg_count: 2,
+    },
+    CapabilityBindingMarker {
+        marker: "aegispy.fs_read",
+        capability: "fs_read",
+        arg_count: 1,
+    },
+    CapabilityBindingMarker {
+        marker: "aegispy.http_get",
+        capability: "http_get",
+        arg_count: 1,
+    },
+    CapabilityBindingMarker {
+        marker: "aegispy.env_get",
+        capability: "env_get",
+        arg_count: 1,
+    },
+];
+
+fn build_guest_runtime_capability_plan(
+    code: &str,
+    native_capability: &mut NativeHostCapabilityState,
+) -> Result<Vec<GuestCapabilityPlanEntry>, String> {
+    let literal_bindings = collect_literal_bindings(code);
+    let mut cursor = 0;
+    let mut plan = Vec::<GuestCapabilityPlanEntry>::new();
+
+    while cursor < code.len() {
+        let mut next_match: Option<(usize, CapabilityBindingMarker)> = None;
+        for marker in CAPABILITY_BINDING_MARKERS {
+            let needle = format!("{}(", marker.marker);
+            if let Some(found) = code[cursor..].find(&needle) {
+                let absolute = cursor + found;
+                match next_match {
+                    None => {
+                        next_match = Some((absolute, marker));
+                    }
+                    Some((idx, _)) if absolute < idx => {
+                        next_match = Some((absolute, marker));
+                    }
+                    _ => {}
                 }
             }
-        } else if stop.load(Ordering::Relaxed) {
-            if !buffer.is_empty() {
-                let is_protocol_line = process_wit_line(
-                    &buffer,
-                    &config,
-                    &fs_root,
-                    &mut fs_state,
-                    &mut http_state,
-                    &run_state,
-                    &stdin_sender,
-                );
-                if !is_protocol_line {
-                    user_stdout.extend_from_slice(&buffer);
-                }
-            }
+        }
+
+        let Some((call_start, marker)) = next_match else {
             break;
-        } else {
-            thread::sleep(Duration::from_millis(1));
+        };
+
+        let needle_len = marker.marker.len() + 1;
+        let open_paren_index = call_start + needle_len - 1;
+        let Some(close_paren_index) = find_matching_paren(code, open_paren_index) else {
+            return Err("capability_dynamic_binding_unsupported".to_string());
+        };
+        let args_raw = &code[open_paren_index + 1..close_paren_index];
+        let args = extract_argument_tokens(args_raw);
+        if args.len() != marker.arg_count {
+            return Err("capability_dynamic_binding_unsupported".to_string());
         }
+
+        let field_a = resolve_capability_argument(args[0].as_str(), &literal_bindings)?;
+        let field_b = if marker.arg_count > 1 {
+            resolve_capability_argument(args[1].as_str(), &literal_bindings)?
+        } else {
+            String::new()
+        };
+
+        let response =
+            native_capability.invoke_internal(marker.capability, field_a.clone(), field_b.clone());
+        match response {
+            Ok(value) => {
+                let payload_utf8 = match value {
+                    HostCapabilityValue::None => String::new(),
+                    HostCapabilityValue::Utf8(payload) => payload,
+                };
+                plan.push(GuestCapabilityPlanEntry {
+                    capability: marker.capability.to_string(),
+                    field_a,
+                    field_b,
+                    ok: true,
+                    payload_utf8,
+                    error_code: String::new(),
+                });
+            }
+            Err(_) => return Err("capability_runtime_binding_failed".to_string()),
+        }
+        cursor = close_paren_index + 1;
     }
 
-    if let Ok(mut guard) = run_state.lock() {
-        guard.filtered_stdout_utf8 = Some(String::from_utf8_lossy(&user_stdout).to_string());
-    }
-    stdin_sender.close();
+    Ok(plan)
 }
 
-impl HostCapabilityServer {
-    fn host_root(&self) -> &Path {
-        &self.host_root
-    }
+fn build_guest_runtime_bootstrap_code(
+    code: &str,
+    plan: &[GuestCapabilityPlanEntry],
+) -> Result<String, String> {
+    let plan_literal = encode_guest_capability_plan_python_literal(plan);
+    Ok(format!(
+        "import aegispy as _aegispy\n\
+_aegispy._install_plan({plan_literal})\n\
+aegispy = _aegispy\n\
+del _aegispy\n\
+{code}\n",
+    ))
+}
 
-    fn start(
-        config: HostCapabilityConfig,
-        stdout: MemoryOutputPipe,
-        stdin_sender: DynamicInputSender,
-    ) -> Result<Self, String> {
-        let host_root = create_temp_binding_dir("aegispy-worker-capability")?;
-        let fs_dir = host_root.join(CAPABILITY_FS_DIR);
-        fs::create_dir_all(&fs_dir)
-            .map_err(|error| format!("failed to create capability fs dir: {error}"))?;
-        let run_state = Arc::new(Mutex::new(HostCapabilityRunState::default()));
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread_run_state = Arc::clone(&run_state);
-        let thread_stop = Arc::clone(&stop);
-        let handle = thread::spawn(move || {
-            run_host_capability_wit_server(
-                stdout,
-                stdin_sender,
-                fs_dir,
-                config,
-                thread_run_state,
-                thread_stop,
-            );
-        });
+fn rewrite_capability_bindings_wit_host_abi(
+    code: &str,
+    native_capability: &mut NativeHostCapabilityState,
+) -> Result<String, String> {
+    let literal_bindings = collect_literal_bindings(code);
+    let mut cursor = 0;
+    let mut out = String::with_capacity(code.len());
 
-        Ok(Self {
-            host_root,
-            stop,
-            run_state,
-            handle: Some(handle),
-        })
-    }
-
-    fn stop_and_collect(&mut self) -> HostCapabilityRunState {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+    while cursor < code.len() {
+        let mut next_match: Option<(usize, CapabilityBindingMarker)> = None;
+        for marker in CAPABILITY_BINDING_MARKERS {
+            let needle = format!("{}(", marker.marker);
+            if let Some(found) = code[cursor..].find(&needle) {
+                let absolute = cursor + found;
+                match next_match {
+                    None => {
+                        next_match = Some((absolute, marker));
+                    }
+                    Some((idx, _)) if absolute < idx => {
+                        next_match = Some((absolute, marker));
+                    }
+                    _ => {}
+                }
+            }
         }
-        let state = self
-            .run_state
-            .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default();
-        let _ = fs::remove_dir_all(&self.host_root);
-        state
+
+        let Some((call_start, marker)) = next_match else {
+            out.push_str(&code[cursor..]);
+            break;
+        };
+
+        out.push_str(&code[cursor..call_start]);
+        let needle_len = marker.marker.len() + 1;
+        let open_paren_index = call_start + needle_len - 1;
+        let Some(close_paren_index) = find_matching_paren(code, open_paren_index) else {
+            return Err("capability_dynamic_binding_unsupported".to_string());
+        };
+        let args_raw = &code[open_paren_index + 1..close_paren_index];
+        let args = extract_argument_tokens(args_raw);
+        if args.len() != marker.arg_count {
+            return Err("capability_dynamic_binding_unsupported".to_string());
+        }
+
+        let field_a = resolve_capability_argument(args[0].as_str(), &literal_bindings)?;
+        let field_b = if marker.arg_count > 1 {
+            resolve_capability_argument(args[1].as_str(), &literal_bindings)?
+        } else {
+            String::new()
+        };
+
+        let replacement =
+            match native_capability.invoke_internal(marker.capability, field_a, field_b) {
+                Ok(value) => host_value_to_python_expr(value),
+                Err(_) => return Err("capability_runtime_binding_failed".to_string()),
+            };
+
+        out.push_str(&replacement);
+        cursor = close_paren_index + 1;
     }
+
+    Ok(out)
 }
 
 fn detect_python_stdlib_guest_path(python_home: &Path, guest_root: &str) -> Option<String> {
@@ -2043,6 +1931,7 @@ impl WasiExecutor {
         let enable_fuel = parse_bool_env("AEGISPY_WORKER_WASI_ENABLE_FUEL", false)?;
         let enable_epoch = parse_bool_env("AEGISPY_WORKER_WASI_ENABLE_EPOCH", true)?;
         let enable_store_limits = parse_bool_env("AEGISPY_WORKER_WASI_ENABLE_STORE_LIMITS", true)?;
+        let capability_binding_mode = load_capability_binding_mode()?;
         worker_debug(
             "wasi_init",
             &format!("component={}", component_path.display()),
@@ -2058,6 +1947,13 @@ impl WasiExecutor {
         worker_debug("wasi_init", &format!("fuel={enable_fuel}"));
         worker_debug("wasi_init", &format!("epoch={enable_epoch}"));
         worker_debug("wasi_init", &format!("store_limits={enable_store_limits}"));
+        worker_debug(
+            "wasi_init",
+            &format!(
+                "capability_binding_mode={}",
+                capability_binding_mode.as_str()
+            ),
+        );
 
         if !component_path.exists() {
             return Err(format!(
@@ -2165,6 +2061,7 @@ impl WasiExecutor {
             enable_fuel,
             enable_epoch,
             enable_store_limits,
+            capability_binding_mode,
         })
     }
 
@@ -2199,6 +2096,10 @@ impl WasiExecutor {
         audit.push(json!({
           "kind": "runtime_channel",
           "detailJson": "capability_channel:component-wit"
+        }));
+        audit.push(json!({
+          "kind": "runtime_binding",
+          "detailJson": format!("capability_binding_mode:{}", self.capability_binding_mode.as_str())
         }));
 
         if let Some(result) = enforce_isolation_profile(run, profile, started_ts_ms, &mut audit) {
@@ -2258,19 +2159,11 @@ impl WasiExecutor {
             }
         }
 
-        let stdout_pipe_capacity =
-            clamp_u64_to_usize(stdout_limit.saturating_add(CAPABILITY_WIT_STDOUT_OVERHEAD_BYTES));
-        let stdout_pipe = MemoryOutputPipe::new(stdout_pipe_capacity);
+        let stdout_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stdout_limit));
         let stderr_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stderr_limit));
-        let (runtime_stdin_reader, runtime_stdin_sender) =
-            DynamicInputReader::with_initial(stdin_utf8.as_bytes());
         let capability_config = build_host_capability_config(run, wall_ms);
-        let mut capability_server = match HostCapabilityServer::start(
-            capability_config.clone(),
-            stdout_pipe.clone(),
-            runtime_stdin_sender.clone(),
-        ) {
-            Ok(server) => server,
+        let capability_host_root = match create_temp_binding_dir("aegispy-worker-capability") {
+            Ok(path) => path,
             Err(message) => {
                 return make_error_result(
                     "AEG-ENGINE",
@@ -2282,39 +2175,171 @@ impl WasiExecutor {
                 );
             }
         };
-        let runtime_support_host_dir =
-            match prepare_runtime_support_bindings(capability_server.host_root()) {
-                Ok(path) => path,
-                Err(message) => {
-                    let capability_state = capability_server.stop_and_collect();
-                    audit.extend(capability_state.audit);
-                    return make_error_result(
-                        "AEG-ENGINE",
-                        &message,
-                        "engine_error",
-                        started_ts_ms,
-                        started_ts_ms + 1,
-                        audit,
-                    );
+        let capability_fs_root = capability_host_root.join(CAPABILITY_FS_DIR);
+        if let Err(error) = fs::create_dir_all(&capability_fs_root) {
+            let _ = fs::remove_dir_all(&capability_host_root);
+            return make_error_result(
+                "AEG-ENGINE",
+                &format!("failed to create capability fs dir: {error}"),
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
+        let mut native_capability =
+            NativeHostCapabilityState::new(capability_config.clone(), capability_fs_root);
+        let deterministic_code = rewrite_code_for_determinism(code, run);
+        let runtime_code = match self.capability_binding_mode {
+            CapabilityBindingMode::GuestRuntimeAbi => {
+                let guest_capability_plan = match build_guest_runtime_capability_plan(
+                    &deterministic_code,
+                    &mut native_capability,
+                ) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        audit.extend(native_capability.audit.clone());
+                        let policy_denial = native_capability.policy_denial.clone();
+                        let engine_error = native_capability.engine_error.clone();
+                        let _ = fs::remove_dir_all(&capability_host_root);
+                        if let Some(detail) = policy_denial {
+                            return make_error_result(
+                                "AEG-POLICY-DENIED",
+                                &detail,
+                                "policy_denied",
+                                started_ts_ms,
+                                started_ts_ms + 1,
+                                audit,
+                            );
+                        }
+                        if let Some(detail) = engine_error {
+                            return make_error_result(
+                                "AEG-ENGINE",
+                                &detail,
+                                "engine_error",
+                                started_ts_ms,
+                                started_ts_ms + 1,
+                                audit,
+                            );
+                        }
+                        return make_error_result(
+                            "AEG-ENGINE",
+                            &message,
+                            "engine_error",
+                            started_ts_ms,
+                            started_ts_ms + 1,
+                            audit,
+                        );
+                    }
+                };
+                if guest_capability_plan.is_empty() {
+                    deterministic_code.clone()
+                } else {
+                    match build_guest_runtime_bootstrap_code(
+                        &deterministic_code,
+                        &guest_capability_plan,
+                    ) {
+                        Ok(value) => value,
+                        Err(message) => {
+                            audit.extend(native_capability.audit.clone());
+                            let policy_denial = native_capability.policy_denial.clone();
+                            let engine_error = native_capability.engine_error.clone();
+                            let _ = fs::remove_dir_all(&capability_host_root);
+                            if let Some(detail) = policy_denial {
+                                return make_error_result(
+                                    "AEG-POLICY-DENIED",
+                                    &detail,
+                                    "policy_denied",
+                                    started_ts_ms,
+                                    started_ts_ms + 1,
+                                    audit,
+                                );
+                            }
+                            if let Some(detail) = engine_error {
+                                return make_error_result(
+                                    "AEG-ENGINE",
+                                    &detail,
+                                    "engine_error",
+                                    started_ts_ms,
+                                    started_ts_ms + 1,
+                                    audit,
+                                );
+                            }
+                            return make_error_result(
+                                "AEG-ENGINE",
+                                &message,
+                                "engine_error",
+                                started_ts_ms,
+                                started_ts_ms + 1,
+                                audit,
+                            );
+                        }
+                    }
                 }
-            };
-        let rewritten_code = rewrite_code_for_determinism(code, run);
-        let runtime_code = rewritten_code;
+            }
+            CapabilityBindingMode::RewriteDispatch => {
+                match rewrite_capability_bindings_wit_host_abi(
+                    &deterministic_code,
+                    &mut native_capability,
+                ) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        audit.extend(native_capability.audit.clone());
+                        let policy_denial = native_capability.policy_denial.clone();
+                        let engine_error = native_capability.engine_error.clone();
+                        let _ = fs::remove_dir_all(&capability_host_root);
+                        if let Some(detail) = policy_denial {
+                            return make_error_result(
+                                "AEG-POLICY-DENIED",
+                                &detail,
+                                "policy_denied",
+                                started_ts_ms,
+                                started_ts_ms + 1,
+                                audit,
+                            );
+                        }
+                        if let Some(detail) = engine_error {
+                            return make_error_result(
+                                "AEG-ENGINE",
+                                &detail,
+                                "engine_error",
+                                started_ts_ms,
+                                started_ts_ms + 1,
+                                audit,
+                            );
+                        }
+                        return make_error_result(
+                            "AEG-ENGINE",
+                            &message,
+                            "engine_error",
+                            started_ts_ms,
+                            started_ts_ms + 1,
+                            audit,
+                        );
+                    }
+                }
+            }
+        };
+        worker_debug("wasi_runtime_code", &runtime_code);
         let guest_root = "/runtime";
         let program_name = std::env::var("AEGISPY_WORKER_WASI_PROGRAM_NAME")
             .unwrap_or_else(|_| "python.wasm".to_string());
         let py_path = detect_python_stdlib_guest_path(&self.python_home, guest_root);
         let mut builder = WasiCtxBuilder::new();
-        builder.stdin(AsyncStdinStream::new(runtime_stdin_reader));
+        builder.stdin(AsyncStdinStream::new(StaticInputReader::from_utf8(
+            stdin_utf8,
+        )));
         builder
             .stdout(stdout_pipe.clone())
             .stderr(stderr_pipe.clone());
         builder.env("PYTHONHOME", guest_root);
-        let mut python_path_entries = vec![CAPABILITY_RUNTIME_SUPPORT_GUEST_ROOT.to_string()];
+        let mut python_path_entries = Vec::<String>::new();
         if let Some(path) = py_path {
             python_path_entries.push(path);
         }
-        builder.env("PYTHONPATH", python_path_entries.join(":"));
+        if !python_path_entries.is_empty() {
+            builder.env("PYTHONPATH", python_path_entries.join(":"));
+        }
         builder.env("PYTHONDONTWRITEBYTECODE", "1");
         let args = vec![program_name.as_str(), "-B", "-c", runtime_code.as_str()];
         builder.args(&args);
@@ -2328,8 +2353,8 @@ impl WasiExecutor {
             )
             .is_err()
         {
-            let capability_state = capability_server.stop_and_collect();
-            audit.extend(capability_state.audit);
+            audit.extend(native_capability.audit.clone());
+            let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
                 "AEG-ENGINE",
                 "failed to preopen python home",
@@ -2339,31 +2364,7 @@ impl WasiExecutor {
                 audit,
             );
         }
-        if builder
-            .preopened_dir(
-                &runtime_support_host_dir,
-                CAPABILITY_RUNTIME_SUPPORT_GUEST_ROOT,
-                DirPerms::READ,
-                FilePerms::READ,
-            )
-            .is_err()
-        {
-            let capability_state = capability_server.stop_and_collect();
-            audit.extend(capability_state.audit);
-            return make_error_result(
-                "AEG-ENGINE",
-                "failed to preopen runtime support dir",
-                "engine_error",
-                started_ts_ms,
-                started_ts_ms + 1,
-                audit,
-            );
-        }
         let wasi = builder.build();
-        let native_capability = NativeHostCapabilityState::new(
-            capability_config,
-            capability_server.host_root().join(CAPABILITY_FS_DIR),
-        );
         let runtime_memory_limit = min(
             profile.max_memory_bytes,
             memory_limit.max(ENGINE_MIN_MEMORY_BYTES),
@@ -2394,8 +2395,9 @@ impl WasiExecutor {
                 .set_fuel(cpu_ms.saturating_mul(20_000).max(10_000))
                 .is_err()
         {
-            let capability_state = capability_server.stop_and_collect();
-            audit.extend(capability_state.audit);
+            let native_capability_state = store.data().native_capability.clone();
+            audit.extend(native_capability_state.audit);
+            let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
                 "AEG-ENGINE",
                 "failed to set cpu fuel budget",
@@ -2429,8 +2431,9 @@ impl WasiExecutor {
             if let Some(handle) = ticker {
                 let _ = handle.join();
             }
-            let capability_state = capability_server.stop_and_collect();
-            audit.extend(capability_state.audit);
+            let native_capability_state = store.data().native_capability.clone();
+            audit.extend(native_capability_state.audit);
+            let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
                 "AEG-ENGINE",
                 "failed to initialize wasi linker",
@@ -2450,8 +2453,9 @@ impl WasiExecutor {
             if let Some(handle) = ticker {
                 let _ = handle.join();
             }
-            let capability_state = capability_server.stop_and_collect();
-            audit.extend(capability_state.audit);
+            let native_capability_state = store.data().native_capability.clone();
+            audit.extend(native_capability_state.audit);
+            let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
                 "AEG-ENGINE",
                 "failed to initialize native host import linker",
@@ -2470,17 +2474,12 @@ impl WasiExecutor {
         if let Some(handle) = ticker {
             let _ = handle.join();
         }
-        let capability_state = capability_server.stop_and_collect();
-        audit.extend(capability_state.audit);
+        let _ = fs::remove_dir_all(&capability_host_root);
         audit.extend(native_capability_state.audit.clone());
 
         let stdout_bytes = store.data().stdout.contents();
         let stderr_bytes = store.data().stderr.contents();
-        let raw_stdout_utf8 = String::from_utf8_lossy(stdout_bytes.as_ref()).to_string();
-        let stdout_utf8 = capability_state
-            .filtered_stdout_utf8
-            .clone()
-            .unwrap_or(raw_stdout_utf8);
+        let stdout_utf8 = String::from_utf8_lossy(stdout_bytes.as_ref()).to_string();
         let stderr_utf8 = String::from_utf8_lossy(stderr_bytes.as_ref()).to_string();
         let elapsed_ms = (wall_started.elapsed().as_millis() as u64).max(1);
         let ended_ts_ms = started_ts_ms.saturating_add(elapsed_ms);
@@ -2494,7 +2493,7 @@ impl WasiExecutor {
                 audit,
             );
         }
-        if let Some(detail) = native_capability_state.policy_denial {
+        if let Some(detail) = native_capability_state.policy_denial.clone() {
             return make_error_result(
                 "AEG-POLICY-DENIED",
                 &detail,
@@ -2504,27 +2503,7 @@ impl WasiExecutor {
                 audit,
             );
         }
-        if let Some(detail) = capability_state.policy_denial {
-            return make_error_result(
-                "AEG-POLICY-DENIED",
-                &detail,
-                "policy_denied",
-                started_ts_ms,
-                ended_ts_ms,
-                audit,
-            );
-        }
-        if let Some(detail) = native_capability_state.engine_error {
-            return make_error_result(
-                "AEG-ENGINE",
-                &detail,
-                "engine_error",
-                started_ts_ms,
-                ended_ts_ms,
-                audit,
-            );
-        }
-        if let Some(detail) = capability_state.engine_error {
+        if let Some(detail) = native_capability_state.engine_error.clone() {
             return make_error_result(
                 "AEG-ENGINE",
                 &detail,
@@ -2543,14 +2522,36 @@ impl WasiExecutor {
               "stderrUtf8": stderr_utf8,
               "meta": make_meta(started_ts_ms, ended_ts_ms, &stdout_utf8, &stderr_utf8, "ok", audit)
             }),
-            Ok(Err(())) => make_error_result(
-                "AEG-ENGINE",
-                "wasi execution failed: guest returned non-zero status",
-                "engine_error",
-                started_ts_ms,
-                ended_ts_ms,
-                audit,
-            ),
+            Ok(Err(())) => {
+                if stderr_utf8.contains("capability_guest_module_missing") {
+                    return make_error_result(
+                        "AEG-ENGINE",
+                        "capability_guest_module_missing",
+                        "engine_error",
+                        started_ts_ms,
+                        ended_ts_ms,
+                        audit,
+                    );
+                }
+                if !stderr_utf8.trim().is_empty() {
+                    return make_error_result(
+                        "AEG-ENGINE",
+                        &format!("wasi execution failed: {}", stderr_utf8.trim()),
+                        "engine_error",
+                        started_ts_ms,
+                        ended_ts_ms,
+                        audit,
+                    );
+                }
+                make_error_result(
+                    "AEG-ENGINE",
+                    "wasi execution failed: guest returned non-zero status",
+                    "engine_error",
+                    started_ts_ms,
+                    ended_ts_ms,
+                    audit,
+                )
+            }
             Err(error) => {
                 let message = error.to_string();
                 if message.contains("all fuel consumed")
@@ -2845,7 +2846,37 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct EnvVarRestore {
+        key: String,
+        previous: Option<String>,
+    }
+
+    impl EnvVarRestore {
+        fn capture(key: &str) -> Self {
+            Self {
+                key: key.to_string(),
+                previous: std::env::var(key).ok(),
+            }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            if let Some(value) = &self.previous {
+                std::env::set_var(&self.key, value);
+            } else {
+                std::env::remove_var(&self.key);
+            }
+        }
+    }
+
+    fn env_mutation_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -2886,18 +2917,6 @@ mod tests {
             max_stderr_bytes: 2 * 1024 * 1024,
             deny_env_capability: true,
         }
-    }
-
-    fn sender_buffer_utf8(sender: &DynamicInputSender) -> String {
-        let bytes = sender
-            .shared
-            .lock()
-            .expect("lock sender state")
-            .bytes
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        String::from_utf8(bytes).expect("sender buffer utf8")
     }
 
     #[test]
@@ -2979,113 +2998,186 @@ mod tests {
 
     #[test]
     fn default_executor_mode_is_wasi() {
+        let _env_guard = env_mutation_lock().lock().expect("env lock");
+        let _restore = EnvVarRestore::capture("AEGISPY_WORKER_EXECUTOR");
         std::env::remove_var("AEGISPY_WORKER_EXECUTOR");
         let mode = load_executor_mode().expect("parse default executor mode");
         assert_eq!(mode, WorkerExecutorMode::Wasi);
     }
 
     #[test]
-    fn process_wit_line_uses_json_protocol_and_returns_response() {
-        let env_key = "AEGISPY_TEST_CAPABILITY_JSON_WIRE";
-        std::env::set_var(env_key, "json-wire-ok");
+    fn default_capability_binding_mode_is_guest_runtime_abi() {
+        let _env_guard = env_mutation_lock().lock().expect("env lock");
+        let _restore = EnvVarRestore::capture("AEGISPY_WORKER_CAPABILITY_BINDING_MODE");
+        std::env::remove_var("AEGISPY_WORKER_CAPABILITY_BINDING_MODE");
+        let mode = load_capability_binding_mode().expect("parse default binding mode");
+        assert_eq!(mode, CapabilityBindingMode::GuestRuntimeAbi);
+    }
+
+    #[test]
+    fn capability_binding_mode_accepts_guest_runtime_abi_aliases() {
+        let _env_guard = env_mutation_lock().lock().expect("env lock");
+        let _restore = EnvVarRestore::capture("AEGISPY_WORKER_CAPABILITY_BINDING_MODE");
+        std::env::set_var(
+            "AEGISPY_WORKER_CAPABILITY_BINDING_MODE",
+            "guest-runtime-abi",
+        );
+        let mode = load_capability_binding_mode().expect("parse guest runtime abi mode");
+        assert_eq!(mode, CapabilityBindingMode::GuestRuntimeAbi);
+        std::env::set_var("AEGISPY_WORKER_CAPABILITY_BINDING_MODE", "guest-abi");
+        let guest_alias_mode = load_capability_binding_mode().expect("parse guest-abi alias");
+        assert_eq!(guest_alias_mode, CapabilityBindingMode::GuestRuntimeAbi);
+    }
+
+    #[test]
+    fn capability_binding_mode_accepts_rewrite_dispatch_aliases() {
+        let _env_guard = env_mutation_lock().lock().expect("env lock");
+        let _restore = EnvVarRestore::capture("AEGISPY_WORKER_CAPABILITY_BINDING_MODE");
+        std::env::set_var("AEGISPY_WORKER_CAPABILITY_BINDING_MODE", "rewrite-dispatch");
+        let rewrite_dispatch_mode =
+            load_capability_binding_mode().expect("parse rewrite-dispatch alias");
+        assert_eq!(
+            rewrite_dispatch_mode,
+            CapabilityBindingMode::RewriteDispatch
+        );
+        std::env::set_var("AEGISPY_WORKER_CAPABILITY_BINDING_MODE", "rewrite");
+        let rewrite_mode = load_capability_binding_mode().expect("parse rewrite alias");
+        assert_eq!(rewrite_mode, CapabilityBindingMode::RewriteDispatch);
+    }
+
+    #[test]
+    fn guest_capability_plan_python_literal_encodes_fields() {
+        let literal = encode_guest_capability_plan_python_literal(&[GuestCapabilityPlanEntry {
+            capability: "env_get".to_string(),
+            field_a: "A'B".to_string(),
+            field_b: "slash\\line\n".to_string(),
+            ok: true,
+            payload_utf8: "value".to_string(),
+            error_code: String::new(),
+        }]);
+        assert!(literal.starts_with("[{"));
+        assert!(literal.contains("'capability': 'env_get'"));
+        assert!(literal.contains("'field_a': 'A\\'B'"));
+        assert!(literal.contains("'field_b': 'slash\\\\line\\n'"));
+        assert!(literal.contains("'ok': True"));
+        assert!(literal.contains("'payload_utf8': 'value'"));
+        assert!(literal.ends_with("}]"));
+    }
+
+    #[test]
+    fn guest_runtime_bootstrap_uses_builtin_bridge_path() {
+        let runtime_code = build_guest_runtime_bootstrap_code("print(aegispy.env_get('A'))", &[])
+            .expect("bootstrap code");
+        assert!(runtime_code.contains("import aegispy as _aegispy"));
+        assert!(runtime_code.contains("_install_plan([])"));
+        assert!(runtime_code.contains("aegispy = _aegispy"));
+        assert!(runtime_code.contains("del _aegispy"));
+        assert!(runtime_code.contains("print(aegispy.env_get('A'))"));
+        assert!(!runtime_code.contains("AegisPy guest capability bindings"));
+        assert!(!runtime_code.contains("class _AegisPyBridge"));
+        assert!(!runtime_code.contains("exec("));
+    }
+
+    #[test]
+    fn guest_capability_plan_uses_native_dispatch() {
+        let _env_guard = env_mutation_lock().lock().expect("env lock");
+        let env_key = "AEGISPY_TEST_CAPABILITY_NATIVE_BINDING";
+        let _restore = EnvVarRestore::capture(env_key);
+        std::env::set_var(env_key, "native-wire-ok");
 
         let config = HostCapabilityConfig {
-            fs: None,
+            fs: Some(HostCapabilityFsConfig {
+                read_roots: vec!["/sandbox/write".to_string()],
+                write_roots: vec!["/sandbox/write".to_string()],
+                max_bytes: 1024,
+                max_files: 4,
+            }),
             http: None,
             env: Some(HostCapabilityEnvConfig {
                 allow_keys: vec![env_key.to_string()],
             }),
         };
-
-        let mut fs_state = HostCapabilityFsState::default();
-        let mut http_state = HostCapabilityHttpState::default();
-        let run_state = Arc::new(Mutex::new(HostCapabilityRunState::default()));
-        let temp_dir = unique_temp_dir("capability-wire");
-        let (_reader, sender) = DynamicInputReader::with_initial(b"");
-        let line = format!(
-            "{CAPABILITY_WIT_REQ_PREFIX}{}",
-            json!({
-              "id": 7,
-              "capability": "env_get",
-              "fieldA": env_key,
-              "fieldB": ""
-            })
+        let temp_dir = unique_temp_dir("capability-native");
+        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
+        let code = format!(
+            "path = \"/sandbox/write/out.txt\"\n\
+             data = \"abc\"\n\
+             aegispy.fs_write(path, data)\n\
+             print(aegispy.fs_read(path))\n\
+             env_key = \"{env_key}\"\n\
+             print(aegispy.env_get(env_key))"
         );
 
-        let handled = process_wit_line(
-            line.as_bytes(),
-            &config,
-            &temp_dir,
-            &mut fs_state,
-            &mut http_state,
-            &run_state,
-            &sender,
-        );
-        assert!(handled);
+        let plan = build_guest_runtime_capability_plan(&code, &mut native).expect("plan success");
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[0].capability, "fs_write");
+        assert_eq!(plan[0].payload_utf8, "");
+        assert_eq!(plan[1].capability, "fs_read");
+        assert_eq!(plan[1].payload_utf8, "abc");
+        assert_eq!(plan[2].capability, "env_get");
+        assert_eq!(plan[2].payload_utf8, "native-wire-ok");
+        assert!(native.policy_denial.is_none());
+        assert!(native.engine_error.is_none());
 
-        let wire = sender_buffer_utf8(&sender);
-        assert!(wire.starts_with(CAPABILITY_WIT_RES_PREFIX));
-        let payload = wire
-            .strip_prefix(CAPABILITY_WIT_RES_PREFIX)
-            .expect("wire prefix")
-            .trim_end_matches('\n');
-        let parts = payload.splitn(5, '\t').collect::<Vec<_>>();
-        assert_eq!(parts.len(), 5);
-        assert_eq!(parts[0], "7");
-        assert_eq!(parts[1], "ok");
-        assert_eq!(parts[2], "utf8");
-        assert_eq!(parts[3], "");
-        assert_eq!(parts[4], "json-wire-ok");
-        let state = run_state.lock().expect("run state lock").clone();
-        assert!(state.engine_error.is_none());
-        assert!(state.policy_denial.is_none());
+        let host_file = temp_dir.join("sandbox/write/out.txt");
+        let contents = fs::read_to_string(host_file).expect("host file written");
+        assert_eq!(contents, "abc");
 
         write_artifact(
             "artifacts/security/capability-channel-protocol.json",
             &json!({
               "ok": true,
-              "protocol": "component-wit-json-request-stream",
-              "requestEncoding": "json",
-              "responseEncoding": "tab-escaped",
-              "proof": "process_wit_line_json_roundtrip"
+              "protocol": "component-host-guest-runtime-module-plan-dispatch",
+              "requestEncoding": "host-plan-dispatch",
+              "responseEncoding": "guest-module-plan-python-literal",
+              "proof": "build_guest_runtime_capability_plan"
             }),
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
-        std::env::remove_var(env_key);
     }
 
     #[test]
-    fn process_wit_line_rejects_invalid_json_requests() {
+    fn guest_capability_plan_rejects_dynamic_arguments() {
         let config = HostCapabilityConfig {
-            fs: None,
+            fs: Some(HostCapabilityFsConfig {
+                read_roots: vec!["/sandbox/write".to_string()],
+                write_roots: vec!["/sandbox/write".to_string()],
+                max_bytes: 1024,
+                max_files: 4,
+            }),
             http: None,
             env: None,
         };
-        let mut fs_state = HostCapabilityFsState::default();
-        let mut http_state = HostCapabilityHttpState::default();
-        let run_state = Arc::new(Mutex::new(HostCapabilityRunState::default()));
-        let temp_dir = unique_temp_dir("capability-wire-invalid");
-        let (_reader, sender) = DynamicInputReader::with_initial(b"");
-        let line = format!("{CAPABILITY_WIT_REQ_PREFIX}{{not-json");
+        let temp_dir = unique_temp_dir("capability-native-dynamic");
+        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
+        let code = "path = \"/sandbox/write/out.txt\"\naegispy.fs_write(path + \"/tail\", \"x\")";
 
-        let handled = process_wit_line(
-            line.as_bytes(),
-            &config,
-            &temp_dir,
-            &mut fs_state,
-            &mut http_state,
-            &run_state,
-            &sender,
-        );
-        assert!(handled);
-        assert_eq!(sender_buffer_utf8(&sender), "");
+        let error = build_guest_runtime_capability_plan(code, &mut native).expect_err("plan error");
+        assert_eq!(error, "capability_dynamic_binding_unsupported");
+        assert!(native.policy_denial.is_none());
+        assert!(native.engine_error.is_none());
 
-        let state = run_state.lock().expect("run state lock").clone();
-        assert_eq!(
-            state.engine_error.as_deref(),
-            Some("capability_request_decode_failed:invalid_json")
-        );
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn guest_capability_plan_reports_policy_denials() {
+        let config = HostCapabilityConfig {
+            fs: None,
+            http: None,
+            env: Some(HostCapabilityEnvConfig {
+                allow_keys: vec!["ALLOWED".to_string()],
+            }),
+        };
+        let temp_dir = unique_temp_dir("capability-native-deny");
+        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
+        let code = "aegispy.env_get(\"BLOCKED\")";
+
+        let error = build_guest_runtime_capability_plan(code, &mut native).expect_err("plan error");
+        assert_eq!(error, "capability_runtime_binding_failed");
+        assert_eq!(native.policy_denial.as_deref(), Some("env_key_denied"));
+        assert!(native.engine_error.is_none());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
