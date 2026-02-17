@@ -15,7 +15,7 @@
 1. Host calls `createRuntime` with a host kind.
 2. Runtime validates `RunRequest` shape.
 3. Runtime evaluates policy grants for each capability access attempt.
-4. WASI worker injects a runtime `aegispy` module that calls host capabilities through the fixed `component-wit` WIT-shaped runtime channel.
+4. WASI worker mounts runtime support modules (`aegispy.py` + `sitecustomize.py`) and resolves host capabilities through the fixed `component-wit` WIT-shaped runtime channel.
 5. Runtime enforces limits for wall time, memory marker, and output bytes.
 6. Runtime returns `RunResult` with `meta` and `audit`.
 
@@ -24,6 +24,7 @@
 - Channel: `component-wit` (fixed default for Node/WASI runtime path).
 - Runtime bridge: `component-wit-stream` while direct WIT host imports are being implemented.
 - File-bridge request/response channel is removed from the runtime execution path.
+- Pre-execution capability prelude injection is removed; capability bindings are loaded from runtime-mounted modules.
 
 ## Worker Protocol
 

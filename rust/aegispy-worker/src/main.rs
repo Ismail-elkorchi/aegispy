@@ -754,6 +754,8 @@ fn rewrite_code_for_determinism(code: &str, run: &Value) -> String {
 }
 
 const CAPABILITY_FS_DIR: &str = "fs";
+const CAPABILITY_RUNTIME_SUPPORT_DIR: &str = "runtime-support";
+const CAPABILITY_RUNTIME_SUPPORT_GUEST_ROOT: &str = "/aegispy-runtime-support";
 const CAPABILITY_WIT_REQ_PREFIX: &str = "__AEGISPY_HOST_REQ__";
 const CAPABILITY_WIT_RES_PREFIX: &str = "__AEGISPY_HOST_RES__";
 const CAPABILITY_WIT_STDOUT_OVERHEAD_BYTES: u64 = 512 * 1024;
@@ -1048,10 +1050,9 @@ fn build_host_capability_config(run: &Value, wall_ms: u64) -> HostCapabilityConf
     HostCapabilityConfig { fs, http, env }
 }
 
-fn build_runtime_capability_prelude_wit_host_abi() -> String {
+fn build_runtime_capability_module_wit_host_abi() -> String {
     format!(
         r#"
-import builtins
 import sys
 
 _AEGISPY_REQ_PREFIX = "{req_prefix}"
@@ -1135,21 +1136,48 @@ def _aegispy_http_get(url):
 def _aegispy_env_get(key):
     return _aegispy_host_call("env_get", key, "")
 
-class _AegispyModule:
-    pass
-
-_aegispy_mod = _AegispyModule()
-_aegispy_mod.fs_write = _aegispy_fs_write
-_aegispy_mod.fs_read = _aegispy_fs_read
-_aegispy_mod.http_get = _aegispy_http_get
-_aegispy_mod.env_get = _aegispy_env_get
-sys.modules["aegispy"] = _aegispy_mod
-aegispy = _aegispy_mod
-builtins.aegispy = _aegispy_mod
+fs_write = _aegispy_fs_write
+fs_read = _aegispy_fs_read
+http_get = _aegispy_http_get
+env_get = _aegispy_env_get
+__all__ = ["fs_write", "fs_read", "http_get", "env_get"]
 "#,
         req_prefix = CAPABILITY_WIT_REQ_PREFIX,
         res_prefix = CAPABILITY_WIT_RES_PREFIX
     )
+}
+
+fn build_runtime_sitecustomize_wit_host_abi() -> String {
+    r#"
+import builtins
+import importlib
+
+_aegispy_module = importlib.import_module("aegispy")
+builtins.aegispy = _aegispy_module
+"#
+    .to_string()
+}
+
+fn prepare_runtime_support_bindings(host_root: &Path) -> Result<PathBuf, String> {
+    let support_dir = host_root.join(CAPABILITY_RUNTIME_SUPPORT_DIR);
+    fs::create_dir_all(&support_dir)
+        .map_err(|error| format!("failed to create runtime support dir: {error}"))?;
+
+    let aegispy_module_path = support_dir.join("aegispy.py");
+    fs::write(
+        &aegispy_module_path,
+        build_runtime_capability_module_wit_host_abi(),
+    )
+    .map_err(|error| format!("failed to write runtime support module: {error}"))?;
+
+    let sitecustomize_path = support_dir.join("sitecustomize.py");
+    fs::write(
+        &sitecustomize_path,
+        build_runtime_sitecustomize_wit_host_abi(),
+    )
+    .map_err(|error| format!("failed to write runtime sitecustomize: {error}"))?;
+
+    Ok(support_dir)
 }
 
 fn host_capability_failure_policy(code: impl Into<String>) -> HostCapabilityFailure {
@@ -1593,6 +1621,10 @@ fn run_host_capability_wit_server(
 }
 
 impl HostCapabilityServer {
+    fn host_root(&self) -> &Path {
+        &self.host_root
+    }
+
     fn start(
         run: &Value,
         wall_ms: u64,
@@ -2151,12 +2183,24 @@ impl WasiExecutor {
                 );
             }
         };
+        let runtime_support_host_dir =
+            match prepare_runtime_support_bindings(capability_server.host_root()) {
+                Ok(path) => path,
+                Err(message) => {
+                    let capability_state = capability_server.stop_and_collect();
+                    audit.extend(capability_state.audit);
+                    return make_error_result(
+                        "AEG-ENGINE",
+                        &message,
+                        "engine_error",
+                        started_ts_ms,
+                        started_ts_ms + 1,
+                        audit,
+                    );
+                }
+            };
         let rewritten_code = rewrite_code_for_determinism(code, run);
-        let runtime_code = format!(
-            "{}\n{}",
-            build_runtime_capability_prelude_wit_host_abi(),
-            rewritten_code
-        );
+        let runtime_code = rewritten_code;
         let guest_root = "/runtime";
         let program_name = std::env::var("AEGISPY_WORKER_WASI_PROGRAM_NAME")
             .unwrap_or_else(|_| "python.wasm".to_string());
@@ -2167,17 +2211,13 @@ impl WasiExecutor {
             .stdout(stdout_pipe.clone())
             .stderr(stderr_pipe.clone());
         builder.env("PYTHONHOME", guest_root);
-        if let Some(path) = py_path.as_deref() {
-            builder.env("PYTHONPATH", path);
+        let mut python_path_entries = vec![CAPABILITY_RUNTIME_SUPPORT_GUEST_ROOT.to_string()];
+        if let Some(path) = py_path {
+            python_path_entries.push(path);
         }
+        builder.env("PYTHONPATH", python_path_entries.join(":"));
         builder.env("PYTHONDONTWRITEBYTECODE", "1");
-        let args = vec![
-            program_name.as_str(),
-            "-B",
-            "-S",
-            "-c",
-            runtime_code.as_str(),
-        ];
+        let args = vec![program_name.as_str(), "-B", "-c", runtime_code.as_str()];
         builder.args(&args);
 
         if builder
@@ -2194,6 +2234,26 @@ impl WasiExecutor {
             return make_error_result(
                 "AEG-ENGINE",
                 "failed to preopen python home",
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
+        if builder
+            .preopened_dir(
+                &runtime_support_host_dir,
+                CAPABILITY_RUNTIME_SUPPORT_GUEST_ROOT,
+                DirPerms::READ,
+                FilePerms::READ,
+            )
+            .is_err()
+        {
+            let capability_state = capability_server.stop_and_collect();
+            audit.extend(capability_state.audit);
+            return make_error_result(
+                "AEG-ENGINE",
+                "failed to preopen runtime support dir",
                 "engine_error",
                 started_ts_ms,
                 started_ts_ms + 1,

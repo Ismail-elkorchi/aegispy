@@ -43,3 +43,4 @@
 - Channel: `component-wit` (runtime default and enforced path).
 - Runtime bridge: `component-wit-stream` until direct WIT host imports land.
 - File-bridge fallback channel is removed.
+- Capability bindings are loaded from runtime-mounted `aegispy.py` and `sitecustomize.py` modules, not pre-execution code injection.

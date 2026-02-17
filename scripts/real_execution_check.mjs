@@ -140,6 +140,13 @@ function main() {
     workerCapabilityChannelFixedComponentWit: workerMain.includes(
       '"capability_channel:component-wit"',
     ),
+    workerCapabilityPreludeInjectionPresent: workerMain.includes(
+      "build_runtime_capability_prelude_wit_host_abi",
+    ),
+    workerRuntimeSupportModulePresent: workerMain.includes(
+      "prepare_runtime_support_bindings",
+    ),
+    workerSitecustomizeBindingPresent: workerMain.includes("sitecustomize.py"),
     workerWasiExecutorPresent: workerMain.includes("impl WasiExecutor"),
     workerUsesComponentModel: workerMain.includes("WasmComponent::from_file"),
     workerUsesComponentCommandBinding: workerMain.includes(
@@ -169,6 +176,15 @@ function main() {
   }
   if (!simulationSignals.workerCapabilityChannelFixedComponentWit) {
     failures.push({ error: "worker_capability_channel_not_component_wit" });
+  }
+  if (simulationSignals.workerCapabilityPreludeInjectionPresent) {
+    failures.push({ error: "worker_capability_prelude_injection_present" });
+  }
+  if (!simulationSignals.workerRuntimeSupportModulePresent) {
+    failures.push({ error: "worker_runtime_support_module_missing" });
+  }
+  if (!simulationSignals.workerSitecustomizeBindingPresent) {
+    failures.push({ error: "worker_sitecustomize_binding_missing" });
   }
   if (!simulationSignals.workerWasiExecutorPresent) {
     failures.push({ error: "worker_wasi_executor_missing" });
