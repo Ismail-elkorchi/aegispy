@@ -51,6 +51,8 @@ function main() {
   if (doc.ok !== true) failures.push({ error: "component_manifest_not_ok" });
   if (doc.runtimeBridge !== "component-wit-stream")
     failures.push({ error: "component_runtime_bridge_unexpected" });
+  if (doc.nativeHostImportDetected !== true)
+    failures.push({ error: "component_native_host_import_not_detected" });
   if (doc.requiredHostImportContract !== "aegispy:runtime/capability")
     failures.push({ error: "component_required_host_import_contract_unset" });
   if (!Array.isArray(doc.worldImports) || doc.worldImports.length === 0)

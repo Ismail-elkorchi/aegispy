@@ -26,11 +26,12 @@
 1. `node scripts/release_evidence.mjs`
 2. `pnpm component:build`
 3. `scripts/component_artifact_check`
-4. `scripts/claim_alignment_check`
-5. `scripts/benchmarks_check`
-6. `scripts/security_claims_check`
-7. `scripts/real_execution_check`
-8. `scripts/compat_check`
+4. `AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict scripts/native_host_import_check`
+5. `scripts/claim_alignment_check`
+6. `scripts/benchmarks_check`
+7. `scripts/security_claims_check`
+8. `scripts/real_execution_check`
+9. `scripts/compat_check`
 
 - Output artifact: `artifacts/gates/release-claims.json`.
 
