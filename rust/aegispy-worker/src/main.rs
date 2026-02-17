@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -128,7 +128,7 @@ struct WasiStoreState {
     stdout: MemoryOutputPipe,
     stderr: MemoryOutputPipe,
     limits: StoreLimits,
-    native_capability: NativeHostCapabilityState,
+    native_capability: SharedNativeHostCapabilityState,
 }
 
 impl WasiView for WasiStoreState {
@@ -795,6 +795,8 @@ fn rewrite_code_for_determinism(code: &str, run: &Value) -> String {
 }
 
 const CAPABILITY_FS_DIR: &str = "fs";
+const CAPABILITY_BRIDGE_DIR: &str = "bridge";
+const CAPABILITY_BRIDGE_GUEST_DIR: &str = "/aegispy-bridge";
 
 #[derive(Clone, Default)]
 struct HostCapabilityHttpState {
@@ -847,16 +849,33 @@ struct NativeHostCapabilityState {
     engine_error: Option<String>,
 }
 
+type SharedNativeHostCapabilityState = Arc<Mutex<NativeHostCapabilityState>>;
+
 struct StaticInputReader {
     bytes: Vec<u8>,
     offset: usize,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct HostCapabilityRequest {
     capability: String,
     field_a: String,
     field_b: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct HostCapabilityBridgeRequest {
+    id: String,
+    capability: String,
+    field_a: String,
+    field_b: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct HostCapabilityBridgeResponse {
+    ok: bool,
+    payload_utf8: String,
+    error_code: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1099,37 +1118,100 @@ impl NativeHostCapabilityState {
     }
 }
 
+fn cap_result_engine_error(
+    message: &str,
+) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+    component_host_bindings::aegispy::runtime::capability::CapResult {
+        ok: false,
+        payload_utf8: String::new(),
+        error_code: message.to_string(),
+    }
+}
+
+fn invoke_native_capability_shared(
+    native_capability: &SharedNativeHostCapabilityState,
+    capability: &str,
+    field_a: String,
+    field_b: String,
+) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+    let mut state = match native_capability.lock() {
+        Ok(guard) => guard,
+        Err(_) => return cap_result_engine_error("native_capability_state_poisoned"),
+    };
+    state.invoke(capability, field_a, field_b)
+}
+
+fn snapshot_native_capability_state(
+    native_capability: &SharedNativeHostCapabilityState,
+) -> NativeHostCapabilityState {
+    match native_capability.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => NativeHostCapabilityState {
+            config: HostCapabilityConfig {
+                fs: None,
+                http: None,
+                env: None,
+            },
+            fs_root: PathBuf::new(),
+            fs_state: HostCapabilityFsState::default(),
+            http_state: HostCapabilityHttpState::default(),
+            audit: vec![json!({
+              "kind": "engine_error",
+              "detailJson": "runtime_denied:native_capability_state_poisoned"
+            })],
+            policy_denial: None,
+            engine_error: Some("native_capability_state_poisoned".to_string()),
+        },
+    }
+}
+
 impl component_host_bindings::aegispy::runtime::capability::Host for WasiStoreState {
     fn fs_read(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::FsReadInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("fs_read", input.path, String::new())
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "fs_read",
+            input.path,
+            String::new(),
+        )
     }
 
     fn fs_write(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::FsWriteInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("fs_write", input.path, input.data_utf8)
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "fs_write",
+            input.path,
+            input.data_utf8,
+        )
     }
 
     fn http_get(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::HttpGetInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("http_get", input.url, String::new())
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "http_get",
+            input.url,
+            String::new(),
+        )
     }
 
     fn env_get(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::EnvGetInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("env_get", input.key, String::new())
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "env_get",
+            input.key,
+            String::new(),
+        )
     }
 }
 
@@ -1313,371 +1395,140 @@ fn process_host_capability_request(
     }
 }
 
-fn extract_argument_tokens(input: &str) -> Vec<String> {
-    let bytes = input.as_bytes();
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    let mut depth = 0_i64;
-    let mut quote: Option<u8> = None;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(active) = quote {
-            if byte == b'\\' && index + 1 < bytes.len() {
-                index += 2;
-                continue;
-            }
-            if byte == active {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        if byte == b'(' || byte == b'[' || byte == b'{' {
-            depth += 1;
-            index += 1;
-            continue;
-        }
-        if byte == b')' || byte == b']' || byte == b'}' {
-            depth -= 1;
-            index += 1;
-            continue;
-        }
-        if byte == b',' && depth == 0 {
-            out.push(input[start..index].trim().to_string());
-            start = index + 1;
-        }
-        index += 1;
-    }
-
-    if start < input.len() {
-        out.push(input[start..].trim().to_string());
-    } else if input.trim().is_empty() {
-        out.clear();
-    } else {
-        out.push(String::new());
-    }
-
-    out
+fn parse_bridge_request_file_name(file_name: &str) -> Option<String> {
+    let suffix = file_name.strip_prefix("req-")?;
+    suffix.strip_suffix(".json").map(str::to_string)
 }
 
-fn is_python_identifier(token: &str) -> bool {
-    if token.is_empty() {
-        return false;
-    }
-    let mut chars = token.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return false;
-    }
-    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+fn write_json_atomic(path: &Path, payload: &str) -> Result<(), String> {
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, payload.as_bytes()).map_err(|error| {
+        format!(
+            "bridge_response_write_failed:{}:{error}",
+            tmp_path.to_string_lossy()
+        )
+    })?;
+    fs::rename(&tmp_path, path)
+        .map_err(|error| format!("bridge_response_rename_failed:{}:{error}", path.display()))
 }
 
-fn split_top_level_plus(input: &str) -> Vec<String> {
-    let bytes = input.as_bytes();
-    let mut out = Vec::<String>::new();
-    let mut start = 0;
-    let mut index = 0;
-    let mut depth = 0_i64;
-    let mut quote: Option<u8> = None;
+fn process_bridge_request_file(
+    request_path: &Path,
+    request_id: &str,
+    native_capability: &SharedNativeHostCapabilityState,
+) -> Result<(), String> {
+    let request_text = fs::read_to_string(request_path).map_err(|error| {
+        format!(
+            "bridge_request_read_failed:{}:{error}",
+            request_path.to_string_lossy()
+        )
+    })?;
+    let request: HostCapabilityBridgeRequest =
+        serde_json::from_str(&request_text).map_err(|error| {
+            format!(
+                "bridge_request_parse_failed:{}:{error}",
+                request_path.to_string_lossy()
+            )
+        })?;
 
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(active) = quote {
-            if byte == b'\\' && index + 1 < bytes.len() {
-                index += 2;
-                continue;
-            }
-            if byte == active {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        if byte == b'(' || byte == b'[' || byte == b'{' {
-            depth += 1;
-            index += 1;
-            continue;
-        }
-        if byte == b')' || byte == b']' || byte == b'}' {
-            depth -= 1;
-            index += 1;
-            continue;
-        }
-        if byte == b'+' && depth == 0 {
-            out.push(input[start..index].trim().to_string());
-            start = index + 1;
-        }
-        index += 1;
-    }
-
-    if start <= input.len() {
-        out.push(input[start..].trim().to_string());
-    }
-
-    if out.len() <= 1 {
-        return vec![input.trim().to_string()];
-    }
-    out
-}
-
-fn trim_wrapping_parens(input: &str) -> &str {
-    let mut out = input.trim();
-    loop {
-        if !(out.starts_with('(') && out.ends_with(')')) {
-            return out;
-        }
-        let Some(end) = find_matching_paren(out, 0) else {
-            return out;
-        };
-        if end + 1 != out.len() {
-            return out;
-        }
-        out = out[1..out.len() - 1].trim();
-    }
-}
-
-fn evaluate_python_string_expr(
-    token: &str,
-    literal_bindings: &BTreeMap<String, String>,
-) -> Option<String> {
-    let trimmed = trim_wrapping_parens(token);
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Some(value) = decode_quoted_literal(trimmed) {
-        return Some(value);
-    }
-    if is_python_identifier(trimmed) {
-        return literal_bindings.get(trimmed).cloned();
-    }
-
-    let parts = split_top_level_plus(trimmed);
-    if parts.len() <= 1 {
-        return None;
-    }
-
-    let mut out = String::new();
-    for part in parts {
-        let value = evaluate_python_string_expr(&part, literal_bindings)?;
-        out.push_str(&value);
-    }
-    Some(out)
-}
-
-fn collect_literal_bindings(code: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    for line in code.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let Some((lhs_raw, rhs_raw)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let lhs = lhs_raw.trim();
-        let rhs = rhs_raw.trim();
-        if !is_python_identifier(lhs) {
-            continue;
-        }
-        if let Some(value) = evaluate_python_string_expr(rhs, &out) {
-            out.insert(lhs.to_string(), value);
-        }
-    }
-    out
-}
-
-fn resolve_capability_argument(
-    token: &str,
-    literal_bindings: &BTreeMap<String, String>,
-) -> Result<String, String> {
-    evaluate_python_string_expr(token, literal_bindings)
-        .ok_or_else(|| "capability_dynamic_binding_unsupported".to_string())
-}
-
-fn encode_python_single_quoted_literal(value: &str) -> String {
-    let escaped = value
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-    format!("'{escaped}'")
-}
-
-fn encode_python_bool_literal(value: bool) -> &'static str {
-    if value {
-        "True"
-    } else {
-        "False"
-    }
-}
-
-fn encode_guest_capability_plan_python_literal(plan: &[GuestCapabilityPlanEntry]) -> String {
-    let mut out = String::from("[");
-    for (index, entry) in plan.iter().enumerate() {
-        if index > 0 {
-            out.push_str(", ");
-        }
-        out.push('{');
-        out.push_str("'capability': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.capability));
-        out.push_str(", 'field_a': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.field_a));
-        out.push_str(", 'field_b': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.field_b));
-        out.push_str(", 'ok': ");
-        out.push_str(encode_python_bool_literal(entry.ok));
-        out.push_str(", 'payload_utf8': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.payload_utf8));
-        out.push_str(", 'error_code': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.error_code));
-        out.push('}');
-    }
-    out.push(']');
-    out
-}
-
-#[derive(Clone, Copy)]
-struct CapabilityBindingMarker {
-    marker: &'static str,
-    capability: &'static str,
-    arg_count: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
-struct GuestCapabilityPlanEntry {
-    capability: String,
-    field_a: String,
-    field_b: String,
-    ok: bool,
-    payload_utf8: String,
-    error_code: String,
-}
-
-const CAPABILITY_BINDING_MARKERS: [CapabilityBindingMarker; 4] = [
-    CapabilityBindingMarker {
-        marker: "aegispy.fs_write",
-        capability: "fs_write",
-        arg_count: 2,
-    },
-    CapabilityBindingMarker {
-        marker: "aegispy.fs_read",
-        capability: "fs_read",
-        arg_count: 1,
-    },
-    CapabilityBindingMarker {
-        marker: "aegispy.http_get",
-        capability: "http_get",
-        arg_count: 1,
-    },
-    CapabilityBindingMarker {
-        marker: "aegispy.env_get",
-        capability: "env_get",
-        arg_count: 1,
-    },
-];
-
-fn build_guest_runtime_capability_plan(
-    code: &str,
-    native_capability: &mut NativeHostCapabilityState,
-) -> Result<Vec<GuestCapabilityPlanEntry>, String> {
-    let literal_bindings = collect_literal_bindings(code);
-    let mut cursor = 0;
-    let mut plan = Vec::<GuestCapabilityPlanEntry>::new();
-
-    while cursor < code.len() {
-        let mut next_match: Option<(usize, CapabilityBindingMarker)> = None;
-        for marker in CAPABILITY_BINDING_MARKERS {
-            let needle = format!("{}(", marker.marker);
-            if let Some(found) = code[cursor..].find(&needle) {
-                let absolute = cursor + found;
-                match next_match {
-                    None => {
-                        next_match = Some((absolute, marker));
-                    }
-                    Some((idx, _)) if absolute < idx => {
-                        next_match = Some((absolute, marker));
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let Some((call_start, marker)) = next_match else {
-            break;
-        };
-
-        let needle_len = marker.marker.len() + 1;
-        let open_paren_index = call_start + needle_len - 1;
-        let Some(close_paren_index) = find_matching_paren(code, open_paren_index) else {
-            return Err("capability_dynamic_binding_unsupported".to_string());
-        };
-        let args_raw = &code[open_paren_index + 1..close_paren_index];
-        let args = extract_argument_tokens(args_raw);
-        if args.len() != marker.arg_count {
-            return Err("capability_dynamic_binding_unsupported".to_string());
-        }
-
-        let field_a = resolve_capability_argument(args[0].as_str(), &literal_bindings)?;
-        let field_b = if marker.arg_count > 1 {
-            resolve_capability_argument(args[1].as_str(), &literal_bindings)?
-        } else {
-            String::new()
-        };
-
-        let response =
-            native_capability.invoke_internal(marker.capability, field_a.clone(), field_b.clone());
-        match response {
+    let response = {
+        let mut state = native_capability
+            .lock()
+            .map_err(|_| "native_capability_state_poisoned".to_string())?;
+        match state.invoke_internal(
+            &request.capability,
+            request.field_a.clone(),
+            request.field_b.clone(),
+        ) {
             Ok(value) => {
                 let payload_utf8 = match value {
                     HostCapabilityValue::None => String::new(),
                     HostCapabilityValue::Utf8(payload) => payload,
                 };
-                plan.push(GuestCapabilityPlanEntry {
-                    capability: marker.capability.to_string(),
-                    field_a,
-                    field_b,
+                HostCapabilityBridgeResponse {
                     ok: true,
                     payload_utf8,
                     error_code: String::new(),
-                });
+                }
             }
-            Err(_) => return Err("capability_runtime_binding_failed".to_string()),
+            Err(failure) => HostCapabilityBridgeResponse {
+                ok: false,
+                payload_utf8: String::new(),
+                error_code: failure.code,
+            },
         }
-        cursor = close_paren_index + 1;
-    }
+    };
 
-    Ok(plan)
+    let response_path = request_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("res-{request_id}.json"));
+    let response_payload = serde_json::to_string(&response)
+        .map_err(|error| format!("bridge_response_serialize_failed:{error}"))?;
+    write_json_atomic(&response_path, &response_payload)?;
+    fs::remove_file(request_path).map_err(|error| {
+        format!(
+            "bridge_request_cleanup_failed:{}:{error}",
+            request_path.to_string_lossy()
+        )
+    })?;
+    Ok(())
 }
 
-fn build_guest_runtime_bootstrap_code(
-    code: &str,
-    plan: &[GuestCapabilityPlanEntry],
-) -> Result<String, String> {
-    let plan_literal = encode_guest_capability_plan_python_literal(plan);
-    Ok(format!(
+fn dispatch_capability_bridge_runtime_loop(
+    bridge_dir: PathBuf,
+    native_capability: SharedNativeHostCapabilityState,
+    stop: Arc<AtomicBool>,
+) {
+    while !stop.load(Ordering::Relaxed) {
+        let entries = match fs::read_dir(&bridge_dir) {
+            Ok(entries) => entries,
+            Err(_) => {
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            }
+        };
+
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_file() {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let Some(request_id) = parse_bridge_request_file_name(&file_name) else {
+                continue;
+            };
+
+            let request_path = entry.path();
+            if let Err(error) =
+                process_bridge_request_file(&request_path, &request_id, &native_capability)
+            {
+                if let Ok(mut state) = native_capability.lock() {
+                    if state.engine_error.is_none() {
+                        state.engine_error = Some(error.clone());
+                    }
+                    state.audit.push(json!({
+                      "kind": "engine_error",
+                      "detailJson": format!("runtime_denied:{error}")
+                    }));
+                }
+                let _ = fs::remove_file(&request_path);
+            }
+        }
+
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn build_guest_runtime_bootstrap_code(code: &str) -> String {
+    format!(
         "import aegispy as _aegispy\n\
-_aegispy._install_plan({plan_literal})\n\
 aegispy = _aegispy\n\
 del _aegispy\n\
 {code}\n",
-    ))
+    )
 }
 
 fn detect_python_stdlib_guest_path(python_home: &Path, guest_root: &str) -> Option<String> {
@@ -2205,90 +2056,24 @@ impl WasiExecutor {
                 audit,
             );
         }
-        let mut native_capability =
-            NativeHostCapabilityState::new(capability_config.clone(), capability_fs_root);
+        let capability_bridge_root = capability_host_root.join(CAPABILITY_BRIDGE_DIR);
+        if let Err(error) = fs::create_dir_all(&capability_bridge_root) {
+            let _ = fs::remove_dir_all(&capability_host_root);
+            return make_error_result(
+                "AEG-ENGINE",
+                &format!("failed to create capability bridge dir: {error}"),
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
+        let native_capability = Arc::new(Mutex::new(NativeHostCapabilityState::new(
+            capability_config.clone(),
+            capability_fs_root,
+        )));
         let deterministic_code = rewrite_code_for_determinism(code, run);
-        let guest_capability_plan = match build_guest_runtime_capability_plan(
-            &deterministic_code,
-            &mut native_capability,
-        ) {
-            Ok(value) => value,
-            Err(message) => {
-                audit.extend(native_capability.audit.clone());
-                let policy_denial = native_capability.policy_denial.clone();
-                let engine_error = native_capability.engine_error.clone();
-                let _ = fs::remove_dir_all(&capability_host_root);
-                if let Some(detail) = policy_denial {
-                    return make_error_result(
-                        "AEG-POLICY-DENIED",
-                        &detail,
-                        "policy_denied",
-                        started_ts_ms,
-                        started_ts_ms + 1,
-                        audit,
-                    );
-                }
-                if let Some(detail) = engine_error {
-                    return make_error_result(
-                        "AEG-ENGINE",
-                        &detail,
-                        "engine_error",
-                        started_ts_ms,
-                        started_ts_ms + 1,
-                        audit,
-                    );
-                }
-                return make_error_result(
-                    "AEG-ENGINE",
-                    &message,
-                    "engine_error",
-                    started_ts_ms,
-                    started_ts_ms + 1,
-                    audit,
-                );
-            }
-        };
-        let runtime_code = if guest_capability_plan.is_empty() {
-            deterministic_code.clone()
-        } else {
-            match build_guest_runtime_bootstrap_code(&deterministic_code, &guest_capability_plan) {
-                Ok(value) => value,
-                Err(message) => {
-                    audit.extend(native_capability.audit.clone());
-                    let policy_denial = native_capability.policy_denial.clone();
-                    let engine_error = native_capability.engine_error.clone();
-                    let _ = fs::remove_dir_all(&capability_host_root);
-                    if let Some(detail) = policy_denial {
-                        return make_error_result(
-                            "AEG-POLICY-DENIED",
-                            &detail,
-                            "policy_denied",
-                            started_ts_ms,
-                            started_ts_ms + 1,
-                            audit,
-                        );
-                    }
-                    if let Some(detail) = engine_error {
-                        return make_error_result(
-                            "AEG-ENGINE",
-                            &detail,
-                            "engine_error",
-                            started_ts_ms,
-                            started_ts_ms + 1,
-                            audit,
-                        );
-                    }
-                    return make_error_result(
-                        "AEG-ENGINE",
-                        &message,
-                        "engine_error",
-                        started_ts_ms,
-                        started_ts_ms + 1,
-                        audit,
-                    );
-                }
-            }
-        };
+        let runtime_code = build_guest_runtime_bootstrap_code(&deterministic_code);
         worker_debug("wasi_runtime_code", &runtime_code);
         let guest_root = "/runtime";
         let program_name = std::env::var("AEGISPY_WORKER_WASI_PROGRAM_NAME")
@@ -2310,6 +2095,8 @@ impl WasiExecutor {
             builder.env("PYTHONPATH", python_path_entries.join(":"));
         }
         builder.env("PYTHONDONTWRITEBYTECODE", "1");
+        builder.env("AEGISPY_CAP_BRIDGE_GUEST_DIR", CAPABILITY_BRIDGE_GUEST_DIR);
+        builder.env("AEGISPY_CAP_BRIDGE_TIMEOUT_MS", wall_ms.max(1).to_string());
         let args = vec![program_name.as_str(), "-B", "-c", runtime_code.as_str()];
         builder.args(&args);
 
@@ -2322,11 +2109,33 @@ impl WasiExecutor {
             )
             .is_err()
         {
-            audit.extend(native_capability.audit.clone());
+            let native_capability_state = snapshot_native_capability_state(&native_capability);
+            audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
                 "AEG-ENGINE",
                 "failed to preopen python home",
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
+        if builder
+            .preopened_dir(
+                &capability_bridge_root,
+                CAPABILITY_BRIDGE_GUEST_DIR,
+                DirPerms::READ | DirPerms::MUTATE,
+                FilePerms::READ | FilePerms::WRITE,
+            )
+            .is_err()
+        {
+            let native_capability_state = snapshot_native_capability_state(&native_capability);
+            audit.extend(native_capability_state.audit);
+            let _ = fs::remove_dir_all(&capability_host_root);
+            return make_error_result(
+                "AEG-ENGINE",
+                "failed to preopen capability bridge dir",
                 "engine_error",
                 started_ts_ms,
                 started_ts_ms + 1,
@@ -2364,7 +2173,8 @@ impl WasiExecutor {
                 .set_fuel(cpu_ms.saturating_mul(20_000).max(10_000))
                 .is_err()
         {
-            let native_capability_state = store.data().native_capability.clone();
+            let native_capability_state =
+                snapshot_native_capability_state(&store.data().native_capability);
             audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
@@ -2400,7 +2210,8 @@ impl WasiExecutor {
             if let Some(handle) = ticker {
                 let _ = handle.join();
             }
-            let native_capability_state = store.data().native_capability.clone();
+            let native_capability_state =
+                snapshot_native_capability_state(&store.data().native_capability);
             audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
@@ -2422,7 +2233,8 @@ impl WasiExecutor {
             if let Some(handle) = ticker {
                 let _ = handle.join();
             }
-            let native_capability_state = store.data().native_capability.clone();
+            let native_capability_state =
+                snapshot_native_capability_state(&store.data().native_capability);
             audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
@@ -2435,14 +2247,27 @@ impl WasiExecutor {
             );
         }
 
+        let bridge_stop = Arc::clone(&stop);
+        let bridge_native_capability = store.data().native_capability.clone();
+        let bridge_dir = capability_bridge_root.clone();
+        let bridge_dispatcher = thread::spawn(move || {
+            dispatch_capability_bridge_runtime_loop(
+                bridge_dir,
+                bridge_native_capability,
+                bridge_stop,
+            )
+        });
+
         let run_outcome = WasiCommand::instantiate(&mut store, &self.component, &linker)
             .and_then(|command| command.wasi_cli_run().call_run(&mut store));
-        let native_capability_state = store.data().native_capability.clone();
 
         stop.store(true, Ordering::Relaxed);
         if let Some(handle) = ticker {
             let _ = handle.join();
         }
+        let _ = bridge_dispatcher.join();
+        let native_capability_state =
+            snapshot_native_capability_state(&store.data().native_capability);
         let _ = fs::remove_dir_all(&capability_host_root);
         audit.extend(native_capability_state.audit.clone());
 
@@ -2555,6 +2380,20 @@ impl WasiExecutor {
                         "AEG-MEMORY-LIMIT",
                         "memory budget reached",
                         "memory_limit",
+                        started_ts_ms,
+                        ended_ts_ms,
+                        audit,
+                    );
+                }
+
+                if !stderr_utf8.trim().is_empty() {
+                    return make_error_result(
+                        "AEG-ENGINE",
+                        &format!(
+                            "wasi execution failed: {message}; guest stderr: {}",
+                            stderr_utf8.trim()
+                        ),
+                        "engine_error",
                         started_ts_ms,
                         ended_ts_ms,
                         audit,
@@ -3018,91 +2857,71 @@ mod tests {
     }
 
     #[test]
-    fn guest_capability_plan_python_literal_encodes_fields() {
-        let literal = encode_guest_capability_plan_python_literal(&[GuestCapabilityPlanEntry {
-            capability: "env_get".to_string(),
-            field_a: "A'B".to_string(),
-            field_b: "slash\\line\n".to_string(),
-            ok: true,
-            payload_utf8: "value".to_string(),
-            error_code: String::new(),
-        }]);
-        assert!(literal.starts_with("[{"));
-        assert!(literal.contains("'capability': 'env_get'"));
-        assert!(literal.contains("'field_a': 'A\\'B'"));
-        assert!(literal.contains("'field_b': 'slash\\\\line\\n'"));
-        assert!(literal.contains("'ok': True"));
-        assert!(literal.contains("'payload_utf8': 'value'"));
-        assert!(literal.ends_with("}]"));
-    }
-
-    #[test]
     fn guest_runtime_bootstrap_uses_builtin_bridge_path() {
-        let runtime_code = build_guest_runtime_bootstrap_code("print(aegispy.env_get('A'))", &[])
-            .expect("bootstrap code");
+        let runtime_code = build_guest_runtime_bootstrap_code("print(aegispy.env_get('A'))");
         assert!(runtime_code.contains("import aegispy as _aegispy"));
-        assert!(runtime_code.contains("_install_plan([])"));
         assert!(runtime_code.contains("aegispy = _aegispy"));
         assert!(runtime_code.contains("del _aegispy"));
         assert!(runtime_code.contains("print(aegispy.env_get('A'))"));
+        assert!(!runtime_code.contains("_install_plan("));
         assert!(!runtime_code.contains("AegisPy guest capability bindings"));
         assert!(!runtime_code.contains("class _AegisPyBridge"));
         assert!(!runtime_code.contains("exec("));
     }
 
     #[test]
-    fn guest_capability_plan_uses_native_dispatch() {
+    fn runtime_bridge_dispatch_processes_requests() {
         let _env_guard = env_mutation_lock().lock().expect("env lock");
         let env_key = "AEGISPY_TEST_CAPABILITY_NATIVE_BINDING";
         let _restore = EnvVarRestore::capture(env_key);
         std::env::set_var(env_key, "native-wire-ok");
 
         let config = HostCapabilityConfig {
-            fs: Some(HostCapabilityFsConfig {
-                read_roots: vec!["/sandbox/write".to_string()],
-                write_roots: vec!["/sandbox/write".to_string()],
-                max_bytes: 1024,
-                max_files: 4,
-            }),
+            fs: None,
             http: None,
             env: Some(HostCapabilityEnvConfig {
                 allow_keys: vec![env_key.to_string()],
             }),
         };
-        let temp_dir = unique_temp_dir("capability-native");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code = format!(
-            "path = \"/sandbox/write/out.txt\"\n\
-             data = \"abc\"\n\
-             aegispy.fs_write(path, data)\n\
-             print(aegispy.fs_read(path))\n\
-             env_key = \"{env_key}\"\n\
-             print(aegispy.env_get(env_key))"
-        );
+        let temp_dir = unique_temp_dir("capability-bridge-runtime");
+        let fs_root = temp_dir.join("fs");
+        fs::create_dir_all(&fs_root).expect("create fs root");
+        let request_path = temp_dir.join("req-bridge-1.json");
+        fs::write(
+            &request_path,
+            serde_json::to_vec(&HostCapabilityBridgeRequest {
+                id: "bridge-1".to_string(),
+                capability: "env_get".to_string(),
+                field_a: env_key.to_string(),
+                field_b: String::new(),
+            })
+            .expect("serialize bridge request"),
+        )
+        .expect("write bridge request");
+        let native = Arc::new(Mutex::new(NativeHostCapabilityState::new(config, fs_root)));
 
-        let plan = build_guest_runtime_capability_plan(&code, &mut native).expect("plan success");
-        assert_eq!(plan.len(), 3);
-        assert_eq!(plan[0].capability, "fs_write");
-        assert_eq!(plan[0].payload_utf8, "");
-        assert_eq!(plan[1].capability, "fs_read");
-        assert_eq!(plan[1].payload_utf8, "abc");
-        assert_eq!(plan[2].capability, "env_get");
-        assert_eq!(plan[2].payload_utf8, "native-wire-ok");
-        assert!(native.policy_denial.is_none());
-        assert!(native.engine_error.is_none());
-
-        let host_file = temp_dir.join("sandbox/write/out.txt");
-        let contents = fs::read_to_string(host_file).expect("host file written");
-        assert_eq!(contents, "abc");
+        process_bridge_request_file(&request_path, "bridge-1", &native)
+            .expect("process bridge request");
+        assert!(!request_path.exists());
+        let response_path = temp_dir.join("res-bridge-1.json");
+        let response: HostCapabilityBridgeResponse =
+            serde_json::from_slice(&fs::read(&response_path).expect("read bridge response"))
+                .expect("parse bridge response");
+        assert!(response.ok);
+        assert_eq!(response.payload_utf8, "native-wire-ok");
+        assert_eq!(response.error_code, "");
+        let native_state = snapshot_native_capability_state(&native);
+        assert!(native_state.policy_denial.is_none());
+        assert!(native_state.engine_error.is_none());
 
         write_artifact(
             "artifacts/security/capability-channel-protocol.json",
             &json!({
               "ok": true,
-              "protocol": "component-host-guest-runtime-module-plan-dispatch",
-              "requestEncoding": "host-plan-dispatch",
-              "responseEncoding": "guest-module-plan-python-literal",
-              "proof": "build_guest_runtime_capability_plan"
+              "protocol": "component-host-guest-runtime-module-call-dispatch",
+              "requestEncoding": "guest-runtime-json-call-request",
+              "responseEncoding": "host-runtime-json-call-response",
+              "proof": "process_bridge_request_file"
             }),
         );
 
@@ -3110,64 +2929,7 @@ mod tests {
     }
 
     #[test]
-    fn guest_capability_plan_supports_simple_dynamic_string_expressions() {
-        let config = HostCapabilityConfig {
-            fs: Some(HostCapabilityFsConfig {
-                read_roots: vec!["/sandbox/write".to_string()],
-                write_roots: vec!["/sandbox/write".to_string()],
-                max_bytes: 1024,
-                max_files: 4,
-            }),
-            http: None,
-            env: None,
-        };
-        let temp_dir = unique_temp_dir("capability-native-dynamic");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code = "root = \"/sandbox/write\"\n\
-                    path = (root + \"/out\") + \".txt\"\n\
-                    aegispy.fs_write(path, \"x\")\n\
-                    print(aegispy.fs_read(path))";
-
-        let plan =
-            build_guest_runtime_capability_plan(code, &mut native).expect("dynamic plan success");
-        assert_eq!(plan.len(), 2);
-        assert_eq!(plan[0].capability, "fs_write");
-        assert_eq!(plan[0].field_a, "/sandbox/write/out.txt");
-        assert_eq!(plan[1].capability, "fs_read");
-        assert_eq!(plan[1].payload_utf8, "x");
-        assert!(native.policy_denial.is_none());
-        assert!(native.engine_error.is_none());
-
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn guest_capability_plan_rejects_unresolved_runtime_expressions() {
-        let config = HostCapabilityConfig {
-            fs: Some(HostCapabilityFsConfig {
-                read_roots: vec!["/sandbox/write".to_string()],
-                write_roots: vec!["/sandbox/write".to_string()],
-                max_bytes: 1024,
-                max_files: 4,
-            }),
-            http: None,
-            env: None,
-        };
-        let temp_dir = unique_temp_dir("capability-native-unresolved");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code =
-            "suffix = input(\"ignored\")\npath = \"/sandbox/write/out\" + suffix\naegispy.fs_write(path, \"x\")";
-
-        let error = build_guest_runtime_capability_plan(code, &mut native).expect_err("plan error");
-        assert_eq!(error, "capability_dynamic_binding_unsupported");
-        assert!(native.policy_denial.is_none());
-        assert!(native.engine_error.is_none());
-
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn guest_capability_plan_reports_policy_denials() {
+    fn runtime_bridge_dispatch_reports_policy_denials() {
         let config = HostCapabilityConfig {
             fs: None,
             http: None,
@@ -3176,13 +2938,35 @@ mod tests {
             }),
         };
         let temp_dir = unique_temp_dir("capability-native-deny");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code = "aegispy.env_get(\"BLOCKED\")";
-
-        let error = build_guest_runtime_capability_plan(code, &mut native).expect_err("plan error");
-        assert_eq!(error, "capability_runtime_binding_failed");
-        assert_eq!(native.policy_denial.as_deref(), Some("env_key_denied"));
-        assert!(native.engine_error.is_none());
+        let fs_root = temp_dir.join("fs");
+        fs::create_dir_all(&fs_root).expect("create fs root");
+        let request_path = temp_dir.join("req-bridge-deny.json");
+        fs::write(
+            &request_path,
+            serde_json::to_vec(&HostCapabilityBridgeRequest {
+                id: "bridge-deny".to_string(),
+                capability: "env_get".to_string(),
+                field_a: "BLOCKED".to_string(),
+                field_b: String::new(),
+            })
+            .expect("serialize bridge request"),
+        )
+        .expect("write bridge request");
+        let native = Arc::new(Mutex::new(NativeHostCapabilityState::new(config, fs_root)));
+        process_bridge_request_file(&request_path, "bridge-deny", &native)
+            .expect("process bridge request");
+        let response_path = temp_dir.join("res-bridge-deny.json");
+        let response: HostCapabilityBridgeResponse =
+            serde_json::from_slice(&fs::read(&response_path).expect("read bridge response"))
+                .expect("parse bridge response");
+        assert!(!response.ok);
+        assert_eq!(response.payload_utf8, "");
+        assert_eq!(response.error_code, "env_key_denied");
+        let native_state = snapshot_native_capability_state(&native);
+        assert_eq!(
+            native_state.policy_denial.as_deref(),
+            Some("env_key_denied")
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

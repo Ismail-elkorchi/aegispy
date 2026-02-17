@@ -18,7 +18,7 @@ const baseRequest: Omit<RunRequest, "code"> = {
       cpuMs: 250,
     },
     bytes: {
-      memoryBytes: 1024 * 1024,
+      memoryBytes: 64 * 1024 * 1024,
       stdoutBytes: 1024,
       stderrBytes: 1024,
     },

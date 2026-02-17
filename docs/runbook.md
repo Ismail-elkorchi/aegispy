@@ -41,10 +41,9 @@
 ## Capability Channel Controls
 
 - Channel: `component-wit` (runtime default and enforced path).
-- Runtime bridge: `component-host-guest-runtime-module-plan-dispatch` (guest module runtime path; no stream bridge).
+- Runtime bridge: `component-host-guest-runtime-module-call-dispatch` (guest module runtime path; no stream bridge).
 - Component artifact now includes a typed `aegispy:runtime/capability` import contract and worker host-linker bindings.
-- File-bridge fallback channel is removed.
-- Capability calls are served by a host-built runtime plan consumed by the guest `aegispy` module imported from the shipped WASI Python runtime path.
+- Guest runtime dispatch uses bridge request/response files to invoke host ABI calls directly at execution time.
 - Runtime source-injection bridge loading is not used by the default hardened path.
 - Worker capability binding mode is controlled by `AEGISPY_WORKER_CAPABILITY_BINDING_MODE`:
 - `guest-runtime-abi` is default and enforced.
