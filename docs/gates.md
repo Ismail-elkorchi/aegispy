@@ -16,17 +16,20 @@
 - `scripts/dependency_boundary_check`
 - `scripts/no_control_plane_ref_check`
 - `scripts/no_stub_path_check`
+- `scripts/component_artifact_check`
 
 ## Release Claim Gate
 
 - `bash scripts/release_claims_check` runs:
 
 1. `node scripts/release_evidence.mjs`
-2. `scripts/claim_alignment_check`
-3. `scripts/benchmarks_check`
-4. `scripts/security_claims_check`
-5. `scripts/real_execution_check`
-6. `scripts/compat_check`
+2. `pnpm component:build`
+3. `scripts/component_artifact_check`
+4. `scripts/claim_alignment_check`
+5. `scripts/benchmarks_check`
+6. `scripts/security_claims_check`
+7. `scripts/real_execution_check`
+8. `scripts/compat_check`
 
 - Output artifact: `artifacts/gates/release-claims.json`.
 
@@ -37,6 +40,8 @@
 - `artifacts/security/runtime-policy-denials.json`
 - `artifacts/security/isolation-profile.json`
 - `artifacts/tests/real-engine-default.json`
+- `artifacts/component/build.json`
+- `artifacts/gates/component-artifact-check.json`
 - `artifacts/gates/claim-alignment-check.json`
 - `artifacts/gates/real-execution-check.json`
 

@@ -46,6 +46,8 @@ function main() {
       failures.push({ error: "missing_isolation_denial_proof_runtime" });
     if (doc.transport !== "process")
       failures.push({ error: "runtime_denials_not_process_transport" });
+    if (doc.capabilityChannel !== "component-wit")
+      failures.push({ error: "runtime_denials_not_component_wit_channel" });
   }
 
   if (!fs.existsSync(isolationProfilePath)) {
@@ -62,6 +64,8 @@ function main() {
     if (doc.ok !== true) failures.push({ error: "isolation_profile_not_ok" });
     if (doc.transport !== "process")
       failures.push({ error: "isolation_profile_not_process_transport" });
+    if (doc.capabilityChannel !== "component-wit")
+      failures.push({ error: "isolation_profile_not_component_wit_channel" });
     if (profileName !== "strict")
       failures.push({ error: "isolation_profile_not_strict" });
   }

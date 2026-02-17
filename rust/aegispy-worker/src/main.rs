@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::cmp::min;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -10,12 +10,17 @@ use std::process::Command;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use wasmtime::{Config, Engine, Linker, Module, OptLevel, Store, StoreLimits, StoreLimitsBuilder};
-use wasmtime_wasi::p1::{add_to_linker_sync, WasiP1Ctx};
-use wasmtime_wasi::p2::pipe::{MemoryInputPipe, MemoryOutputPipe};
-use wasmtime_wasi::{DirPerms, FilePerms, I32Exit, WasiCtxBuilder};
+use tokio::io::{AsyncRead, ReadBuf};
+use wasmtime::component::{Component as WasmComponent, Linker as ComponentLinker, ResourceTable};
+use wasmtime::{Config, Engine, OptLevel, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime_wasi::cli::AsyncStdinStream;
+use wasmtime_wasi::p2::add_to_linker_sync as add_to_component_linker_sync;
+use wasmtime_wasi::p2::bindings::sync::Command as WasiCommand;
+use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 #[derive(Debug, Deserialize)]
 struct RunRequestEnvelope {
@@ -76,7 +81,7 @@ impl WorkerExecutorMode {
 #[derive(Clone)]
 struct WasiExecutor {
     engine: Engine,
-    module: Module,
+    component: WasmComponent,
     python_home: PathBuf,
     enable_fuel: bool,
     enable_epoch: bool,
@@ -84,10 +89,20 @@ struct WasiExecutor {
 }
 
 struct WasiStoreState {
-    wasi: WasiP1Ctx,
+    wasi: WasiCtx,
+    table: ResourceTable,
     stdout: MemoryOutputPipe,
     stderr: MemoryOutputPipe,
     limits: StoreLimits,
+}
+
+impl WasiView for WasiStoreState {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
 }
 
 const ENGINE_MIN_MEMORY_BYTES: u64 = 128 * 1024 * 1024;
@@ -738,10 +753,10 @@ fn rewrite_code_for_determinism(code: &str, run: &Value) -> String {
     rewritten
 }
 
-const CAPABILITY_GUEST_ROOT: &str = "/aegispy-capability";
-const CAPABILITY_REQUESTS_DIR: &str = "requests";
-const CAPABILITY_RESPONSES_DIR: &str = "responses";
 const CAPABILITY_FS_DIR: &str = "fs";
+const CAPABILITY_WIT_REQ_PREFIX: &str = "__AEGISPY_HOST_REQ__";
+const CAPABILITY_WIT_RES_PREFIX: &str = "__AEGISPY_HOST_RES__";
+const CAPABILITY_WIT_STDOUT_OVERHEAD_BYTES: u64 = 512 * 1024;
 
 #[derive(Default)]
 struct HostCapabilityHttpState {
@@ -788,6 +803,7 @@ struct HostCapabilityRunState {
     audit: Vec<Value>,
     policy_denial: Option<String>,
     engine_error: Option<String>,
+    filtered_stdout_utf8: Option<String>,
 }
 
 struct HostCapabilityServer {
@@ -795,6 +811,23 @@ struct HostCapabilityServer {
     stop: Arc<AtomicBool>,
     run_state: Arc<Mutex<HostCapabilityRunState>>,
     handle: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone)]
+struct DynamicInputReader {
+    shared: Arc<Mutex<DynamicInputState>>,
+}
+
+#[derive(Default)]
+struct DynamicInputState {
+    bytes: VecDeque<u8>,
+    closed: bool,
+    waker: Option<Waker>,
+}
+
+#[derive(Clone)]
+struct DynamicInputSender {
+    shared: Arc<Mutex<DynamicInputState>>,
 }
 
 #[derive(Debug)]
@@ -836,6 +869,84 @@ fn create_temp_binding_dir(prefix: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&dir)
         .map_err(|error| format!("failed to create capability temp dir: {error}"))?;
     Ok(dir)
+}
+
+impl DynamicInputReader {
+    fn with_initial(initial: &[u8]) -> (Self, DynamicInputSender) {
+        let mut state = DynamicInputState::default();
+        for byte in initial {
+            state.bytes.push_back(*byte);
+        }
+        let shared = Arc::new(Mutex::new(state));
+        (
+            Self {
+                shared: Arc::clone(&shared),
+            },
+            DynamicInputSender { shared },
+        )
+    }
+}
+
+impl DynamicInputSender {
+    fn push_bytes(&self, payload: &[u8]) {
+        let mut wake = None;
+        if let Ok(mut guard) = self.shared.lock() {
+            for byte in payload {
+                guard.bytes.push_back(*byte);
+            }
+            wake = guard.waker.take();
+        }
+        if let Some(waker) = wake {
+            waker.wake();
+        }
+    }
+
+    fn push_line(&self, payload: &str) {
+        self.push_bytes(payload.as_bytes());
+        self.push_bytes(b"\n");
+    }
+
+    fn close(&self) {
+        let mut wake = None;
+        if let Ok(mut guard) = self.shared.lock() {
+            guard.closed = true;
+            wake = guard.waker.take();
+        }
+        if let Some(waker) = wake {
+            waker.wake();
+        }
+    }
+}
+
+impl AsyncRead for DynamicInputReader {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let mut guard = match self.shared.lock() {
+            Ok(value) => value,
+            Err(_) => {
+                return Poll::Ready(Err(io::Error::other("stdin channel poisoned")));
+            }
+        };
+
+        if guard.bytes.is_empty() {
+            if guard.closed {
+                return Poll::Ready(Ok(()));
+            }
+            guard.waker = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+
+        while buf.remaining() > 0 {
+            let Some(byte) = guard.bytes.pop_front() else {
+                break;
+            };
+            buf.put_slice(&[byte]);
+        }
+        Poll::Ready(Ok(()))
+    }
 }
 
 fn sanitize_virtual_root(root: &str) -> Result<PathBuf, String> {
@@ -937,18 +1048,14 @@ fn build_host_capability_config(run: &Value, wall_ms: u64) -> HostCapabilityConf
     HostCapabilityConfig { fs, http, env }
 }
 
-fn build_runtime_capability_prelude(guest_root: &str, wall_ms: u64) -> String {
-    let spin_max = wall_ms.saturating_mul(4).max(200);
+fn build_runtime_capability_prelude_wit_host_abi() -> String {
     format!(
         r#"
 import builtins
-import os
 import sys
-import time
 
-_AEGISPY_REQ_DIR = "{guest_root}/{request_dir}"
-_AEGISPY_RES_DIR = "{guest_root}/{response_dir}"
-_AEGISPY_SPIN_MAX = {spin_max}
+_AEGISPY_REQ_PREFIX = "{req_prefix}"
+_AEGISPY_RES_PREFIX = "{res_prefix}"
 _AEGISPY_SEQ = 0
 
 def _aegispy_wire_escape(value):
@@ -977,50 +1084,43 @@ def _aegispy_wire_unescape(value):
         index = index + 1
     return "".join(out)
 
-def _aegispy_encode_request(capability, field_a, field_b):
-    return "\n".join([
-        capability,
-        _aegispy_wire_escape(field_a),
-        _aegispy_wire_escape(field_b),
-        "",
-    ])
-
-def _aegispy_decode_response(raw):
-    lines = raw.split("\n")
-    while len(lines) < 4:
-        lines.append("")
-    ok = lines[0] == "ok"
-    value_kind = lines[1]
-    error_code = _aegispy_wire_unescape(lines[2])
-    payload = _aegispy_wire_unescape(lines[3])
-    return ok, value_kind, error_code, payload
-
 def _aegispy_host_call(capability, field_a, field_b):
     global _AEGISPY_SEQ
     _AEGISPY_SEQ = _AEGISPY_SEQ + 1
     req_id = _AEGISPY_SEQ
-    req_body = _aegispy_encode_request(capability, field_a, field_b)
-    req_tmp = f"{{_AEGISPY_REQ_DIR}}/req-{{req_id}}.tmp"
-    req_path = f"{{_AEGISPY_REQ_DIR}}/req-{{req_id}}.json"
-    res_path = f"{{_AEGISPY_RES_DIR}}/res-{{req_id}}.json"
-    with open(req_tmp, "w", encoding="utf-8") as handle:
-        handle.write(req_body)
-    os.replace(req_tmp, req_path)
-    spins = 0
-    while spins < _AEGISPY_SPIN_MAX:
-        if os.path.exists(res_path):
-            with open(res_path, "r", encoding="utf-8") as handle:
-                response_raw = handle.read()
-            os.remove(res_path)
-            ok, value_kind, error_code, payload = _aegispy_decode_response(response_raw)
-            if ok:
-                if value_kind == "none":
-                    return None
-                return payload
-            raise RuntimeError(error_code or "capability_error")
-        spins = spins + 1
-        time.sleep(0.001)
-    raise RuntimeError("capability_timeout")
+    frame = "\t".join(
+        [
+            str(req_id),
+            capability,
+            _aegispy_wire_escape(field_a),
+            _aegispy_wire_escape(field_b),
+        ]
+    )
+    sys.stdout.write(_AEGISPY_REQ_PREFIX + frame + "\n")
+    sys.stdout.flush()
+
+    while True:
+        line = sys.stdin.readline()
+        if line == "":
+            raise RuntimeError("capability_channel_closed")
+        line = line.rstrip("\r\n")
+        if not line.startswith(_AEGISPY_RES_PREFIX):
+            continue
+        raw = line[len(_AEGISPY_RES_PREFIX):]
+        parts = raw.split("\t", 4)
+        if len(parts) < 5:
+            continue
+        if parts[0] != str(req_id):
+            continue
+        status = parts[1]
+        value_kind = parts[2]
+        error_code = _aegispy_wire_unescape(parts[3])
+        payload = _aegispy_wire_unescape(parts[4])
+        if status == "ok":
+            if value_kind == "none":
+                return None
+            return payload
+        raise RuntimeError(error_code or "capability_error")
 
 def _aegispy_fs_write(path, data_utf8):
     _aegispy_host_call("fs_write", path, data_utf8)
@@ -1047,10 +1147,8 @@ sys.modules["aegispy"] = _aegispy_mod
 aegispy = _aegispy_mod
 builtins.aegispy = _aegispy_mod
 "#,
-        guest_root = guest_root,
-        request_dir = CAPABILITY_REQUESTS_DIR,
-        response_dir = CAPABILITY_RESPONSES_DIR,
-        spin_max = spin_max
+        req_prefix = CAPABILITY_WIT_REQ_PREFIX,
+        res_prefix = CAPABILITY_WIT_RES_PREFIX
     )
 }
 
@@ -1129,66 +1227,6 @@ fn unescape_wire_text(input: &str) -> String {
         out.push(ch);
     }
     out
-}
-
-fn parse_request_id_from_path(path: &Path) -> Option<u64> {
-    let stem = path.file_stem()?.to_str()?;
-    let id_text = stem.strip_prefix("req-")?;
-    id_text.parse::<u64>().ok()
-}
-
-fn decode_host_capability_request(
-    request_id: u64,
-    payload: &str,
-) -> Result<HostCapabilityRequest, String> {
-    let mut lines = payload.lines();
-    let capability = lines
-        .next()
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .to_string();
-    if capability.is_empty() {
-        return Err("capability_request_missing_kind".to_string());
-    }
-    let field_a_encoded = lines
-        .next()
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .to_string();
-    let field_b_encoded = lines
-        .next()
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .to_string();
-    Ok(HostCapabilityRequest {
-        request_id,
-        capability,
-        field_a: unescape_wire_text(&field_a_encoded),
-        field_b: unescape_wire_text(&field_b_encoded),
-    })
-}
-
-fn encode_host_capability_response(response: &HostCapabilityResponse) -> String {
-    let status = if response.ok { "ok" } else { "err" };
-    format!(
-        "{status}\n{}\n{}\n{}\n",
-        response.value_kind,
-        escape_wire_text(&response.error_code),
-        escape_wire_text(&response.payload_utf8)
-    )
-}
-
-fn write_host_capability_response(
-    path: &Path,
-    response: &HostCapabilityResponse,
-) -> Result<(), String> {
-    let payload = encode_host_capability_response(response);
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, payload.as_bytes())
-        .map_err(|error| format!("capability_response_write_failed:{error}"))?;
-    fs::rename(&tmp_path, path)
-        .map_err(|error| format!("capability_response_rename_failed:{error}"))?;
-    Ok(())
 }
 
 fn process_host_capability_request(
@@ -1357,9 +1395,140 @@ fn process_host_capability_request(
     }
 }
 
-fn run_host_capability_server(
-    requests_dir: PathBuf,
-    responses_dir: PathBuf,
+fn parse_line_bytes(line: &[u8]) -> String {
+    String::from_utf8_lossy(line)
+        .trim_end_matches('\r')
+        .to_string()
+}
+
+fn process_wit_line(
+    line: &[u8],
+    config: &HostCapabilityConfig,
+    fs_root: &Path,
+    fs_state: &mut HostCapabilityFsState,
+    http_state: &mut HostCapabilityHttpState,
+    run_state: &Arc<Mutex<HostCapabilityRunState>>,
+    stdin_sender: &DynamicInputSender,
+) -> bool {
+    let text = parse_line_bytes(line);
+    if !text.starts_with(CAPABILITY_WIT_REQ_PREFIX) {
+        return false;
+    }
+
+    let payload = &text[CAPABILITY_WIT_REQ_PREFIX.len()..];
+    let mut parts = payload.splitn(4, '\t');
+    let Some(request_id_text) = parts.next() else {
+        if let Ok(mut guard) = run_state.lock() {
+            if guard.engine_error.is_none() {
+                guard.engine_error =
+                    Some("capability_request_decode_failed:missing_id".to_string());
+            }
+        }
+        return true;
+    };
+    let Some(capability) = parts.next() else {
+        if let Ok(mut guard) = run_state.lock() {
+            if guard.engine_error.is_none() {
+                guard.engine_error =
+                    Some("capability_request_decode_failed:missing_capability".to_string());
+            }
+        }
+        return true;
+    };
+    let Some(field_a_encoded) = parts.next() else {
+        if let Ok(mut guard) = run_state.lock() {
+            if guard.engine_error.is_none() {
+                guard.engine_error =
+                    Some("capability_request_decode_failed:missing_field_a".to_string());
+            }
+        }
+        return true;
+    };
+    let Some(field_b_encoded) = parts.next() else {
+        if let Ok(mut guard) = run_state.lock() {
+            if guard.engine_error.is_none() {
+                guard.engine_error =
+                    Some("capability_request_decode_failed:missing_field_b".to_string());
+            }
+        }
+        return true;
+    };
+    let request_id = match request_id_text.parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => {
+            if let Ok(mut guard) = run_state.lock() {
+                if guard.engine_error.is_none() {
+                    guard.engine_error =
+                        Some("capability_request_decode_failed:invalid_request_id".to_string());
+                }
+            }
+            return true;
+        }
+    };
+
+    let request = HostCapabilityRequest {
+        request_id,
+        capability: capability.to_string(),
+        field_a: unescape_wire_text(field_a_encoded),
+        field_b: unescape_wire_text(field_b_encoded),
+    };
+    let mut runtime_audit = Vec::new();
+    let response = match process_host_capability_request(
+        &request,
+        config,
+        fs_root,
+        fs_state,
+        http_state,
+        &mut runtime_audit,
+    ) {
+        Ok(value) => host_capability_response_ok(value),
+        Err(failure) => {
+            let audit_kind = if failure.kind == HostCapabilityFailureKind::PolicyDenied {
+                "policy_denied"
+            } else {
+                "engine_error"
+            };
+            runtime_audit.push(json!({
+              "kind": audit_kind,
+              "detailJson": format!("runtime_denied:{}", failure.code)
+            }));
+            if let Ok(mut guard) = run_state.lock() {
+                if failure.kind == HostCapabilityFailureKind::PolicyDenied
+                    && guard.policy_denial.is_none()
+                {
+                    guard.policy_denial = Some(failure.code.clone());
+                }
+                if failure.kind == HostCapabilityFailureKind::EngineError
+                    && guard.engine_error.is_none()
+                {
+                    guard.engine_error = Some(failure.code.clone());
+                }
+            }
+            host_capability_response_error(&failure.code)
+        }
+    };
+
+    if let Ok(mut guard) = run_state.lock() {
+        guard.audit.extend(runtime_audit);
+    }
+
+    let status = if response.ok { "ok" } else { "err" };
+    let encoded = format!(
+        "{}\t{}\t{}\t{}\t{}",
+        request.request_id,
+        status,
+        response.value_kind,
+        escape_wire_text(&response.error_code),
+        escape_wire_text(&response.payload_utf8)
+    );
+    stdin_sender.push_line(&format!("{CAPABILITY_WIT_RES_PREFIX}{encoded}"));
+
+    true
+}
+
+fn run_host_capability_wit_server(
+    stdout: MemoryOutputPipe,
+    stdin_sender: DynamicInputSender,
     fs_root: PathBuf,
     config: HostCapabilityConfig,
     run_state: Arc<Mutex<HostCapabilityRunState>>,
@@ -1367,137 +1536,71 @@ fn run_host_capability_server(
 ) {
     let mut fs_state = HostCapabilityFsState::default();
     let mut http_state = HostCapabilityHttpState::default();
+    let mut consumed = 0_usize;
+    let mut buffer = Vec::<u8>::new();
+    let mut user_stdout = Vec::<u8>::new();
 
-    while !stop.load(Ordering::Relaxed) {
-        let entries = match fs::read_dir(&requests_dir) {
-            Ok(items) => items,
-            Err(error) => {
-                if let Ok(mut guard) = run_state.lock() {
-                    guard.engine_error = Some(format!("capability_request_dir_failed:{error}"));
+    loop {
+        let snapshot = stdout.contents();
+        if snapshot.len() > consumed {
+            buffer.extend_from_slice(&snapshot[consumed..]);
+            consumed = snapshot.len();
+
+            while let Some(newline_index) = buffer.iter().position(|byte| *byte == b'\n') {
+                let mut line = buffer.drain(..=newline_index).collect::<Vec<u8>>();
+                if line.last() == Some(&b'\n') {
+                    line.pop();
                 }
-                break;
-            }
-        };
-
-        let mut request_paths = Vec::new();
-        for item in entries {
-            let entry = match item {
-                Ok(value) => value,
-                Err(error) => {
-                    if let Ok(mut guard) = run_state.lock() {
-                        guard.engine_error =
-                            Some(format!("capability_request_scan_failed:{error}"));
-                    }
-                    continue;
+                let is_protocol_line = process_wit_line(
+                    &line,
+                    &config,
+                    &fs_root,
+                    &mut fs_state,
+                    &mut http_state,
+                    &run_state,
+                    &stdin_sender,
+                );
+                if !is_protocol_line {
+                    user_stdout.extend_from_slice(&line);
+                    user_stdout.push(b'\n');
                 }
-            };
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-                request_paths.push(path);
             }
-        }
-        request_paths.sort();
-
-        if request_paths.is_empty() {
+        } else if stop.load(Ordering::Relaxed) {
+            if !buffer.is_empty() {
+                let is_protocol_line = process_wit_line(
+                    &buffer,
+                    &config,
+                    &fs_root,
+                    &mut fs_state,
+                    &mut http_state,
+                    &run_state,
+                    &stdin_sender,
+                );
+                if !is_protocol_line {
+                    user_stdout.extend_from_slice(&buffer);
+                }
+            }
+            break;
+        } else {
             thread::sleep(Duration::from_millis(1));
-            continue;
-        }
-
-        for request_path in request_paths {
-            let request_body = match fs::read_to_string(&request_path) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    if let Ok(mut guard) = run_state.lock() {
-                        guard.engine_error =
-                            Some(format!("capability_request_read_failed:{error}"));
-                    }
-                    let _ = fs::remove_file(&request_path);
-                    continue;
-                }
-            };
-
-            let request_id = match parse_request_id_from_path(&request_path) {
-                Some(value) => value,
-                None => {
-                    if let Ok(mut guard) = run_state.lock() {
-                        guard.engine_error = Some("capability_request_id_invalid".to_string());
-                    }
-                    let _ = fs::remove_file(&request_path);
-                    continue;
-                }
-            };
-            let request = match decode_host_capability_request(request_id, &request_body) {
-                Ok(value) => value,
-                Err(message) => {
-                    if let Ok(mut guard) = run_state.lock() {
-                        guard.engine_error = Some(message);
-                    }
-                    let _ = fs::remove_file(&request_path);
-                    continue;
-                }
-            };
-
-            let response_path = responses_dir.join(format!("res-{}.json", request.request_id));
-            let mut runtime_audit = Vec::new();
-            let response = match process_host_capability_request(
-                &request,
-                &config,
-                &fs_root,
-                &mut fs_state,
-                &mut http_state,
-                &mut runtime_audit,
-            ) {
-                Ok(value) => host_capability_response_ok(value),
-                Err(failure) => {
-                    let audit_kind = if failure.kind == HostCapabilityFailureKind::PolicyDenied {
-                        "policy_denied"
-                    } else {
-                        "engine_error"
-                    };
-                    runtime_audit.push(json!({
-                      "kind": audit_kind,
-                      "detailJson": format!("runtime_denied:{}", failure.code)
-                    }));
-                    if let Ok(mut guard) = run_state.lock() {
-                        if failure.kind == HostCapabilityFailureKind::PolicyDenied
-                            && guard.policy_denial.is_none()
-                        {
-                            guard.policy_denial = Some(failure.code.clone());
-                        }
-                        if failure.kind == HostCapabilityFailureKind::EngineError
-                            && guard.engine_error.is_none()
-                        {
-                            guard.engine_error = Some(failure.code.clone());
-                        }
-                    }
-                    host_capability_response_error(&failure.code)
-                }
-            };
-
-            if let Ok(mut guard) = run_state.lock() {
-                guard.audit.extend(runtime_audit);
-            }
-
-            if let Err(message) = write_host_capability_response(&response_path, &response) {
-                if let Ok(mut guard) = run_state.lock() {
-                    guard.engine_error = Some(message);
-                }
-            }
-            let _ = fs::remove_file(&request_path);
         }
     }
+
+    if let Ok(mut guard) = run_state.lock() {
+        guard.filtered_stdout_utf8 = Some(String::from_utf8_lossy(&user_stdout).to_string());
+    }
+    stdin_sender.close();
 }
 
 impl HostCapabilityServer {
-    fn start(run: &Value, wall_ms: u64) -> Result<Self, String> {
+    fn start(
+        run: &Value,
+        wall_ms: u64,
+        stdout: MemoryOutputPipe,
+        stdin_sender: DynamicInputSender,
+    ) -> Result<Self, String> {
         let host_root = create_temp_binding_dir("aegispy-worker-capability")?;
-        let request_dir = host_root.join(CAPABILITY_REQUESTS_DIR);
-        let response_dir = host_root.join(CAPABILITY_RESPONSES_DIR);
         let fs_dir = host_root.join(CAPABILITY_FS_DIR);
-        fs::create_dir_all(&request_dir)
-            .map_err(|error| format!("failed to create capability requests dir: {error}"))?;
-        fs::create_dir_all(&response_dir)
-            .map_err(|error| format!("failed to create capability responses dir: {error}"))?;
         fs::create_dir_all(&fs_dir)
             .map_err(|error| format!("failed to create capability fs dir: {error}"))?;
 
@@ -1507,9 +1610,9 @@ impl HostCapabilityServer {
         let thread_run_state = Arc::clone(&run_state);
         let thread_stop = Arc::clone(&stop);
         let handle = thread::spawn(move || {
-            run_host_capability_server(
-                request_dir,
-                response_dir,
+            run_host_capability_wit_server(
+                stdout,
+                stdin_sender,
                 fs_dir,
                 config,
                 thread_run_state,
@@ -1523,10 +1626,6 @@ impl HostCapabilityServer {
             run_state,
             handle: Some(handle),
         })
-    }
-
-    fn host_root(&self) -> &Path {
-        &self.host_root
     }
 
     fn stop_and_collect(&mut self) -> HostCapabilityRunState {
@@ -1801,19 +1900,26 @@ fn run_simulation(run: &Value, profile: &IsolationProfile) -> Value {
 
 impl WasiExecutor {
     fn new() -> Result<Self, String> {
-        let module_path = std::env::var("AEGISPY_WORKER_WASI_MODULE")
+        let component_path = std::env::var("AEGISPY_WORKER_WASI_COMPONENT")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("artifacts/engine/cpython-wasi.wasm"));
-        let compiled_module_path = std::env::var("AEGISPY_WORKER_WASI_COMPILED_MODULE")
+            .unwrap_or_else(|_| PathBuf::from("artifacts/component/aegispy.component.wasm"));
+        let compiled_component_path = std::env::var("AEGISPY_WORKER_WASI_COMPILED_COMPONENT")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("artifacts/engine/cpython-wasi.cwasm"));
+            .unwrap_or_else(|_| PathBuf::from("artifacts/component/aegispy.component.cwasm"));
         let python_home = std::env::var("AEGISPY_WORKER_WASI_PYTHON_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("artifacts/engine/wasi-python"));
         let enable_fuel = parse_bool_env("AEGISPY_WORKER_WASI_ENABLE_FUEL", false)?;
         let enable_epoch = parse_bool_env("AEGISPY_WORKER_WASI_ENABLE_EPOCH", true)?;
         let enable_store_limits = parse_bool_env("AEGISPY_WORKER_WASI_ENABLE_STORE_LIMITS", true)?;
-        worker_debug("wasi_init", &format!("module={}", module_path.display()));
+        worker_debug(
+            "wasi_init",
+            &format!("component={}", component_path.display()),
+        );
+        worker_debug(
+            "wasi_init",
+            &format!("compiled_component={}", compiled_component_path.display()),
+        );
         worker_debug(
             "wasi_init",
             &format!("python_home={}", python_home.display()),
@@ -1822,10 +1928,10 @@ impl WasiExecutor {
         worker_debug("wasi_init", &format!("epoch={enable_epoch}"));
         worker_debug("wasi_init", &format!("store_limits={enable_store_limits}"));
 
-        if !module_path.exists() {
+        if !component_path.exists() {
             return Err(format!(
-                "missing WASI engine module: {}",
-                module_path.display()
+                "missing WASI component artifact: {}",
+                component_path.display()
             ));
         }
         if !python_home.exists() {
@@ -1839,82 +1945,91 @@ impl WasiExecutor {
         config.consume_fuel(enable_fuel);
         config.epoch_interruption(enable_epoch);
         config.cranelift_opt_level(OptLevel::None);
+        config.wasm_component_model(true);
         worker_debug("wasi_init", "creating engine");
         let engine = Engine::new(&config)
             .map_err(|error| format!("failed to initialize engine: {error}"))?;
-
-        let module = if compiled_module_path.exists() {
-            worker_debug("wasi_init", "loading precompiled module");
-            let loaded = unsafe { Module::deserialize_file(&engine, &compiled_module_path) };
+        let component = if compiled_component_path.exists() {
+            worker_debug("wasi_init", "loading precompiled component");
+            let loaded =
+                unsafe { WasmComponent::deserialize_file(&engine, &compiled_component_path) };
             match loaded {
-                Ok(module) => {
-                    worker_debug("wasi_init", "precompiled module loaded");
-                    module
+                Ok(component) => {
+                    worker_debug("wasi_init", "precompiled component loaded");
+                    component
                 }
                 Err(error) => {
                     worker_debug(
                         "wasi_init",
-                        &format!("precompiled module invalid, recompiling: {error}"),
+                        &format!("precompiled component invalid, recompiling: {error}"),
                     );
-                    let module =
-                        Module::from_file(&engine, &module_path).map_err(|compile_error| {
+                    let component = WasmComponent::from_file(&engine, &component_path).map_err(
+                        |compile_error| {
                             format!(
-                                "failed to load module {}: {compile_error}",
-                                module_path.display()
+                                "failed to load component {}: {compile_error}",
+                                component_path.display()
                             )
-                        })?;
-                    match module.serialize() {
+                        },
+                    )?;
+                    match component.serialize() {
                         Ok(bytes) => {
-                            if let Some(parent) = compiled_module_path.parent() {
+                            if let Some(parent) = compiled_component_path.parent() {
                                 let _ = fs::create_dir_all(parent);
                             }
-                            if let Err(error) = fs::write(&compiled_module_path, bytes) {
+                            if let Err(error) = fs::write(&compiled_component_path, bytes) {
                                 worker_debug(
                                     "wasi_init",
-                                    &format!("failed to persist compiled module: {error}"),
+                                    &format!("failed to persist compiled component: {error}"),
                                 );
                             }
                         }
                         Err(error) => {
                             worker_debug(
                                 "wasi_init",
-                                &format!("failed to serialize module: {error}"),
+                                &format!("failed to serialize component: {error}"),
                             );
                         }
                     }
-                    worker_debug("wasi_init", "module compiled and cached");
-                    module
+                    worker_debug("wasi_init", "component compiled and cached");
+                    component
                 }
             }
         } else {
-            worker_debug("wasi_init", "compiling module");
-            let module = Module::from_file(&engine, &module_path).map_err(|error| {
-                format!("failed to load module {}: {error}", module_path.display())
-            })?;
-            match module.serialize() {
+            worker_debug("wasi_init", "compiling component");
+            let component =
+                WasmComponent::from_file(&engine, &component_path).map_err(|error| {
+                    format!(
+                        "failed to load component {}: {error}",
+                        component_path.display()
+                    )
+                })?;
+            match component.serialize() {
                 Ok(bytes) => {
-                    if let Some(parent) = compiled_module_path.parent() {
+                    if let Some(parent) = compiled_component_path.parent() {
                         let _ = fs::create_dir_all(parent);
                     }
-                    if let Err(error) = fs::write(&compiled_module_path, bytes) {
+                    if let Err(error) = fs::write(&compiled_component_path, bytes) {
                         worker_debug(
                             "wasi_init",
-                            &format!("failed to persist compiled module: {error}"),
+                            &format!("failed to persist compiled component: {error}"),
                         );
                     }
                 }
                 Err(error) => {
-                    worker_debug("wasi_init", &format!("failed to serialize module: {error}"));
+                    worker_debug(
+                        "wasi_init",
+                        &format!("failed to serialize component: {error}"),
+                    );
                 }
             }
-            worker_debug("wasi_init", "module compiled and cached");
-            module
+            worker_debug("wasi_init", "component compiled and cached");
+            component
         };
-        worker_debug("wasi_init", "module loaded");
+        worker_debug("wasi_init", "component loaded");
 
         Ok(Self {
             engine,
-            module,
+            component,
             python_home,
             enable_fuel,
             enable_epoch,
@@ -1950,6 +2065,10 @@ impl WasiExecutor {
         let code = required_string(run, &["code"]).unwrap_or("");
         let stdin_utf8 = required_string(run, &["stdinUtf8"]).unwrap_or("");
         let mut audit = Vec::<Value>::new();
+        audit.push(json!({
+          "kind": "runtime_channel",
+          "detailJson": "capability_channel:component-wit"
+        }));
 
         if let Some(result) = enforce_isolation_profile(run, profile, started_ts_ms, &mut audit) {
             return result;
@@ -2008,7 +2127,18 @@ impl WasiExecutor {
             }
         }
 
-        let mut capability_server = match HostCapabilityServer::start(run, wall_ms) {
+        let stdout_pipe_capacity =
+            clamp_u64_to_usize(stdout_limit.saturating_add(CAPABILITY_WIT_STDOUT_OVERHEAD_BYTES));
+        let stdout_pipe = MemoryOutputPipe::new(stdout_pipe_capacity);
+        let stderr_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stderr_limit));
+        let (runtime_stdin_reader, runtime_stdin_sender) =
+            DynamicInputReader::with_initial(stdin_utf8.as_bytes());
+        let mut capability_server = match HostCapabilityServer::start(
+            run,
+            wall_ms,
+            stdout_pipe.clone(),
+            runtime_stdin_sender.clone(),
+        ) {
             Ok(server) => server,
             Err(message) => {
                 return make_error_result(
@@ -2024,19 +2154,16 @@ impl WasiExecutor {
         let rewritten_code = rewrite_code_for_determinism(code, run);
         let runtime_code = format!(
             "{}\n{}",
-            build_runtime_capability_prelude(CAPABILITY_GUEST_ROOT, wall_ms),
+            build_runtime_capability_prelude_wit_host_abi(),
             rewritten_code
         );
-        let stdout_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stdout_limit));
-        let stderr_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stderr_limit));
-        let stdin_pipe = MemoryInputPipe::new(stdin_utf8.as_bytes().to_vec());
         let guest_root = "/runtime";
         let program_name = std::env::var("AEGISPY_WORKER_WASI_PROGRAM_NAME")
             .unwrap_or_else(|_| "python.wasm".to_string());
         let py_path = detect_python_stdlib_guest_path(&self.python_home, guest_root);
         let mut builder = WasiCtxBuilder::new();
+        builder.stdin(AsyncStdinStream::new(runtime_stdin_reader));
         builder
-            .stdin(stdin_pipe)
             .stdout(stdout_pipe.clone())
             .stderr(stderr_pipe.clone());
         builder.env("PYTHONHOME", guest_root);
@@ -2073,28 +2200,7 @@ impl WasiExecutor {
                 audit,
             );
         }
-        if builder
-            .preopened_dir(
-                capability_server.host_root(),
-                CAPABILITY_GUEST_ROOT,
-                DirPerms::READ | DirPerms::MUTATE,
-                FilePerms::READ | FilePerms::WRITE,
-            )
-            .is_err()
-        {
-            let capability_state = capability_server.stop_and_collect();
-            audit.extend(capability_state.audit);
-            return make_error_result(
-                "AEG-ENGINE",
-                "failed to preopen capability root",
-                "engine_error",
-                started_ts_ms,
-                started_ts_ms + 1,
-                audit,
-            );
-        }
-
-        let wasi = builder.build_p1();
+        let wasi = builder.build();
         let runtime_memory_limit = min(
             profile.max_memory_bytes,
             memory_limit.max(ENGINE_MIN_MEMORY_BYTES),
@@ -2109,6 +2215,7 @@ impl WasiExecutor {
             &self.engine,
             WasiStoreState {
                 wasi,
+                table: ResourceTable::new(),
                 stdout: stdout_pipe,
                 stderr: stderr_pipe,
                 limits,
@@ -2152,8 +2259,8 @@ impl WasiExecutor {
             None
         };
 
-        let mut linker = Linker::<WasiStoreState>::new(&self.engine);
-        if add_to_linker_sync(&mut linker, |state| &mut state.wasi).is_err() {
+        let mut linker = ComponentLinker::<WasiStoreState>::new(&self.engine);
+        if add_to_component_linker_sync(&mut linker).is_err() {
             stop.store(true, Ordering::Relaxed);
             if let Some(handle) = ticker {
                 let _ = handle.join();
@@ -2170,12 +2277,8 @@ impl WasiExecutor {
             );
         }
 
-        let run_outcome = linker
-            .instantiate(&mut store, &self.module)
-            .and_then(|instance| {
-                let start = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
-                start.call(&mut store, ())
-            });
+        let run_outcome = WasiCommand::instantiate(&mut store, &self.component, &linker)
+            .and_then(|command| command.wasi_cli_run().call_run(&mut store));
 
         stop.store(true, Ordering::Relaxed);
         if let Some(handle) = ticker {
@@ -2186,10 +2289,24 @@ impl WasiExecutor {
 
         let stdout_bytes = store.data().stdout.contents();
         let stderr_bytes = store.data().stderr.contents();
-        let stdout_utf8 = String::from_utf8_lossy(stdout_bytes.as_ref()).to_string();
+        let raw_stdout_utf8 = String::from_utf8_lossy(stdout_bytes.as_ref()).to_string();
+        let stdout_utf8 = capability_state
+            .filtered_stdout_utf8
+            .clone()
+            .unwrap_or(raw_stdout_utf8);
         let stderr_utf8 = String::from_utf8_lossy(stderr_bytes.as_ref()).to_string();
         let elapsed_ms = (wall_started.elapsed().as_millis() as u64).max(1);
         let ended_ts_ms = started_ts_ms.saturating_add(elapsed_ms);
+        if (stdout_utf8.len() as u64) > stdout_limit || (stderr_utf8.len() as u64) > stderr_limit {
+            return make_error_result(
+                "AEG-OUTPUT-LIMIT",
+                "output budget reached",
+                "output_limit",
+                started_ts_ms,
+                ended_ts_ms,
+                audit,
+            );
+        }
         if let Some(detail) = capability_state.policy_denial {
             return make_error_result(
                 "AEG-POLICY-DENIED",
@@ -2212,26 +2329,22 @@ impl WasiExecutor {
         }
 
         match run_outcome {
-            Ok(()) => json!({
+            Ok(Ok(())) => json!({
               "status": "ok",
               "exitCode": 0,
               "stdoutUtf8": stdout_utf8,
               "stderrUtf8": stderr_utf8,
               "meta": make_meta(started_ts_ms, ended_ts_ms, &stdout_utf8, &stderr_utf8, "ok", audit)
             }),
+            Ok(Err(())) => make_error_result(
+                "AEG-ENGINE",
+                "wasi execution failed: guest returned non-zero status",
+                "engine_error",
+                started_ts_ms,
+                ended_ts_ms,
+                audit,
+            ),
             Err(error) => {
-                if let Some(exit) = error.downcast_ref::<I32Exit>() {
-                    if exit.0 == 0 {
-                        return json!({
-                          "status": "ok",
-                          "exitCode": 0,
-                          "stdoutUtf8": stdout_utf8,
-                          "stderrUtf8": stderr_utf8,
-                          "meta": make_meta(started_ts_ms, ended_ts_ms, &stdout_utf8, &stderr_utf8, "ok", audit)
-                        });
-                    }
-                }
-
                 let message = error.to_string();
                 if message.contains("all fuel consumed")
                     || message.contains("deadline")
@@ -2452,6 +2565,9 @@ fn run_worker() -> io::Result<()> {
     let executor_mode =
         load_executor_mode().map_err(|error| io::Error::new(ErrorKind::PermissionDenied, error))?;
     worker_debug("worker_start", executor_mode.as_str());
+    if matches!(executor_mode, WorkerExecutorMode::Wasi) {
+        worker_debug("worker_start", "component-wit");
+    }
     if matches!(executor_mode, WorkerExecutorMode::Wasi) {
         worker_debug("worker_start", "ensuring wasi engine");
         ensure_wasi_engine_ready()

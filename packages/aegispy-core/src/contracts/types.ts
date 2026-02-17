@@ -75,7 +75,8 @@ export interface AuditEvent {
     | "env_read"
     | "determinism_time"
     | "determinism_rng"
-    | "policy_denied";
+    | "policy_denied"
+    | "runtime_channel";
   detailJson: string;
 }
 

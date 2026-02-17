@@ -38,6 +38,19 @@ function baseRequest(code: string): RunRequest {
   };
 }
 
+function capabilityChannel(result: {
+  meta: { audit: Array<{ detailJson: string; kind: string }> };
+}): string | null {
+  const marker = result.meta.audit.find(
+    (entry) => entry.kind === "runtime_channel",
+  );
+  if (!marker) return null;
+  const prefix = "capability_channel:";
+  return marker.detailJson.startsWith(prefix)
+    ? marker.detailJson.slice(prefix.length) || null
+    : null;
+}
+
 describe("node e2e", () => {
   it("executes a basic run", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -195,11 +208,14 @@ describe("node e2e", () => {
     expect(fsResult.stdoutUtf8).toContain("abc");
     expect(envResult.status).toBe("ok");
     expect(envResult.stdoutUtf8).toContain("cap-bound");
+    expect(capabilityChannel(fsResult)).toBe("component-wit");
+    expect(capabilityChannel(envResult)).toBe("component-wit");
 
     writeArtifact("artifacts/e2e/capability-bindings.json", {
       ok: true,
       invariants: ["INV-FEAT-0010", "INV-FEAT-0011"],
       runtimeOnly: true,
+      capabilityChannel: capabilityChannel(fsResult),
       fsStatus: fsResult.status,
       envStatus: envResult.status,
       fsStdout: fsResult.stdoutUtf8,
