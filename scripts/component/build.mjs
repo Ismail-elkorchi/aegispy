@@ -331,7 +331,7 @@ function main() {
       },
     },
     hostImportChannelDefault: "component-wit",
-    runtimeBridge: "component-wit-stream",
+    runtimeBridge: "component-wit-json-request-stream",
     requiredHostImportContract: nativeHostImportPath,
     nativeHostImportDetected,
     generatedAt: new Date().toISOString(),

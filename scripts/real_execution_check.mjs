@@ -100,8 +100,10 @@ function main() {
   } else {
     if (componentBuild.ok !== true)
       failures.push({ error: "component_build_not_ok" });
-    if (componentBuild.runtimeBridge !== "component-wit-stream")
-      failures.push({ error: "component_bridge_not_stream_runtime" });
+    if (componentBuild.runtimeBridge !== "component-wit-json-request-stream")
+      failures.push({
+        error: "component_bridge_not_json_request_stream_runtime",
+      });
     if (
       componentBuild.requiredHostImportContract !== "aegispy:runtime/capability"
     )

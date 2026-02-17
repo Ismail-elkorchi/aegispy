@@ -22,7 +22,7 @@
 ## Capability Channel
 
 - Channel: `component-wit` (fixed default for Node/WASI runtime path).
-- Runtime bridge: `component-wit-stream` for Python capability requests.
+- Runtime bridge: `component-wit-json-request-stream` for Python capability requests.
 - Component artifact is composed with a typed native host-import contract (`aegispy:runtime/capability`) and worker linker bindings.
 - Native host-import contract is declared in `wit/aegispy.wit` (`world aegispy-runtime` imports `aegispy:runtime/capability`).
 - File-bridge request/response channel is removed from the runtime execution path.

@@ -870,6 +870,15 @@ struct HostCapabilityResponse {
     error_code: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostCapabilityWireRequest {
+    id: u64,
+    capability: String,
+    field_a: String,
+    field_b: String,
+}
+
 #[derive(Clone, Debug)]
 enum HostCapabilityValue {
     None,
@@ -1198,8 +1207,16 @@ _AEGISPY_REQ_PREFIX = "{req_prefix}"
 _AEGISPY_RES_PREFIX = "{res_prefix}"
 _AEGISPY_SEQ = 0
 
-def _aegispy_wire_escape(value):
-    return value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+def _aegispy_json_escape(value):
+    return (
+        value.replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\b", "\\b")
+        .replace("\f", "\\f")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
 
 def _aegispy_wire_unescape(value):
     out = []
@@ -1228,15 +1245,18 @@ def _aegispy_host_call(capability, field_a, field_b):
     global _AEGISPY_SEQ
     _AEGISPY_SEQ = _AEGISPY_SEQ + 1
     req_id = _AEGISPY_SEQ
-    frame = "\t".join(
-        [
-            str(req_id),
-            capability,
-            _aegispy_wire_escape(field_a),
-            _aegispy_wire_escape(field_b),
-        ]
+    packet = (
+        "{{\"id\":"
+        + str(req_id)
+        + ",\"capability\":\""
+        + _aegispy_json_escape(capability)
+        + "\",\"fieldA\":\""
+        + _aegispy_json_escape(field_a)
+        + "\",\"fieldB\":\""
+        + _aegispy_json_escape(field_b)
+        + "\"}}"
     )
-    sys.stdout.write(_AEGISPY_REQ_PREFIX + frame + "\n")
+    sys.stdout.write(_AEGISPY_REQ_PREFIX + packet + "\n")
     sys.stdout.flush()
 
     while True:
@@ -1373,27 +1393,12 @@ fn escape_wire_text(input: &str) -> String {
     out
 }
 
-fn unescape_wire_text(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(esc) = chars.next() {
-                match esc {
-                    'n' => out.push('\n'),
-                    'r' => out.push('\r'),
-                    't' => out.push('\t'),
-                    '\\' => out.push('\\'),
-                    _ => out.push(esc),
-                }
-            } else {
-                out.push('\\');
-            }
-            continue;
+fn set_run_state_engine_error(run_state: &Arc<Mutex<HostCapabilityRunState>>, detail: &str) {
+    if let Ok(mut guard) = run_state.lock() {
+        if guard.engine_error.is_none() {
+            guard.engine_error = Some(detail.to_string());
         }
-        out.push(ch);
     }
-    out
 }
 
 fn process_host_capability_request(
@@ -1583,61 +1588,19 @@ fn process_wit_line(
     }
 
     let payload = &text[CAPABILITY_WIT_REQ_PREFIX.len()..];
-    let mut parts = payload.splitn(4, '\t');
-    let Some(request_id_text) = parts.next() else {
-        if let Ok(mut guard) = run_state.lock() {
-            if guard.engine_error.is_none() {
-                guard.engine_error =
-                    Some("capability_request_decode_failed:missing_id".to_string());
-            }
-        }
-        return true;
-    };
-    let Some(capability) = parts.next() else {
-        if let Ok(mut guard) = run_state.lock() {
-            if guard.engine_error.is_none() {
-                guard.engine_error =
-                    Some("capability_request_decode_failed:missing_capability".to_string());
-            }
-        }
-        return true;
-    };
-    let Some(field_a_encoded) = parts.next() else {
-        if let Ok(mut guard) = run_state.lock() {
-            if guard.engine_error.is_none() {
-                guard.engine_error =
-                    Some("capability_request_decode_failed:missing_field_a".to_string());
-            }
-        }
-        return true;
-    };
-    let Some(field_b_encoded) = parts.next() else {
-        if let Ok(mut guard) = run_state.lock() {
-            if guard.engine_error.is_none() {
-                guard.engine_error =
-                    Some("capability_request_decode_failed:missing_field_b".to_string());
-            }
-        }
-        return true;
-    };
-    let request_id = match request_id_text.parse::<u64>() {
-        Ok(value) => value,
+    let wire_request = match serde_json::from_str::<HostCapabilityWireRequest>(payload) {
+        Ok(request) => request,
         Err(_) => {
-            if let Ok(mut guard) = run_state.lock() {
-                if guard.engine_error.is_none() {
-                    guard.engine_error =
-                        Some("capability_request_decode_failed:invalid_request_id".to_string());
-                }
-            }
+            set_run_state_engine_error(run_state, "capability_request_decode_failed:invalid_json");
             return true;
         }
     };
 
     let request = HostCapabilityRequest {
-        request_id,
-        capability: capability.to_string(),
-        field_a: unescape_wire_text(field_a_encoded),
-        field_b: unescape_wire_text(field_b_encoded),
+        request_id: wire_request.id,
+        capability: wire_request.capability,
+        field_a: wire_request.field_a,
+        field_b: wire_request.field_b,
     };
     let mut runtime_audit = Vec::new();
     let response = match process_host_capability_request(
@@ -2925,6 +2888,18 @@ mod tests {
         }
     }
 
+    fn sender_buffer_utf8(sender: &DynamicInputSender) -> String {
+        let bytes = sender
+            .shared
+            .lock()
+            .expect("lock sender state")
+            .bytes
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        String::from_utf8(bytes).expect("sender buffer utf8")
+    }
+
     #[test]
     fn frame_roundtrip() {
         let payload = br#"{"x":1}"#;
@@ -3007,5 +2982,111 @@ mod tests {
         std::env::remove_var("AEGISPY_WORKER_EXECUTOR");
         let mode = load_executor_mode().expect("parse default executor mode");
         assert_eq!(mode, WorkerExecutorMode::Wasi);
+    }
+
+    #[test]
+    fn process_wit_line_uses_json_protocol_and_returns_response() {
+        let env_key = "AEGISPY_TEST_CAPABILITY_JSON_WIRE";
+        std::env::set_var(env_key, "json-wire-ok");
+
+        let config = HostCapabilityConfig {
+            fs: None,
+            http: None,
+            env: Some(HostCapabilityEnvConfig {
+                allow_keys: vec![env_key.to_string()],
+            }),
+        };
+
+        let mut fs_state = HostCapabilityFsState::default();
+        let mut http_state = HostCapabilityHttpState::default();
+        let run_state = Arc::new(Mutex::new(HostCapabilityRunState::default()));
+        let temp_dir = unique_temp_dir("capability-wire");
+        let (_reader, sender) = DynamicInputReader::with_initial(b"");
+        let line = format!(
+            "{CAPABILITY_WIT_REQ_PREFIX}{}",
+            json!({
+              "id": 7,
+              "capability": "env_get",
+              "fieldA": env_key,
+              "fieldB": ""
+            })
+        );
+
+        let handled = process_wit_line(
+            line.as_bytes(),
+            &config,
+            &temp_dir,
+            &mut fs_state,
+            &mut http_state,
+            &run_state,
+            &sender,
+        );
+        assert!(handled);
+
+        let wire = sender_buffer_utf8(&sender);
+        assert!(wire.starts_with(CAPABILITY_WIT_RES_PREFIX));
+        let payload = wire
+            .strip_prefix(CAPABILITY_WIT_RES_PREFIX)
+            .expect("wire prefix")
+            .trim_end_matches('\n');
+        let parts = payload.splitn(5, '\t').collect::<Vec<_>>();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0], "7");
+        assert_eq!(parts[1], "ok");
+        assert_eq!(parts[2], "utf8");
+        assert_eq!(parts[3], "");
+        assert_eq!(parts[4], "json-wire-ok");
+        let state = run_state.lock().expect("run state lock").clone();
+        assert!(state.engine_error.is_none());
+        assert!(state.policy_denial.is_none());
+
+        write_artifact(
+            "artifacts/security/capability-channel-protocol.json",
+            &json!({
+              "ok": true,
+              "protocol": "component-wit-json-request-stream",
+              "requestEncoding": "json",
+              "responseEncoding": "tab-escaped",
+              "proof": "process_wit_line_json_roundtrip"
+            }),
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        std::env::remove_var(env_key);
+    }
+
+    #[test]
+    fn process_wit_line_rejects_invalid_json_requests() {
+        let config = HostCapabilityConfig {
+            fs: None,
+            http: None,
+            env: None,
+        };
+        let mut fs_state = HostCapabilityFsState::default();
+        let mut http_state = HostCapabilityHttpState::default();
+        let run_state = Arc::new(Mutex::new(HostCapabilityRunState::default()));
+        let temp_dir = unique_temp_dir("capability-wire-invalid");
+        let (_reader, sender) = DynamicInputReader::with_initial(b"");
+        let line = format!("{CAPABILITY_WIT_REQ_PREFIX}{{not-json");
+
+        let handled = process_wit_line(
+            line.as_bytes(),
+            &config,
+            &temp_dir,
+            &mut fs_state,
+            &mut http_state,
+            &run_state,
+            &sender,
+        );
+        assert!(handled);
+        assert_eq!(sender_buffer_utf8(&sender), "");
+
+        let state = run_state.lock().expect("run state lock").clone();
+        assert_eq!(
+            state.engine_error.as_deref(),
+            Some("capability_request_decode_failed:invalid_json")
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
