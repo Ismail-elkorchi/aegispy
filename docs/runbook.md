@@ -41,7 +41,7 @@
 ## Capability Channel Controls
 
 - Channel: `component-wit` (runtime default and enforced path).
-- Runtime bridge: `component-wit-stream` for Python capability requests.
+- Runtime bridge: `component-wit-json-request-stream` for Python capability requests.
 - Component artifact now includes a typed `aegispy:runtime/capability` import contract and worker host-linker bindings.
 - File-bridge fallback channel is removed.
 - Capability bindings are loaded from runtime-mounted `aegispy.py` and `sitecustomize.py` modules, not pre-execution code injection.
