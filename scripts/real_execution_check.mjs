@@ -203,12 +203,22 @@ function main() {
       failures.push({
         error: "native_abi_gap_probe_not_component_wit_channel",
       });
-    if (nativeAbiGapProbe.dlopenNotImplementedDetected !== true)
-      failures.push({ error: "native_abi_gap_probe_missing_dlopen_blocker" });
-    if (nativeAbiGapProbe.runtimeNativeAbiAvailable !== false)
+    if (nativeAbiGapProbe.runtimeNativeAbiAvailable !== true)
+      failures.push({ error: "native_abi_probe_native_abi_not_available" });
+    if (nativeAbiGapProbe.dlopenDependencyRequired !== false)
+      failures.push({ error: "native_abi_probe_still_requires_dlopen" });
+    if (nativeAbiGapProbe.fsRoundTripDetected !== true)
+      failures.push({ error: "native_abi_probe_fs_roundtrip_missing" });
+    if (nativeAbiGapProbe.envRoundTripDetected !== true)
+      failures.push({ error: "native_abi_probe_env_roundtrip_missing" });
+    if (nativeAbiGapProbe.builtinBridgeRuntimePathDetected !== true)
       failures.push({
-        error: "native_abi_gap_probe_unexpected_native_abi_ready",
+        error: "native_abi_probe_builtin_bridge_runtime_path_missing",
       });
+    if (nativeAbiGapProbe.bridgeKind !== "builtin-capability-bridge")
+      failures.push({ error: "native_abi_probe_unexpected_bridge_kind" });
+    if (nativeAbiGapProbe.bridgeDispatchMode !== "host-plan-dispatch")
+      failures.push({ error: "native_abi_probe_unexpected_dispatch_mode" });
   }
 
   const coreFactory = readText("packages/aegispy-core/src/runtime/factory.ts");
@@ -386,13 +396,13 @@ function main() {
       error: "worker_capability_binding_mode_guest_runtime_abi_missing",
     });
   }
-  if (!simulationSignals.workerCapabilityBindingModeSupportsRewriteDispatch) {
+  if (simulationSignals.workerCapabilityBindingModeSupportsRewriteDispatch) {
     failures.push({
-      error: "worker_capability_binding_mode_rewrite_dispatch_missing",
+      error: "worker_capability_binding_mode_rewrite_dispatch_still_present",
     });
   }
-  if (!simulationSignals.workerCapabilityRewriteBindingPresent) {
-    failures.push({ error: "worker_capability_rewrite_binding_missing" });
+  if (simulationSignals.workerCapabilityRewriteBindingPresent) {
+    failures.push({ error: "worker_capability_rewrite_binding_still_present" });
   }
   if (simulationSignals.workerRuntimeUsesRewriteAsOnlyPath) {
     failures.push({

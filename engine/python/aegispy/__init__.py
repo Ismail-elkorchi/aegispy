@@ -1,6 +1,12 @@
 """AegisPy guest capability bindings backed by host plan dispatch."""
 
 _PLAN = []
+_BRIDGE_INFO = {
+    "bridge_kind": "builtin-capability-bridge",
+    "capability_channel": "component-wit",
+    "dispatch_mode": "host-plan-dispatch",
+    "dlopen_dependency": False,
+}
 
 
 def _install_plan(plan):
@@ -31,7 +37,7 @@ def _consume(capability, field_a, field_b):
             return str(entry.get("payload_utf8", ""))
         return ""
 
-    return ""
+    raise RuntimeError(f"capability_runtime_binding_missing:{capability}")
 
 
 def fs_read(path):
@@ -51,4 +57,15 @@ def env_get(key):
     return _consume("env_get", _coerce_str(key), "")
 
 
-__all__ = ["_install_plan", "env_get", "fs_read", "fs_write", "http_get"]
+def _bridge_info():
+    return dict(_BRIDGE_INFO)
+
+
+__all__ = [
+    "_bridge_info",
+    "_install_plan",
+    "env_get",
+    "fs_read",
+    "fs_write",
+    "http_get",
+]

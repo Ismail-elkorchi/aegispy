@@ -28,8 +28,8 @@
 - File-bridge request/response channel is removed from the runtime execution path.
 - Stream bridge transport is removed; capability calls are dispatched through a host-built runtime plan consumed by the guest module.
 - Runtime source-injection bridge loading is removed from default hardened execution; guest bridge code is loaded from the shipped WASI Python runtime module path.
-- Worker binding mode defaults to `guest-runtime-abi`; `rewrite` and `rewrite-dispatch` map to explicit legacy rewrite mode.
-- Runtime native dynamic module loading is not yet available in the current WASI CPython payload (`dlopen not implemented`), so true guest-callable native host ABI remains blocked until a rebuilt runtime ships.
+- Worker binding mode is fixed to `guest-runtime-abi`; legacy `rewrite` modes are removed.
+- Guest-callable native host ABI is validated through the shipped builtin bridge module path (`engine/python/aegispy/__init__.py`) without `dlopen` dependency.
 
 ## Worker Protocol
 
