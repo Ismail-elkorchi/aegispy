@@ -1,5 +1,4 @@
 import { makeAegisPyError } from "../../aegispy-core/src/errors";
-import { simulateRun } from "../../aegispy-core/src/execution/simulated";
 import { validateRunRequest } from "../../aegispy-core/src/contracts/validation";
 import type {
   AegisPyRuntime,
@@ -7,8 +6,12 @@ import type {
   RunRequest,
   RunResult,
 } from "@aegispy/core";
+import { InProcessTransport } from "../../aegispy-node/src/runtime/in-process-transport";
+import type { IsolationProfile } from "../../aegispy-node/src/runtime/isolation-profile";
+import { RustWorkerTransport } from "../../aegispy-node/src/runtime/rust-worker-transport";
+import type { WorkerTransport } from "../../aegispy-node/src/runtime/worker-transport";
 
-function runtimeError(message: string): RunResult {
+function engineErrorResult(message: string): RunResult {
   const now = Date.now();
   return {
     status: "error",
@@ -23,23 +26,71 @@ function runtimeError(message: string): RunResult {
       memoryPeakBytes: 0,
       stdoutBytes: 0,
       stderrBytes: message.length,
-      termination: "internal_error",
+      termination: "engine_error",
       audit: [],
     },
-    error: makeAegisPyError("AEG-INTERNAL", message, {
+    error: makeAegisPyError("AEG-ENGINE", message, {
       subsystem: "bun-runtime",
     }),
+  };
+}
+
+export type BunTransportMode = "process" | "simulation";
+
+interface TransportSelection {
+  transport: WorkerTransport;
+  mode: BunTransportMode;
+  isolationProfile: IsolationProfile | null;
+}
+
+export function resolveBunTransportMode(
+  env: NodeJS.ProcessEnv = process.env,
+): BunTransportMode {
+  const raw = (env.AEGISPY_BUN_TRANSPORT ?? "process").trim().toLowerCase();
+  if (raw === "process") return "process";
+  if (raw === "simulation") return "simulation";
+  throw new Error(
+    "invalid AEGISPY_BUN_TRANSPORT value, expected process or simulation",
+  );
+}
+
+function createTransport(): TransportSelection {
+  const mode = resolveBunTransportMode();
+  if (mode === "process") {
+    const transport = new RustWorkerTransport();
+    return {
+      transport,
+      mode,
+      isolationProfile: transport.isolationProfile,
+    };
+  }
+  return {
+    transport: new InProcessTransport(),
+    mode,
+    isolationProfile: null,
   };
 }
 
 export class BunRuntime implements AegisPyRuntime {
   public readonly host = "bun" as const;
 
+  private readonly transport: WorkerTransport;
+
+  public readonly transportKind: BunTransportMode;
+
+  public readonly isolationProfile: IsolationProfile | null;
+
   private closed = false;
+
+  public constructor(selection: TransportSelection = createTransport()) {
+    this.transport = selection.transport;
+    this.transportKind = selection.mode;
+    this.isolationProfile = selection.isolationProfile;
+  }
 
   public async run(req: RunRequest): Promise<RunResult> {
     if (this.closed) {
-      return runtimeError("runtime closed");
+      return engineErrorResult("runtime closed");
     }
 
     const validated = validateRunRequest(req);
@@ -67,14 +118,19 @@ export class BunRuntime implements AegisPyRuntime {
     }
 
     if (req.host !== "bun") {
-      return runtimeError("host mismatch");
+      return engineErrorResult("host mismatch");
     }
 
-    return simulateRun(req);
+    return this.transport.run(req).catch((error: unknown) => {
+      return engineErrorResult(
+        error instanceof Error ? error.message : "unknown transport error",
+      );
+    });
   }
 
   public async close(): Promise<void> {
     this.closed = true;
+    await this.transport.close();
   }
 }
 

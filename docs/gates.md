@@ -30,8 +30,10 @@
 5. `scripts/claim_alignment_check`
 6. `scripts/benchmarks_check`
 7. `scripts/security_claims_check`
-8. `scripts/real_execution_check`
-9. `scripts/compat_check`
+8. `scripts/runtime_guest_abi_probe.mjs`
+9. `scripts/runtime_native_abi_gap_probe.mjs`
+10. `scripts/real_execution_check`
+11. `scripts/compat_check`
 
 - Output artifact: `artifacts/gates/release-claims.json`.
 
@@ -47,6 +49,7 @@
 - `artifacts/gates/native-host-import-check.json`
 - `artifacts/gates/claim-alignment-check.json`
 - `artifacts/gates/real-execution-check.json`
+- `artifacts/research/runtime-native-abi-gap.json`
 
 ## Invariants
 
