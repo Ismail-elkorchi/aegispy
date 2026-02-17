@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime, type AegisPyRuntime } from "../src/index";
-import type { RunRequest } from "@aegispy/core";
+import type { RunRequest, RunResult } from "@aegispy/core";
 import { writeArtifact } from "./helpers/artifact";
 
 const baseRequest: Omit<RunRequest, "code"> = {
@@ -42,6 +42,18 @@ function runtimeView(runtime: AegisPyRuntime): {
   };
 }
 
+function capabilityChannel(result: RunResult): string | null {
+  const audit = result.meta.audit as Array<{
+    kind: string;
+    detailJson: string;
+  }>;
+  const event = audit.find((entry) => entry.kind === "runtime_channel");
+  if (!event) return null;
+  const prefix = "capability_channel:";
+  if (!event.detailJson.startsWith(prefix)) return null;
+  return event.detailJson.slice(prefix.length) || null;
+}
+
 afterEach(() => {
   process.env = { ...originalEnv };
 });
@@ -61,12 +73,14 @@ describe("runtime hardening", () => {
 
     expect(view.transportKind).toBe("process");
     expect(result.status).toBe("ok");
+    expect(capabilityChannel(result)).toBe("component-wit");
 
     writeArtifact("artifacts/tests/real-engine-default.json", {
       ok: true,
       invariants: ["INV-FEAT-0003", "INV-FEAT-0009"],
       host: "node",
       transport: view.transportKind ?? "unknown",
+      capabilityChannel: capabilityChannel(result),
       isolationProfile: view.isolationProfile ?? null,
       termination: result.meta.termination,
       status: result.status,
@@ -120,12 +134,16 @@ describe("runtime hardening", () => {
     expect(httpResult.error.code).toBe("AEG-POLICY-DENIED");
     expect(isolationResult.error.code).toBe("AEG-POLICY-DENIED");
     expect(isolationResult.stderrUtf8).toContain("isolation_");
+    expect(capabilityChannel(fsResult)).toBe("component-wit");
+    expect(capabilityChannel(httpResult)).toBe("component-wit");
+    expect(capabilityChannel(isolationResult)).toBe("component-wit");
 
     writeArtifact("artifacts/security/runtime-policy-denials.json", {
       ok: true,
       invariants: ["INV-SECU-0001", "INV-SECU-0005"],
       host: "node",
       transport: view.transportKind ?? "unknown",
+      capabilityChannel: capabilityChannel(fsResult),
       fsDenied: fsResult.error.code === "AEG-POLICY-DENIED",
       httpDenied: httpResult.error.code === "AEG-POLICY-DENIED",
       isolationDenied: isolationResult.error.code === "AEG-POLICY-DENIED",
@@ -136,6 +154,7 @@ describe("runtime hardening", () => {
       invariants: ["INV-SECU-0006"],
       host: "node",
       transport: view.transportKind ?? "unknown",
+      capabilityChannel: capabilityChannel(isolationResult),
       profile: view.isolationProfile ?? null,
       deniedByProfile: isolationResult.stderrUtf8,
       termination: isolationResult.meta.termination,

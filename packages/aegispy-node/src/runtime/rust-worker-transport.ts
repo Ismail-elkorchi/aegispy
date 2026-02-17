@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RunRequest, RunResult } from "@aegispy/core";
@@ -26,6 +27,18 @@ const defaultWorkerBinary = path.join(
   "target",
   "debug",
   "aegispy_worker",
+);
+const defaultComponentManifest = path.join(
+  repoRoot,
+  "artifacts",
+  "component",
+  "build.json",
+);
+const defaultComponentBinary = path.join(
+  repoRoot,
+  "artifacts",
+  "component",
+  "aegispy.component.wasm",
 );
 
 interface PendingRequest {
@@ -63,14 +76,8 @@ export class RustWorkerTransport implements WorkerTransport {
 
   private ensureWorkerBinary(env: NodeJS.ProcessEnv): void {
     if (this.options.command !== defaultWorkerBinary) return;
-    if (
-      spawnSync("bash", ["-lc", `test -x "${defaultWorkerBinary}"`], {
-        env,
-        cwd: repoRoot,
-      }).status === 0
-    ) {
-      return;
-    }
+    const forceRebuild = env.AEGISPY_FORCE_WORKER_REBUILD === "1";
+    if (!forceRebuild && existsSync(defaultWorkerBinary)) return;
 
     const build = spawnSync("cargo", ["build", "-q", "-p", "aegispy_worker"], {
       cwd: repoRoot,
@@ -80,6 +87,24 @@ export class RustWorkerTransport implements WorkerTransport {
     if ((build.status ?? 1) !== 0) {
       const message = build.stderr.trim() || build.stdout.trim();
       throw new Error(`failed to build worker binary: ${message}`);
+    }
+  }
+
+  private ensureComponentArtifact(env: NodeJS.ProcessEnv): void {
+    if (
+      existsSync(defaultComponentManifest) &&
+      existsSync(defaultComponentBinary)
+    )
+      return;
+
+    const build = spawnSync("node", ["scripts/component/build.mjs"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+    });
+    if ((build.status ?? 1) !== 0) {
+      const message = build.stderr.trim() || build.stdout.trim();
+      throw new Error(`failed to build component artifact: ${message}`);
     }
   }
 
@@ -122,6 +147,7 @@ export class RustWorkerTransport implements WorkerTransport {
       ...toWorkerIsolationEnv(this.isolationProfile),
     };
     const env = this.resolveLinkerEnv(baseEnv);
+    this.ensureComponentArtifact(env);
     this.ensureWorkerBinary(env);
 
     const child = spawn(this.options.command, this.options.args, {

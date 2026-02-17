@@ -33,6 +33,7 @@ function main() {
     realEngine: "artifacts/tests/real-engine-default.json",
     isolation: "artifacts/security/isolation-profile.json",
     runtimeDenials: "artifacts/security/runtime-policy-denials.json",
+    componentBuild: "artifacts/component/build.json",
   };
 
   const realEngine = readJsonOrNull(proofs.realEngine);
@@ -45,6 +46,8 @@ function main() {
     if (realEngine.ok !== true) failures.push({ error: "real_engine_not_ok" });
     if (realEngine.transport !== "process")
       failures.push({ error: "real_engine_not_process_transport" });
+    if (realEngine.capabilityChannel !== "component-wit")
+      failures.push({ error: "real_engine_not_component_wit_channel" });
   }
 
   const isolation = readJsonOrNull(proofs.isolation);
@@ -61,6 +64,8 @@ function main() {
     if (isolation.ok !== true) failures.push({ error: "isolation_not_ok" });
     if (isolation.transport !== "process")
       failures.push({ error: "isolation_not_process_transport" });
+    if (isolation.capabilityChannel !== "component-wit")
+      failures.push({ error: "isolation_not_component_wit_channel" });
     if (profileName !== "strict")
       failures.push({ error: "isolation_not_strict_profile" });
   }
@@ -76,12 +81,37 @@ function main() {
       failures.push({ error: "runtime_denials_not_ok" });
     if (runtimeDenials.transport !== "process")
       failures.push({ error: "runtime_denials_not_process_transport" });
+    if (runtimeDenials.capabilityChannel !== "component-wit")
+      failures.push({ error: "runtime_denials_not_component_wit_channel" });
     if (runtimeDenials.fsDenied !== true)
       failures.push({ error: "runtime_denials_missing_fs" });
     if (runtimeDenials.httpDenied !== true)
       failures.push({ error: "runtime_denials_missing_http" });
     if (runtimeDenials.isolationDenied !== true)
       failures.push({ error: "runtime_denials_missing_isolation" });
+  }
+
+  const componentBuild = readJsonOrNull(proofs.componentBuild);
+  if (!componentBuild) {
+    failures.push({
+      error: "missing_component_build_artifact",
+      path: proofs.componentBuild,
+    });
+  } else {
+    if (componentBuild.ok !== true)
+      failures.push({ error: "component_build_not_ok" });
+    if (componentBuild.runtimeBridge !== "component-wit-stream")
+      failures.push({ error: "component_bridge_not_stream_runtime" });
+    const imports = Array.isArray(componentBuild.worldImports)
+      ? componentBuild.worldImports
+      : [];
+    const exports = Array.isArray(componentBuild.worldExports)
+      ? componentBuild.worldExports
+      : [];
+    if (!imports.includes("wasi:cli/stdin@0.2.6"))
+      failures.push({ error: "component_missing_wasi_cli_stdin_import" });
+    if (!exports.includes("wasi:cli/run@0.2.6"))
+      failures.push({ error: "component_missing_wasi_cli_run_export" });
   }
 
   const coreFactory = readText("packages/aegispy-core/src/runtime/factory.ts");
@@ -107,7 +137,16 @@ function main() {
     workerExecutorDefaultsToWasi: workerMain.includes(
       'unwrap_or_else(|_| "wasi".to_string())',
     ),
+    workerCapabilityChannelFixedComponentWit: workerMain.includes(
+      '"capability_channel:component-wit"',
+    ),
     workerWasiExecutorPresent: workerMain.includes("impl WasiExecutor"),
+    workerUsesComponentModel: workerMain.includes("WasmComponent::from_file"),
+    workerUsesComponentCommandBinding: workerMain.includes(
+      "WasiCommand::instantiate",
+    ),
+    workerStillUsesCoreModuleExecution:
+      workerMain.includes("Module::from_file"),
   };
 
   if (simulationSignals.coreFactoryContainsSimulatedRuntimeClass) {
@@ -128,8 +167,20 @@ function main() {
   if (!simulationSignals.workerExecutorDefaultsToWasi) {
     failures.push({ error: "worker_executor_default_not_wasi" });
   }
+  if (!simulationSignals.workerCapabilityChannelFixedComponentWit) {
+    failures.push({ error: "worker_capability_channel_not_component_wit" });
+  }
   if (!simulationSignals.workerWasiExecutorPresent) {
     failures.push({ error: "worker_wasi_executor_missing" });
+  }
+  if (!simulationSignals.workerUsesComponentModel) {
+    failures.push({ error: "worker_component_model_execution_missing" });
+  }
+  if (!simulationSignals.workerUsesComponentCommandBinding) {
+    failures.push({ error: "worker_component_command_binding_missing" });
+  }
+  if (simulationSignals.workerStillUsesCoreModuleExecution) {
+    failures.push({ error: "worker_core_module_execution_still_present" });
   }
 
   const payload = {

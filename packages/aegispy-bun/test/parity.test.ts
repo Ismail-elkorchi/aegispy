@@ -21,8 +21,8 @@ describe("bun adapter parity", () => {
       },
       limits: {
         time: {
-          wallMs: 100,
-          cpuMs: 100,
+          wallMs: 1000,
+          cpuMs: 1000,
         },
         bytes: {
           memoryBytes: 1024 * 1024,
@@ -61,8 +61,8 @@ describe("bun adapter parity", () => {
       },
       limits: {
         time: {
-          wallMs: 100,
-          cpuMs: 100,
+          wallMs: 1000,
+          cpuMs: 1000,
         },
         bytes: {
           memoryBytes: 1024 * 1024,

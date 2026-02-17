@@ -17,7 +17,12 @@
 ## Component Build
 
 - Run `pnpm component:build`.
-- Output artifact: `artifacts/component/build.json`.
+- Run `bash scripts/component_artifact_check`.
+- Output artifacts:
+  - `artifacts/component/build.json`
+  - `artifacts/component/aegispy.component.wasm`
+  - `artifacts/component/interface.wit`
+  - `artifacts/gates/component-artifact-check.json`
 
 ## Self-Test
 
@@ -32,3 +37,9 @@
 - `AEG-OUTPUT-LIMIT`
 - `AEG-ENGINE`
 - `AEG-INVALID-REQUEST`
+
+## Capability Channel Controls
+
+- Channel: `component-wit` (runtime default and enforced path).
+- Runtime bridge: `component-wit-stream` until direct WIT host imports land.
+- File-bridge fallback channel is removed.
