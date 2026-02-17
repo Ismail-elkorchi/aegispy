@@ -1,20 +1,20 @@
 package aegispy:runtime;
 
 interface capability {
-  record fs-read {
+  record fs-read-input {
     path: string,
   }
 
-  record fs-write {
+  record fs-write-input {
     path: string,
     data-utf8: string,
   }
 
-  record http-get {
+  record http-get-input {
     url: string,
   }
 
-  record env-get {
+  record env-get-input {
     key: string,
   }
 
@@ -24,10 +24,14 @@ interface capability {
     error-code: string,
   }
 
-  fs-read: func(input: fs-read) -> cap-result;
-  fs-write: func(input: fs-write) -> cap-result;
-  http-get: func(input: http-get) -> cap-result;
-  env-get: func(input: env-get) -> cap-result;
+  fs-read: func(input: fs-read-input) -> cap-result;
+  fs-write: func(input: fs-write-input) -> cap-result;
+  http-get: func(input: http-get-input) -> cap-result;
+  env-get: func(input: env-get-input) -> cap-result;
+}
+
+world aegispy-runtime {
+  import capability;
 }
 
 world aegispy {

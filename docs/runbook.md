@@ -44,3 +44,4 @@
 - Runtime bridge: `component-wit-stream` until direct WIT host imports land.
 - File-bridge fallback channel is removed.
 - Capability bindings are loaded from runtime-mounted `aegispy.py` and `sitecustomize.py` modules, not pre-execution code injection.
+- Native host-import gate command: `bash scripts/native_host_import_check` (`AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict` enables blocking mode).
