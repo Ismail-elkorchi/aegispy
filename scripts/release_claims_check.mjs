@@ -32,6 +32,8 @@ function readGate(relPath) {
 function main() {
   const checks = [
     "node scripts/release_evidence.mjs",
+    "pnpm component:build",
+    "bash scripts/component_artifact_check",
     "bash scripts/claim_alignment_check",
     "bash scripts/benchmarks_check",
     "bash scripts/security_claims_check",
@@ -44,6 +46,7 @@ function main() {
     security: "artifacts/gates/security-claims-check.json",
     realExecution: "artifacts/gates/real-execution-check.json",
     compatibility: "artifacts/gates/compat-check.json",
+    component: "artifacts/gates/component-artifact-check.json",
   };
 
   let ok = true;
@@ -57,13 +60,15 @@ function main() {
     security: readGate(gateFiles.security),
     realExecution: readGate(gateFiles.realExecution),
     compatibility: readGate(gateFiles.compatibility),
+    component: readGate(gateFiles.component),
   };
   if (
     !gateStatus.claims.ok ||
     !gateStatus.benchmarks.ok ||
     !gateStatus.security.ok ||
     !gateStatus.realExecution.ok ||
-    !gateStatus.compatibility.ok
+    !gateStatus.compatibility.ok ||
+    !gateStatus.component.ok
   )
     ok = false;
 
