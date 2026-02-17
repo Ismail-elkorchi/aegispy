@@ -238,6 +238,10 @@ function main() {
   const sourceWasmSha256 = sha256File(wasiCoreWasmPath);
   const componentSha256 = sha256File(wasmPath);
   const worldSummary = parseWorldSummary(witText);
+  const nativeHostImportPath = "aegispy:runtime/capability";
+  const nativeHostImportDetected = worldSummary.imports.some((entry) =>
+    entry.startsWith(nativeHostImportPath),
+  );
 
   const manifest = {
     ok: true,
@@ -267,6 +271,8 @@ function main() {
     },
     hostImportChannelDefault: "component-wit",
     runtimeBridge: "component-wit-stream",
+    requiredHostImportContract: nativeHostImportPath,
+    nativeHostImportDetected,
     generatedAt: new Date().toISOString(),
   };
 

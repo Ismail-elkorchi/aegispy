@@ -34,6 +34,7 @@ function main() {
     "node scripts/release_evidence.mjs",
     "pnpm component:build",
     "bash scripts/component_artifact_check",
+    "bash scripts/native_host_import_check",
     "bash scripts/claim_alignment_check",
     "bash scripts/benchmarks_check",
     "bash scripts/security_claims_check",
@@ -47,6 +48,7 @@ function main() {
     realExecution: "artifacts/gates/real-execution-check.json",
     compatibility: "artifacts/gates/compat-check.json",
     component: "artifacts/gates/component-artifact-check.json",
+    nativeHostImport: "artifacts/gates/native-host-import-check.json",
   };
 
   let ok = true;
@@ -61,6 +63,7 @@ function main() {
     realExecution: readGate(gateFiles.realExecution),
     compatibility: readGate(gateFiles.compatibility),
     component: readGate(gateFiles.component),
+    nativeHostImport: readGate(gateFiles.nativeHostImport),
   };
   if (
     !gateStatus.claims.ok ||
@@ -68,7 +71,8 @@ function main() {
     !gateStatus.security.ok ||
     !gateStatus.realExecution.ok ||
     !gateStatus.compatibility.ok ||
-    !gateStatus.component.ok
+    !gateStatus.component.ok ||
+    !gateStatus.nativeHostImport.ok
   )
     ok = false;
 

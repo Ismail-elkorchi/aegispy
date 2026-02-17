@@ -17,6 +17,7 @@
 - `scripts/no_control_plane_ref_check`
 - `scripts/no_stub_path_check`
 - `scripts/component_artifact_check`
+- `scripts/native_host_import_check`
 
 ## Release Claim Gate
 
@@ -42,6 +43,7 @@
 - `artifacts/tests/real-engine-default.json`
 - `artifacts/component/build.json`
 - `artifacts/gates/component-artifact-check.json`
+- `artifacts/gates/native-host-import-check.json`
 - `artifacts/gates/claim-alignment-check.json`
 - `artifacts/gates/real-execution-check.json`
 

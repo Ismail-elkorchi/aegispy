@@ -102,6 +102,10 @@ function main() {
       failures.push({ error: "component_build_not_ok" });
     if (componentBuild.runtimeBridge !== "component-wit-stream")
       failures.push({ error: "component_bridge_not_stream_runtime" });
+    if (
+      componentBuild.requiredHostImportContract !== "aegispy:runtime/capability"
+    )
+      failures.push({ error: "component_required_host_import_contract_unset" });
     const imports = Array.isArray(componentBuild.worldImports)
       ? componentBuild.worldImports
       : [];

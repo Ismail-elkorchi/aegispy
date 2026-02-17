@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+node scripts/native_host_import_check.mjs
