@@ -44,6 +44,8 @@ if [ ! -f artifacts/component/aegispy.component.cwasm ]; then
 fi
 
 pnpm test
+node scripts/runtime_guest_abi_probe.mjs
+node scripts/runtime_native_abi_gap_probe.mjs
 bash scripts/real_execution_check
 
 if ! command -v cargo >/dev/null 2>&1; then

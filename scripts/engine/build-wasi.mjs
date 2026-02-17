@@ -16,6 +16,8 @@ const CACHE_ARCHIVE = path.join(CACHE_DIR, "cpython-wasi-3.14.3.zip");
 const ENGINE_DIR = path.join(repoRoot, "artifacts", "engine");
 const RUNTIME_DIR = path.join(ENGINE_DIR, "wasi-python");
 const COMPILED_MODULE = path.join(ENGINE_DIR, "cpython-wasi.cwasm");
+const BRIDGE_SOURCE_DIR = path.join(repoRoot, "engine", "python", "aegispy");
+const BRIDGE_MODULE_NAME = "__init__.py";
 const WASM_REL_PATH = "python.wasm";
 
 function ensureDir(dirPath) {
@@ -76,6 +78,45 @@ function writeSourceMetadata(payload) {
   fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function installBuiltinCapabilityBridge(runtimeDir) {
+  const sourceModulePath = path.join(BRIDGE_SOURCE_DIR, BRIDGE_MODULE_NAME);
+  if (!fs.existsSync(sourceModulePath)) {
+    throw new Error("missing capability bridge source module");
+  }
+
+  const libDir = path.join(runtimeDir, "lib");
+  if (!fs.existsSync(libDir)) {
+    throw new Error("missing runtime lib directory");
+  }
+
+  const pythonLibDirs = fs
+    .readdirSync(libDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("python"))
+    .map((entry) => entry.name)
+    .sort();
+
+  if (pythonLibDirs.length === 0) {
+    throw new Error("missing runtime python lib directory");
+  }
+
+  const installedModulePaths = [];
+  for (const pythonLibDir of pythonLibDirs) {
+    const targetDir = path.join(libDir, pythonLibDir, "aegispy");
+    fs.rmSync(targetDir, { recursive: true, force: true });
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.cpSync(BRIDGE_SOURCE_DIR, targetDir, { recursive: true });
+    const installedPath = path
+      .relative(repoRoot, path.join(targetDir, BRIDGE_MODULE_NAME))
+      .replaceAll("\\", "/");
+    installedModulePaths.push(installedPath);
+  }
+
+  return {
+    sourceModulePath,
+    installedModulePaths,
+  };
+}
+
 export function buildWasi() {
   ensureArchive();
   const extractedRoot = extractArchive();
@@ -98,12 +139,19 @@ export function buildWasi() {
   ensureDir(ENGINE_DIR);
   fs.rmSync(RUNTIME_DIR, { recursive: true, force: true });
   fs.cpSync(extractedRoot, RUNTIME_DIR, { recursive: true });
+  const bridgeInstall = installBuiltinCapabilityBridge(RUNTIME_DIR);
   fs.rmSync(COMPILED_MODULE, { force: true });
 
   const result = writeEngineArtifact(
     "cpython-wasi.wasm",
     payload,
     `scripts/engine/build-wasi.mjs:${SOURCE_URL}`,
+  );
+  const bridgePayload = fs.readFileSync(bridgeInstall.sourceModulePath);
+  const bridgeArtifact = writeEngineArtifact(
+    "aegispy-capability-bridge.py",
+    bridgePayload,
+    "engine/python/aegispy/__init__.py",
   );
 
   writeSourceMetadata({
@@ -115,6 +163,11 @@ export function buildWasi() {
     runtimeLayout: {
       wasm: "python.wasm",
       stdlibRoot: "lib/",
+      capabilityBridgeModule: {
+        source: "engine/python/aegispy/__init__.py",
+        sha256: bridgeArtifact.hash,
+        installedModulePaths: bridgeInstall.installedModulePaths,
+      },
     },
   });
 

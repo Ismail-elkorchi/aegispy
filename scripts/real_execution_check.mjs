@@ -33,7 +33,12 @@ function main() {
     realEngine: "artifacts/tests/real-engine-default.json",
     isolation: "artifacts/security/isolation-profile.json",
     runtimeDenials: "artifacts/security/runtime-policy-denials.json",
+    denoParity: "artifacts/e2e/deno-parity.json",
+    bunParity: "artifacts/e2e/bun-parity.json",
     componentBuild: "artifacts/component/build.json",
+    guestCapabilityProbe:
+      "artifacts/research/runtime-guest-capability-probe.json",
+    nativeAbiGapProbe: "artifacts/research/runtime-native-abi-gap.json",
   };
 
   const realEngine = readJsonOrNull(proofs.realEngine);
@@ -91,6 +96,34 @@ function main() {
       failures.push({ error: "runtime_denials_missing_isolation" });
   }
 
+  const denoParity = readJsonOrNull(proofs.denoParity);
+  if (!denoParity) {
+    failures.push({
+      error: "missing_deno_parity_artifact",
+      path: proofs.denoParity,
+    });
+  } else {
+    if (denoParity.ok !== true) failures.push({ error: "deno_parity_not_ok" });
+    if (denoParity.transport !== "process")
+      failures.push({ error: "deno_parity_not_process_transport" });
+    if (denoParity.capabilityChannel !== "component-wit")
+      failures.push({ error: "deno_parity_not_component_wit_channel" });
+  }
+
+  const bunParity = readJsonOrNull(proofs.bunParity);
+  if (!bunParity) {
+    failures.push({
+      error: "missing_bun_parity_artifact",
+      path: proofs.bunParity,
+    });
+  } else {
+    if (bunParity.ok !== true) failures.push({ error: "bun_parity_not_ok" });
+    if (bunParity.transport !== "process")
+      failures.push({ error: "bun_parity_not_process_transport" });
+    if (bunParity.capabilityChannel !== "component-wit")
+      failures.push({ error: "bun_parity_not_component_wit_channel" });
+  }
+
   const componentBuild = readJsonOrNull(proofs.componentBuild);
   if (!componentBuild) {
     failures.push({
@@ -100,9 +133,13 @@ function main() {
   } else {
     if (componentBuild.ok !== true)
       failures.push({ error: "component_build_not_ok" });
-    if (componentBuild.runtimeBridge !== "component-wit-json-request-stream")
+    if (
+      componentBuild.runtimeBridge !==
+      "component-host-guest-runtime-module-plan-dispatch"
+    )
       failures.push({
-        error: "component_bridge_not_json_request_stream_runtime",
+        error:
+          "component_bridge_not_component_host_guest_runtime_module_plan_dispatch",
       });
     if (
       componentBuild.requiredHostImportContract !== "aegispy:runtime/capability"
@@ -122,10 +159,64 @@ function main() {
       failures.push({ error: "component_missing_wasi_cli_run_export" });
   }
 
+  const guestCapabilityProbe = readJsonOrNull(proofs.guestCapabilityProbe);
+  if (!guestCapabilityProbe) {
+    failures.push({
+      error: "missing_guest_capability_probe_artifact",
+      path: proofs.guestCapabilityProbe,
+    });
+  } else {
+    if (guestCapabilityProbe.ok !== true)
+      failures.push({ error: "guest_capability_probe_not_ok" });
+    if (guestCapabilityProbe.transport !== "process")
+      failures.push({ error: "guest_capability_probe_not_process_transport" });
+    if (guestCapabilityProbe.capabilityChannel !== "component-wit")
+      failures.push({
+        error: "guest_capability_probe_not_component_wit_channel",
+      });
+    if (guestCapabilityProbe.guestCapabilityModuleDetected !== true)
+      failures.push({
+        error: "guest_capability_probe_module_not_detected",
+      });
+    if (guestCapabilityProbe.guestCapabilityExecutionDetected !== true)
+      failures.push({
+        error: "guest_capability_probe_execution_not_detected",
+      });
+    if (guestCapabilityProbe.builtinBridgeRuntimePathDetected !== true)
+      failures.push({
+        error: "guest_capability_probe_builtin_bridge_path_not_detected",
+      });
+  }
+
+  const nativeAbiGapProbe = readJsonOrNull(proofs.nativeAbiGapProbe);
+  if (!nativeAbiGapProbe) {
+    failures.push({
+      error: "missing_native_abi_gap_probe_artifact",
+      path: proofs.nativeAbiGapProbe,
+    });
+  } else {
+    if (nativeAbiGapProbe.ok !== true)
+      failures.push({ error: "native_abi_gap_probe_not_ok" });
+    if (nativeAbiGapProbe.transport !== "process")
+      failures.push({ error: "native_abi_gap_probe_not_process_transport" });
+    if (nativeAbiGapProbe.capabilityChannel !== "component-wit")
+      failures.push({
+        error: "native_abi_gap_probe_not_component_wit_channel",
+      });
+    if (nativeAbiGapProbe.dlopenNotImplementedDetected !== true)
+      failures.push({ error: "native_abi_gap_probe_missing_dlopen_blocker" });
+    if (nativeAbiGapProbe.runtimeNativeAbiAvailable !== false)
+      failures.push({
+        error: "native_abi_gap_probe_unexpected_native_abi_ready",
+      });
+  }
+
   const coreFactory = readText("packages/aegispy-core/src/runtime/factory.ts");
   const nodeRuntime = readText(
     "packages/aegispy-node/src/runtime/node-runtime.ts",
   );
+  const denoRuntime = readText("packages/aegispy-deno/src/create-runtime.ts");
+  const bunRuntime = readText("packages/aegispy-bun/src/create-runtime.ts");
   const workerMain = readText("rust/aegispy-worker/src/main.rs");
   const simulationSignals = {
     coreFactoryContainsSimulatedRuntimeClass: coreFactory.includes(
@@ -138,6 +229,24 @@ function main() {
     ),
     nodeRuntimeContainsDefaultInProcessPath: nodeRuntime.includes(
       "return new InProcessTransport();",
+    ),
+    denoTransportDefaultsToProcess: denoRuntime.includes(
+      'AEGISPY_DENO_TRANSPORT ?? "process"',
+    ),
+    denoTransportSupportsExplicitSimulation: denoRuntime.includes(
+      'if (raw === "simulation") return "simulation";',
+    ),
+    denoRuntimeUsesRustWorkerTransportDefault: denoRuntime.includes(
+      "const transport = new RustWorkerTransport();",
+    ),
+    bunTransportDefaultsToProcess: bunRuntime.includes(
+      'AEGISPY_BUN_TRANSPORT ?? "process"',
+    ),
+    bunTransportSupportsExplicitSimulation: bunRuntime.includes(
+      'if (raw === "simulation") return "simulation";',
+    ),
+    bunRuntimeUsesRustWorkerTransportDefault: bunRuntime.includes(
+      "const transport = new RustWorkerTransport();",
     ),
     workerExecutorDefaultsToSimulation: workerMain.includes(
       'unwrap_or_else(|_| "simulation".to_string())',
@@ -154,6 +263,42 @@ function main() {
     workerRuntimeSupportModulePresent: workerMain.includes(
       "prepare_runtime_support_bindings",
     ),
+    workerCapabilityGuestPlanBindingPresent: workerMain.includes(
+      "build_guest_runtime_capability_plan",
+    ),
+    workerCapabilityBootstrapBindingPresent: workerMain.includes(
+      "build_guest_runtime_bootstrap_code",
+    ),
+    workerCapabilityBootstrapUsesBuiltinImport: workerMain.includes(
+      "import aegispy as _aegispy",
+    ),
+    workerCapabilitySourceInjectionBridgePresent: workerMain.includes(
+      'include_str!("../../../engine/python/aegispy/__init__.py")',
+    ),
+    workerCapabilityRewriteBindingPresent: workerMain.includes(
+      "rewrite_capability_bindings_wit_host_abi",
+    ),
+    workerRuntimeUsesRewriteAsOnlyPath: workerMain.includes(
+      "let runtime_code = match rewrite_capability_bindings_wit_host_abi(",
+    ),
+    workerCapabilityBindingModeEnvPresent: workerMain.includes(
+      "AEGISPY_WORKER_CAPABILITY_BINDING_MODE",
+    ),
+    workerCapabilityBindingModeDefaultGuestRuntimeAbi: workerMain.includes(
+      'unwrap_or_else(|_| "guest-runtime-abi".to_string())',
+    ),
+    workerCapabilityBindingModeSupportsGuestRuntimeAbi:
+      workerMain.includes('"guest-runtime-abi"') &&
+      workerMain.includes('"guest-abi"') &&
+      workerMain.includes("Ok(Self::GuestRuntimeAbi)"),
+    workerCapabilityBindingModeSupportsRewriteDispatch:
+      workerMain.includes('"rewrite"') &&
+      workerMain.includes('"rewrite-dispatch"') &&
+      workerMain.includes("Ok(Self::RewriteDispatch)"),
+    workerCapabilityStreamBridgePresent:
+      workerMain.includes("process_wit_line") ||
+      workerMain.includes("CAPABILITY_WIT_REQ_PREFIX") ||
+      workerMain.includes("CAPABILITY_WIT_RES_PREFIX"),
     workerNativeHostImportBindingPresent: workerMain.includes(
       "AegispyRuntime::add_to_linker",
     ),
@@ -179,6 +324,24 @@ function main() {
   if (simulationSignals.nodeRuntimeContainsDefaultInProcessPath) {
     failures.push({ error: "node_runtime_default_inprocess_detected" });
   }
+  if (!simulationSignals.denoTransportDefaultsToProcess) {
+    failures.push({ error: "deno_transport_default_not_process" });
+  }
+  if (!simulationSignals.denoTransportSupportsExplicitSimulation) {
+    failures.push({ error: "deno_transport_explicit_simulation_missing" });
+  }
+  if (!simulationSignals.denoRuntimeUsesRustWorkerTransportDefault) {
+    failures.push({ error: "deno_runtime_default_process_transport_missing" });
+  }
+  if (!simulationSignals.bunTransportDefaultsToProcess) {
+    failures.push({ error: "bun_transport_default_not_process" });
+  }
+  if (!simulationSignals.bunTransportSupportsExplicitSimulation) {
+    failures.push({ error: "bun_transport_explicit_simulation_missing" });
+  }
+  if (!simulationSignals.bunRuntimeUsesRustWorkerTransportDefault) {
+    failures.push({ error: "bun_runtime_default_process_transport_missing" });
+  }
   if (simulationSignals.workerExecutorDefaultsToSimulation) {
     failures.push({ error: "worker_executor_default_simulation_detected" });
   }
@@ -191,14 +354,59 @@ function main() {
   if (simulationSignals.workerCapabilityPreludeInjectionPresent) {
     failures.push({ error: "worker_capability_prelude_injection_present" });
   }
-  if (!simulationSignals.workerRuntimeSupportModulePresent) {
-    failures.push({ error: "worker_runtime_support_module_missing" });
+  if (simulationSignals.workerRuntimeSupportModulePresent) {
+    failures.push({ error: "worker_runtime_support_module_present" });
+  }
+  if (!simulationSignals.workerCapabilityGuestPlanBindingPresent) {
+    failures.push({ error: "worker_capability_guest_plan_binding_missing" });
+  }
+  if (!simulationSignals.workerCapabilityBootstrapBindingPresent) {
+    failures.push({ error: "worker_capability_bootstrap_binding_missing" });
+  }
+  if (!simulationSignals.workerCapabilityBootstrapUsesBuiltinImport) {
+    failures.push({
+      error: "worker_capability_bootstrap_builtin_import_missing",
+    });
+  }
+  if (simulationSignals.workerCapabilitySourceInjectionBridgePresent) {
+    failures.push({
+      error: "worker_capability_source_injection_bridge_present",
+    });
+  }
+  if (!simulationSignals.workerCapabilityBindingModeEnvPresent) {
+    failures.push({ error: "worker_capability_binding_mode_env_missing" });
+  }
+  if (!simulationSignals.workerCapabilityBindingModeDefaultGuestRuntimeAbi) {
+    failures.push({
+      error: "worker_capability_binding_mode_default_not_guest_runtime_abi",
+    });
+  }
+  if (!simulationSignals.workerCapabilityBindingModeSupportsGuestRuntimeAbi) {
+    failures.push({
+      error: "worker_capability_binding_mode_guest_runtime_abi_missing",
+    });
+  }
+  if (!simulationSignals.workerCapabilityBindingModeSupportsRewriteDispatch) {
+    failures.push({
+      error: "worker_capability_binding_mode_rewrite_dispatch_missing",
+    });
+  }
+  if (!simulationSignals.workerCapabilityRewriteBindingPresent) {
+    failures.push({ error: "worker_capability_rewrite_binding_missing" });
+  }
+  if (simulationSignals.workerRuntimeUsesRewriteAsOnlyPath) {
+    failures.push({
+      error: "worker_runtime_default_rewrite_dispatch_detected",
+    });
+  }
+  if (simulationSignals.workerCapabilityStreamBridgePresent) {
+    failures.push({ error: "worker_capability_stream_bridge_present" });
   }
   if (!simulationSignals.workerNativeHostImportBindingPresent) {
     failures.push({ error: "worker_native_host_import_binding_missing" });
   }
-  if (!simulationSignals.workerSitecustomizeBindingPresent) {
-    failures.push({ error: "worker_sitecustomize_binding_missing" });
+  if (simulationSignals.workerSitecustomizeBindingPresent) {
+    failures.push({ error: "worker_sitecustomize_binding_present" });
   }
   if (!simulationSignals.workerWasiExecutorPresent) {
     failures.push({ error: "worker_wasi_executor_missing" });

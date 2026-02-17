@@ -29,6 +29,19 @@ function readGate(relPath) {
   return { ok: doc.ok === true, missing: false };
 }
 
+function readNativeAbiGap(relPath) {
+  const full = path.join(repoRoot, relPath);
+  if (!fs.existsSync(full)) return { ok: false, missing: true };
+  const doc = JSON.parse(fs.readFileSync(full, "utf8"));
+  return {
+    ok:
+      doc.ok === true &&
+      doc.dlopenNotImplementedDetected === true &&
+      doc.runtimeNativeAbiAvailable === false,
+    missing: false,
+  };
+}
+
 function main() {
   const checks = [
     "node scripts/release_evidence.mjs",
@@ -38,6 +51,8 @@ function main() {
     "bash scripts/claim_alignment_check",
     "bash scripts/benchmarks_check",
     "bash scripts/security_claims_check",
+    "node scripts/runtime_guest_abi_probe.mjs",
+    "node scripts/runtime_native_abi_gap_probe.mjs",
     "bash scripts/real_execution_check",
     "bash scripts/compat_check",
   ];
@@ -49,6 +64,7 @@ function main() {
     compatibility: "artifacts/gates/compat-check.json",
     component: "artifacts/gates/component-artifact-check.json",
     nativeHostImport: "artifacts/gates/native-host-import-check.json",
+    nativeAbiGap: "artifacts/research/runtime-native-abi-gap.json",
   };
 
   let ok = true;
@@ -64,6 +80,7 @@ function main() {
     compatibility: readGate(gateFiles.compatibility),
     component: readGate(gateFiles.component),
     nativeHostImport: readGate(gateFiles.nativeHostImport),
+    nativeAbiGap: readNativeAbiGap(gateFiles.nativeAbiGap),
   };
   if (
     !gateStatus.claims.ok ||
@@ -72,7 +89,8 @@ function main() {
     !gateStatus.realExecution.ok ||
     !gateStatus.compatibility.ok ||
     !gateStatus.component.ok ||
-    !gateStatus.nativeHostImport.ok
+    !gateStatus.nativeHostImport.ok ||
+    !gateStatus.nativeAbiGap.ok
   )
     ok = false;
 
