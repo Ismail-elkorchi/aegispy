@@ -5,6 +5,7 @@ import {
   type AegisPyRuntime,
   type AuditEvent,
   type ByteLimits,
+  type ConformanceProfile,
   type CreateRuntimeOptions,
   type DeterminismConfig,
   type EnvPermission,
@@ -19,6 +20,7 @@ import {
   type RunResult,
   type RunResultError,
   type RunResultOk,
+  type RuntimeCapabilities,
   type TerminationReason,
   type TimeLimits,
 } from "../src/index";
@@ -34,6 +36,7 @@ type CoverageTuple = [
   AegisPyRuntime,
   AuditEvent,
   ByteLimits,
+  ConformanceProfile,
   CreateRuntimeOptions,
   DeterminismConfig,
   EnvPermission,
@@ -48,6 +51,7 @@ type CoverageTuple = [
   RunResult,
   RunResultError,
   RunResultOk,
+  RuntimeCapabilities,
   TerminationReason,
   TimeLimits,
 ];
@@ -110,16 +114,20 @@ describe("api contract", () => {
     const request = makeRequest("node");
 
     const result = await runtime.run(request);
+    const capabilities = runtime.capabilities();
 
     expect(result.status).toBe("ok");
     expect(result.exitCode).toBe(0);
     expect(result.stdoutUtf8).toContain("alpha");
     expect(result.meta.termination).toBe("ok");
+    expect(capabilities.host).toBe("node");
+    expect(typeof capabilities.hardened).toBe("boolean");
 
     writeArtifact("artifacts/tests/api-contract.json", {
       ok: true,
       invariants,
       result,
+      capabilities,
     });
   });
 });

@@ -3,6 +3,7 @@ export type {
   AegisPyRuntime,
   AuditEvent,
   ByteLimits,
+  ConformanceProfile,
   CreateRuntimeOptions,
   DeterminismConfig,
   EnvPermission,
@@ -17,6 +18,7 @@ export type {
   RunResult,
   RunResultError,
   RunResultOk,
+  RuntimeCapabilities,
   TerminationReason,
   TimeLimits,
 } from "./contracts/types";

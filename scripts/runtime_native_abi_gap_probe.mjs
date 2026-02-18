@@ -184,7 +184,7 @@ runProbe()
     );
     const capabilityChannelDetected = outputLines.includes("component-wit");
     const dispatchModeDetected = outputLines.includes(
-      "host-runtime-call-dispatch",
+      "host-native-abi-direct-dispatch",
     );
     const dlopenDependencyRequired = outputLines.includes("true");
     const moduleFileLine =
@@ -213,7 +213,7 @@ runProbe()
       stderrUtf8,
       bridgeKind: bridgeKindDetected ? "builtin-capability-bridge" : "unknown",
       bridgeDispatchMode: dispatchModeDetected
-        ? "host-runtime-call-dispatch"
+        ? "host-native-abi-direct-dispatch"
         : "unknown",
       fsRoundTripDetected,
       envRoundTripDetected,

@@ -169,7 +169,7 @@ runProbe()
       "guest-capability-probe",
     );
     const dispatchModeDetected = outputLines.includes(
-      "host-runtime-call-dispatch",
+      "host-native-abi-direct-dispatch",
     );
     const moduleFileLine =
       outputLines.find((line) => line.includes("/aegispy/__init__.py")) ?? "";
@@ -192,7 +192,7 @@ runProbe()
       builtinBridgeModuleFile: moduleFileLine,
       builtinBridgeRuntimePathDetected,
       bridgeDispatchMode: dispatchModeDetected
-        ? "host-runtime-call-dispatch"
+        ? "host-native-abi-direct-dispatch"
         : "unknown",
       guestCapabilityModuleDetected,
       guestCapabilityExecutionDetected,

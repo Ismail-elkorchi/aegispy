@@ -8,6 +8,7 @@ import { validateRunRequest } from "../../src/contracts/validation";
 import type {
   AegisPyRuntime,
   HostKind,
+  RuntimeCapabilities,
   RunRequest,
   RunResult,
 } from "../../src";
@@ -19,6 +20,20 @@ class TestSimulatedRuntime implements AegisPyRuntime {
 
   public constructor(host: HostKind) {
     this.host = host;
+  }
+
+  public capabilities(): RuntimeCapabilities {
+    return {
+      host: this.host,
+      profile: this.host === "browser" ? "browser-subset" : "server-hardened",
+      transport: this.host === "browser" ? "worker" : "simulation",
+      capabilityChannel: this.host === "browser" ? "worker-timeout" : "none",
+      fs: this.host !== "browser",
+      http: this.host !== "browser",
+      env: this.host !== "browser",
+      deterministic: true,
+      hardened: false,
+    };
   }
 
   public async run(req: RunRequest): Promise<RunResult> {

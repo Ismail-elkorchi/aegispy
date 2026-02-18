@@ -135,11 +135,11 @@ function main() {
       failures.push({ error: "component_build_not_ok" });
     if (
       componentBuild.runtimeBridge !==
-      "component-host-guest-runtime-module-call-dispatch"
+      "component-host-guest-runtime-native-abi-dispatch"
     )
       failures.push({
         error:
-          "component_bridge_not_component_host_guest_runtime_module_call_dispatch",
+          "component_bridge_not_component_host_guest_runtime_native_abi_dispatch",
       });
     if (
       componentBuild.requiredHostImportContract !== "aegispy:runtime/capability"
@@ -187,7 +187,8 @@ function main() {
         error: "guest_capability_probe_builtin_bridge_path_not_detected",
       });
     if (
-      guestCapabilityProbe.bridgeDispatchMode !== "host-runtime-call-dispatch"
+      guestCapabilityProbe.bridgeDispatchMode !==
+      "host-native-abi-direct-dispatch"
     )
       failures.push({
         error: "guest_capability_probe_unexpected_dispatch_mode",
@@ -223,7 +224,9 @@ function main() {
       });
     if (nativeAbiGapProbe.bridgeKind !== "builtin-capability-bridge")
       failures.push({ error: "native_abi_probe_unexpected_bridge_kind" });
-    if (nativeAbiGapProbe.bridgeDispatchMode !== "host-runtime-call-dispatch")
+    if (
+      nativeAbiGapProbe.bridgeDispatchMode !== "host-native-abi-direct-dispatch"
+    )
       failures.push({ error: "native_abi_probe_unexpected_dispatch_mode" });
   }
 
@@ -282,8 +285,14 @@ function main() {
     workerCapabilityGuestPlanBindingPresent: workerMain.includes(
       "build_guest_runtime_capability_plan",
     ),
-    workerCapabilityRuntimeCallBridgePresent: workerMain.includes(
-      "dispatch_capability_bridge_runtime_loop",
+    workerCapabilityNativeAbiDispatchPresent: workerMain.includes(
+      "CAPABILITY_NATIVE_REQ_PREFIX",
+    ),
+    workerCapabilityBridgePollingPresent:
+      workerMain.includes("dispatch_capability_bridge_runtime_loop") ||
+      workerMain.includes("process_bridge_request_file"),
+    workerCapabilityBridgeDirEnvPresent: workerMain.includes(
+      "AEGISPY_CAP_BRIDGE_GUEST_DIR",
     ),
     workerCapabilityBootstrapBindingPresent: workerMain.includes(
       "build_guest_runtime_bootstrap_code",
@@ -381,8 +390,14 @@ function main() {
       error: "worker_capability_guest_plan_binding_still_present",
     });
   }
-  if (!simulationSignals.workerCapabilityRuntimeCallBridgePresent) {
-    failures.push({ error: "worker_capability_runtime_call_bridge_missing" });
+  if (!simulationSignals.workerCapabilityNativeAbiDispatchPresent) {
+    failures.push({ error: "worker_capability_native_abi_dispatch_missing" });
+  }
+  if (simulationSignals.workerCapabilityBridgePollingPresent) {
+    failures.push({ error: "worker_capability_bridge_polling_still_present" });
+  }
+  if (simulationSignals.workerCapabilityBridgeDirEnvPresent) {
+    failures.push({ error: "worker_capability_bridge_dir_env_still_present" });
   }
   if (!simulationSignals.workerCapabilityBootstrapBindingPresent) {
     failures.push({ error: "worker_capability_bootstrap_binding_missing" });

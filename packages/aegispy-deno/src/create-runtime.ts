@@ -3,6 +3,7 @@ import { validateRunRequest } from "../../aegispy-core/src/contracts/validation"
 import type {
   AegisPyRuntime,
   CreateRuntimeOptions,
+  RuntimeCapabilities,
   RunRequest,
   RunResult,
 } from "@aegispy/core";
@@ -86,6 +87,21 @@ export class DenoRuntime implements AegisPyRuntime {
     this.transport = selection.transport;
     this.transportKind = selection.mode;
     this.isolationProfile = selection.isolationProfile;
+  }
+
+  public capabilities(): RuntimeCapabilities {
+    const hardened = this.transportKind === "process";
+    return {
+      host: this.host,
+      profile: "server-hardened",
+      transport: this.transportKind,
+      capabilityChannel: hardened ? "component-wit" : "none",
+      fs: true,
+      http: true,
+      env: true,
+      deterministic: true,
+      hardened,
+    };
   }
 
   public async run(req: RunRequest): Promise<RunResult> {

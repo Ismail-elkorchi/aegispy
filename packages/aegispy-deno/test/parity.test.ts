@@ -38,6 +38,7 @@ describe("deno adapter parity", () => {
 
     const runtime: AegisPyRuntime = await createRuntime({ host: "deno" });
     const view = runtimeView(runtime);
+    const capabilities = runtime.capabilities();
 
     const result = await runtime.run({
       host: "deno",
@@ -70,14 +71,19 @@ describe("deno adapter parity", () => {
     await runtime.close();
 
     expect(view.transportKind).toBe("process");
+    expect(capabilities.profile).toBe("server-hardened");
+    expect(capabilities.hardened).toBe(true);
     expect(result.meta.termination).toBe("ok");
     expect(capabilityChannel(result)).toBe("component-wit");
 
     writeArtifact("artifacts/e2e/deno-parity.json", {
       ok: true,
       invariants: ["INV-FEAT-0017"],
+      host: "deno",
+      profile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
       capabilityChannel: capabilityChannel(result),
+      hardened: capabilities.hardened,
       termination: result.meta.termination,
       status: result.status,
     });
@@ -88,6 +94,7 @@ describe("deno adapter parity", () => {
 
     const runtime: AegisPyRuntime = await createRuntime({ host: "deno" });
     const view = runtimeView(runtime);
+    const capabilities = runtime.capabilities();
 
     const result = await runtime.run({
       host: "deno",
@@ -120,6 +127,8 @@ describe("deno adapter parity", () => {
     await runtime.close();
 
     expect(view.transportKind).toBe("simulation");
+    expect(capabilities.profile).toBe("server-hardened");
+    expect(capabilities.hardened).toBe(false);
     expect(result.status).toBe("ok");
     expect(capabilityChannel(result)).toBe(null);
   }, 600_000);

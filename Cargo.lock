@@ -22,6 +22,7 @@ name = "aegispy_worker"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "serde",
  "serde_json",
  "sha2",

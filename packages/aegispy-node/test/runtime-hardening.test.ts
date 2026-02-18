@@ -65,6 +65,7 @@ describe("runtime hardening", () => {
 
     const runtime = await createRuntime({ host: "node" });
     const view = runtimeView(runtime);
+    const capabilities = runtime.capabilities();
     const result = await runtime.run({
       ...baseRequest,
       code: 'print("real-path")',
@@ -72,6 +73,8 @@ describe("runtime hardening", () => {
     await runtime.close();
 
     expect(view.transportKind).toBe("process");
+    expect(capabilities.profile).toBe("server-hardened");
+    expect(capabilities.hardened).toBe(true);
     expect(result.status).toBe("ok");
     expect(capabilityChannel(result)).toBe("component-wit");
 
@@ -79,9 +82,11 @@ describe("runtime hardening", () => {
       ok: true,
       invariants: ["INV-FEAT-0003", "INV-FEAT-0009"],
       host: "node",
+      profile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
       capabilityChannel: capabilityChannel(result),
       isolationProfile: view.isolationProfile ?? null,
+      hardened: capabilities.hardened,
       termination: result.meta.termination,
       status: result.status,
     });
@@ -94,6 +99,7 @@ describe("runtime hardening", () => {
 
     const runtime = await createRuntime({ host: "node" });
     const view = runtimeView(runtime);
+    const capabilities = runtime.capabilities();
 
     const fsResult = await runtime.run({
       ...baseRequest,
@@ -118,6 +124,8 @@ describe("runtime hardening", () => {
     await runtime.close();
 
     expect(view.transportKind).toBe("process");
+    expect(capabilities.profile).toBe("server-hardened");
+    expect(capabilities.hardened).toBe(true);
     expect(fsResult.status).toBe("error");
     expect(httpResult.status).toBe("error");
     expect(isolationResult.status).toBe("error");
@@ -142,8 +150,10 @@ describe("runtime hardening", () => {
       ok: true,
       invariants: ["INV-SECU-0001", "INV-SECU-0005"],
       host: "node",
+      profile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
       capabilityChannel: capabilityChannel(fsResult),
+      hardened: capabilities.hardened,
       fsDenied: fsResult.error.code === "AEG-POLICY-DENIED",
       httpDenied: httpResult.error.code === "AEG-POLICY-DENIED",
       isolationDenied: isolationResult.error.code === "AEG-POLICY-DENIED",
@@ -153,8 +163,10 @@ describe("runtime hardening", () => {
       ok: true,
       invariants: ["INV-SECU-0006"],
       host: "node",
+      conformanceProfile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
       capabilityChannel: capabilityChannel(isolationResult),
+      hardened: capabilities.hardened,
       profile: view.isolationProfile ?? null,
       deniedByProfile: isolationResult.stderrUtf8,
       termination: isolationResult.meta.termination,
