@@ -29,6 +29,8 @@
 - `artifacts/security/adversarial-suite.json`
 - `artifacts/security/native-abi-adversarial.json`
 - `artifacts/security/native-abi-fuzz.json`
+- `artifacts/security/supply-chain-sbom.json`
+- `artifacts/security/supply-chain-attestation.json`
 
 ## Invariants
 
