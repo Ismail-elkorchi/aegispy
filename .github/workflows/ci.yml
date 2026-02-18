@@ -15,6 +15,9 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -49,6 +52,33 @@ jobs:
 
       - name: Check
         run: bash scripts/check
+
+      - name: Attest Runtime Artifacts
+        id: attest_runtime_artifacts
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: |
+            artifacts/engine/cpython-wasi.wasm
+            artifacts/engine/aegispy-capability-bridge.py
+            artifacts/component/aegispy.component.wasm
+
+      - name: Stage Provenance Bundle
+        run: |
+          mkdir -p artifacts/security
+          bundle_path="${{ steps.attest_runtime_artifacts.outputs.bundle-path }}"
+          if [ -z "$bundle_path" ] || [ ! -f "$bundle_path" ]; then
+            echo "attestation bundle not found at: ${bundle_path}" >&2
+            exit 1
+          fi
+          cp "$bundle_path" artifacts/security/provenance-bundle.jsonl
+
+      - name: Verify Provenance Gate
+        env:
+          AEGISPY_PROVENANCE_VERIFY_REQUIRED: "1"
+          AEGISPY_PROVENANCE_REPO: ${{ github.repository }}
+          AEGISPY_PROVENANCE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/ci.yml
+          AEGISPY_PROVENANCE_BUNDLE_PATH: artifacts/security/provenance-bundle.jsonl
+        run: bash scripts/provenance_verify_check
 
       - name: Upload Artifacts
         if: always()

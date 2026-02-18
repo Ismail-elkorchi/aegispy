@@ -31,6 +31,8 @@
 - `artifacts/security/native-abi-fuzz.json`
 - `artifacts/security/supply-chain-sbom.json`
 - `artifacts/security/supply-chain-attestation.json`
+- `artifacts/security/provenance-verification.json`
+- `artifacts/gates/provenance-verify-check.json`
 
 ## Invariants
 

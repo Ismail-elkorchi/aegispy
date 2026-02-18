@@ -19,6 +19,7 @@
 - `scripts/component_artifact_check`
 - `scripts/native_host_import_check`
 - `scripts/supply_chain_check`
+- `scripts/provenance_verify_check`
 - `scripts/profile_conformance_check`
 - `scripts/compat_check`
 - `scripts/native_abi_adversarial_check`
@@ -33,16 +34,17 @@
 3. `scripts/component_artifact_check`
 4. `AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict scripts/native_host_import_check`
 5. `scripts/supply_chain_check`
-6. `scripts/claim_alignment_check`
-7. `scripts/benchmarks_check`
-8. `scripts/security_claims_check`
-9. `scripts/runtime_guest_abi_probe.mjs`
-10. `scripts/runtime_native_abi_gap_probe.mjs`
-11. `scripts/real_execution_check`
-12. `scripts/profile_conformance_check`
-13. `scripts/compat_check`
-14. `scripts/native_abi_adversarial_check`
-15. `scripts/native_abi_fuzz_check`
+6. `AEGISPY_PROVENANCE_VERIFY_REQUIRED=1 scripts/provenance_verify_check`
+7. `scripts/claim_alignment_check`
+8. `scripts/benchmarks_check`
+9. `scripts/security_claims_check`
+10. `scripts/runtime_guest_abi_probe.mjs`
+11. `scripts/runtime_native_abi_gap_probe.mjs`
+12. `scripts/real_execution_check`
+13. `scripts/profile_conformance_check`
+14. `scripts/compat_check`
+15. `scripts/native_abi_adversarial_check`
+16. `scripts/native_abi_fuzz_check`
 
 - Output artifact: `artifacts/gates/release-claims.json`.
 
@@ -58,6 +60,7 @@
 - `artifacts/security/native-abi-fuzz.json`
 - `artifacts/security/supply-chain-sbom.json`
 - `artifacts/security/supply-chain-attestation.json`
+- `artifacts/security/provenance-verification.json`
 - `artifacts/tests/real-engine-default.json`
 - `artifacts/component/build.json`
 - `artifacts/gates/component-artifact-check.json`
@@ -68,6 +71,7 @@
 - `artifacts/gates/native-abi-adversarial-check.json`
 - `artifacts/gates/native-abi-fuzz-check.json`
 - `artifacts/gates/supply-chain-check.json`
+- `artifacts/gates/provenance-verify-check.json`
 - `artifacts/research/runtime-native-abi-gap.json`
 
 ## Invariants

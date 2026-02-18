@@ -49,6 +49,7 @@ function main() {
     "bash scripts/component_artifact_check",
     "AEGISPY_NATIVE_HOST_IMPORT_GATE_MODE=strict bash scripts/native_host_import_check",
     "bash scripts/supply_chain_check",
+    "AEGISPY_PROVENANCE_VERIFY_REQUIRED=1 bash scripts/provenance_verify_check",
     "bash scripts/claim_alignment_check",
     "bash scripts/benchmarks_check",
     "bash scripts/security_claims_check",
@@ -69,6 +70,7 @@ function main() {
     component: "artifacts/gates/component-artifact-check.json",
     nativeHostImport: "artifacts/gates/native-host-import-check.json",
     supplyChain: "artifacts/gates/supply-chain-check.json",
+    provenanceVerify: "artifacts/gates/provenance-verify-check.json",
     nativeAbiGap: "artifacts/research/runtime-native-abi-gap.json",
     profileConformance: "artifacts/gates/profile-conformance-check.json",
     agentWorkloadCorpus: "artifacts/compat/agent-workload-corpus.json",
@@ -90,6 +92,7 @@ function main() {
     component: readGate(gateFiles.component),
     nativeHostImport: readGate(gateFiles.nativeHostImport),
     supplyChain: readGate(gateFiles.supplyChain),
+    provenanceVerify: readGate(gateFiles.provenanceVerify),
     nativeAbiGap: readNativeAbiGap(gateFiles.nativeAbiGap),
     profileConformance: readGate(gateFiles.profileConformance),
     nativeAbiAdversarial: readGate(gateFiles.nativeAbiAdversarial),
@@ -104,6 +107,7 @@ function main() {
     !gateStatus.component.ok ||
     !gateStatus.nativeHostImport.ok ||
     !gateStatus.supplyChain.ok ||
+    !gateStatus.provenanceVerify.ok ||
     !gateStatus.nativeAbiGap.ok ||
     !gateStatus.profileConformance.ok ||
     !gateStatus.nativeAbiAdversarial.ok ||
