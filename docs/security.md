@@ -27,6 +27,8 @@
 - `artifacts/security/isolation-profile.json`
 - `artifacts/tests/real-engine-default.json`
 - `artifacts/security/adversarial-suite.json`
+- `artifacts/security/native-abi-adversarial.json`
+- `artifacts/security/native-abi-fuzz.json`
 
 ## Invariants
 

@@ -17,6 +17,18 @@ const isolationProfilePath = path.join(
   "security",
   "isolation-profile.json",
 );
+const nativeAbiAdversarialPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "native-abi-adversarial.json",
+);
+const nativeAbiFuzzPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "native-abi-fuzz.json",
+);
 const outPath = path.join(
   repoRoot,
   "artifacts",
@@ -70,11 +82,56 @@ function main() {
       failures.push({ error: "isolation_profile_not_strict" });
   }
 
+  if (!fs.existsSync(nativeAbiAdversarialPath)) {
+    failures.push({
+      error: "missing_native_abi_adversarial_artifact",
+      path: "artifacts/security/native-abi-adversarial.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(nativeAbiAdversarialPath, "utf8"));
+    if (doc.ok !== true)
+      failures.push({ error: "native_abi_adversarial_not_ok" });
+    if (doc?.hosts?.node?.componentWitOnly !== true)
+      failures.push({ error: "native_abi_adversarial_node_not_component_wit" });
+    if (doc?.hosts?.deno?.componentWitOnly !== true)
+      failures.push({ error: "native_abi_adversarial_deno_not_component_wit" });
+    if (doc?.hosts?.bun?.componentWitOnly !== true)
+      failures.push({ error: "native_abi_adversarial_bun_not_component_wit" });
+  }
+
+  if (!fs.existsSync(nativeAbiFuzzPath)) {
+    failures.push({
+      error: "missing_native_abi_fuzz_artifact",
+      path: "artifacts/security/native-abi-fuzz.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(nativeAbiFuzzPath, "utf8"));
+    if (doc.ok !== true) failures.push({ error: "native_abi_fuzz_not_ok" });
+    if (doc.transport !== "process")
+      failures.push({ error: "native_abi_fuzz_transport_not_process" });
+    if (doc.capabilityChannel !== "component-wit")
+      failures.push({ error: "native_abi_fuzz_not_component_wit_channel" });
+    if (doc.dispatchMode !== "host-native-abi-direct-dispatch")
+      failures.push({ error: "native_abi_fuzz_dispatch_mode_invalid" });
+    if (
+      typeof doc?.audit?.parseFailures !== "number" ||
+      doc.audit.parseFailures <= 0
+    )
+      failures.push({ error: "native_abi_fuzz_parse_failures_missing" });
+    if (
+      typeof doc?.audit?.policyDenials !== "number" ||
+      doc.audit.policyDenials <= 0
+    )
+      failures.push({ error: "native_abi_fuzz_policy_denials_missing" });
+  }
+
   const payload = {
     ok: failures.length === 0,
     checked: [
       "artifacts/security/runtime-policy-denials.json",
       "artifacts/security/isolation-profile.json",
+      "artifacts/security/native-abi-adversarial.json",
+      "artifacts/security/native-abi-fuzz.json",
     ],
     failures,
   };

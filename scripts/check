@@ -44,9 +44,14 @@ if [ ! -f artifacts/component/aegispy.component.cwasm ]; then
 fi
 
 pnpm test
+node scripts/release_evidence.mjs
 node scripts/runtime_guest_abi_probe.mjs
 node scripts/runtime_native_abi_gap_probe.mjs
 bash scripts/real_execution_check
+bash scripts/profile_conformance_check
+bash scripts/compat_check
+bash scripts/native_abi_adversarial_check
+bash scripts/native_abi_fuzz_check
 
 if ! command -v cargo >/dev/null 2>&1; then
   echo "cargo command is missing" >&2
