@@ -63,6 +63,12 @@ struct IsolationProfile {
     deny_env_capability: bool,
 }
 
+#[derive(Clone, Debug)]
+struct KernelIsolationEnvelope {
+    detail: String,
+    no_new_privs: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WorkerExecutorMode {
     Wasi,
@@ -172,6 +178,162 @@ fn parse_bool_env(key: &str, default: bool) -> Result<bool, String> {
         "1" | "true" | "TRUE" | "True" => Ok(true),
         "0" | "false" | "FALSE" | "False" => Ok(false),
         _ => Err(format!("invalid boolean value for {key}")),
+    }
+}
+
+fn parse_proc_status_u64(key: &str) -> Option<u64> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}:\t")))
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+}
+
+fn read_linux_cgroup_path() -> Option<String> {
+    let cgroup = fs::read_to_string("/proc/self/cgroup").ok()?;
+    for line in cgroup.lines() {
+        let mut parts = line.splitn(3, ':');
+        let _hierarchy = parts.next();
+        let controllers = parts.next();
+        let path = parts.next();
+        if controllers == Some("") && path.is_some() {
+            return path.map(ToString::to_string);
+        }
+    }
+    None
+}
+
+fn read_linux_namespace_ids() -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for name in ["pid", "mnt", "net", "uts", "ipc", "cgroup"] {
+        let ns_path = format!("/proc/self/ns/{name}");
+        if let Ok(link) = fs::read_link(&ns_path) {
+            out.insert(name.to_string(), link.to_string_lossy().to_string());
+        }
+    }
+    out
+}
+
+fn encode_kernel_detail_value(value: &str) -> String {
+    value.replace(';', "%3B").replace('=', "%3D")
+}
+
+fn build_kernel_isolation_detail(
+    profile: &IsolationProfile,
+    no_new_privs: bool,
+    seccomp_mode: Option<u64>,
+    seccomp_filters: Option<u64>,
+    cgroup_path: Option<&str>,
+    namespaces: &BTreeMap<String, String>,
+) -> String {
+    let mut parts = Vec::<String>::new();
+    parts.push("supported=1".to_string());
+    parts.push(format!(
+        "os={}",
+        encode_kernel_detail_value(std::env::consts::OS)
+    ));
+    parts.push(format!(
+        "profile={}",
+        encode_kernel_detail_value(&profile.name)
+    ));
+    parts.push(format!("no_new_privs={}", if no_new_privs { 1 } else { 0 }));
+    parts.push(format!(
+        "seccomp={}",
+        seccomp_mode
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!(
+        "seccomp_filters={}",
+        seccomp_filters
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!(
+        "cgroup_path={}",
+        encode_kernel_detail_value(cgroup_path.unwrap_or("missing"))
+    ));
+    for (name, value) in namespaces {
+        parts.push(format!(
+            "ns_{name}={}",
+            encode_kernel_detail_value(value.as_str())
+        ));
+    }
+    parts.join(";")
+}
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn prctl(option: i32, arg2: usize, arg3: usize, arg4: usize, arg5: usize) -> i32;
+}
+
+#[cfg(target_os = "linux")]
+fn enforce_linux_no_new_privs() -> Result<(), String> {
+    const PR_SET_NO_NEW_PRIVS: i32 = 38;
+    let rc = unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+    if rc != 0 {
+        return Err(format!(
+            "failed to set PR_SET_NO_NEW_PRIVS: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+fn load_kernel_isolation_envelope(
+    profile: &IsolationProfile,
+) -> Result<KernelIsolationEnvelope, String> {
+    #[cfg(target_os = "linux")]
+    {
+        enforce_linux_no_new_privs()?;
+        let no_new_privs = parse_proc_status_u64("NoNewPrivs").unwrap_or(0) == 1;
+        if profile.name == "strict" && !no_new_privs {
+            return Err("strict profile requires no_new_privs=1".to_string());
+        }
+
+        let seccomp_mode = parse_proc_status_u64("Seccomp");
+        let seccomp_filters = parse_proc_status_u64("Seccomp_filters");
+        let namespaces = read_linux_namespace_ids();
+        if profile.name == "strict" {
+            for required in ["pid", "mnt", "net", "uts", "ipc", "cgroup"] {
+                if !namespaces.contains_key(required) {
+                    return Err(format!(
+                        "strict profile missing namespace evidence: {required}"
+                    ));
+                }
+            }
+        }
+
+        let cgroup_path = read_linux_cgroup_path();
+        if profile.name == "strict" && cgroup_path.is_none() {
+            return Err("strict profile missing cgroup evidence".to_string());
+        }
+
+        let detail = build_kernel_isolation_detail(
+            profile,
+            no_new_privs,
+            seccomp_mode,
+            seccomp_filters,
+            cgroup_path.as_deref(),
+            &namespaces,
+        );
+        Ok(KernelIsolationEnvelope {
+            detail,
+            no_new_privs,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let detail = format!(
+            "supported=0;os={};profile={};no_new_privs=0",
+            encode_kernel_detail_value(std::env::consts::OS),
+            encode_kernel_detail_value(&profile.name)
+        );
+        Ok(KernelIsolationEnvelope {
+            detail,
+            no_new_privs: false,
+        })
     }
 }
 
@@ -1847,7 +2009,11 @@ fn enforce_isolation_profile(
     None
 }
 
-fn run_simulation(run: &Value, profile: &IsolationProfile) -> Value {
+fn run_simulation(
+    run: &Value,
+    profile: &IsolationProfile,
+    kernel_isolation: &KernelIsolationEnvelope,
+) -> Value {
     let started_ts_ms = run
         .get("determinism")
         .and_then(|value| value.get("epochMs"))
@@ -1864,6 +2030,10 @@ fn run_simulation(run: &Value, profile: &IsolationProfile) -> Value {
 
     let code = required_string(run, &["code"]).unwrap_or("");
     let mut audit: Vec<Value> = Vec::new();
+    audit.push(json!({
+      "kind": "kernel_isolation",
+      "detailJson": kernel_isolation.detail
+    }));
 
     if let Some(result) = enforce_isolation_profile(run, profile, started_ts_ms, &mut audit) {
         return result;
@@ -2076,7 +2246,12 @@ impl WasiExecutor {
         })
     }
 
-    fn run(&self, run: &Value, profile: &IsolationProfile) -> Value {
+    fn run(
+        &self,
+        run: &Value,
+        profile: &IsolationProfile,
+        kernel_isolation: &KernelIsolationEnvelope,
+    ) -> Value {
         let wall_started = Instant::now();
         let deterministic_enabled = run
             .get("determinism")
@@ -2111,6 +2286,10 @@ impl WasiExecutor {
         audit.push(json!({
           "kind": "runtime_binding",
           "detailJson": format!("capability_binding_mode:{}", self.capability_binding_mode.as_str())
+        }));
+        audit.push(json!({
+          "kind": "kernel_isolation",
+          "detailJson": kernel_isolation.detail
         }));
 
         if let Some(result) = enforce_isolation_profile(run, profile, started_ts_ms, &mut audit) {
@@ -2514,14 +2693,15 @@ impl WasiExecutor {
 fn execute_run(
     run: &Value,
     isolation_profile: &IsolationProfile,
+    kernel_isolation: &KernelIsolationEnvelope,
     executor_mode: WorkerExecutorMode,
     wasi_executor: Option<&WasiExecutor>,
 ) -> Value {
     match executor_mode {
-        WorkerExecutorMode::Simulation => run_simulation(run, isolation_profile),
+        WorkerExecutorMode::Simulation => run_simulation(run, isolation_profile, kernel_isolation),
         WorkerExecutorMode::Wasi => {
             if let Some(executor) = wasi_executor {
-                executor.run(run, isolation_profile)
+                executor.run(run, isolation_profile, kernel_isolation)
             } else {
                 make_error_result(
                     "AEG-ENGINE",
@@ -2539,6 +2719,7 @@ fn execute_run(
 fn handle_request_with_executor(
     req: RunRequestEnvelope,
     isolation_profile: &IsolationProfile,
+    kernel_isolation: &KernelIsolationEnvelope,
     executor_mode: WorkerExecutorMode,
     wasi_executor: Option<&WasiExecutor>,
 ) -> RunResponseEnvelope {
@@ -2553,7 +2734,13 @@ fn handle_request_with_executor(
         )
     } else {
         match validate_run_payload(&req.run) {
-            Ok(()) => execute_run(&req.run, isolation_profile, executor_mode, wasi_executor),
+            Ok(()) => execute_run(
+                &req.run,
+                isolation_profile,
+                kernel_isolation,
+                executor_mode,
+                wasi_executor,
+            ),
             Err(message) => make_error_result(
                 "AEG-INVALID-REQUEST",
                 &message,
@@ -2579,6 +2766,7 @@ fn handle_request_with_executor(
           "requestId": req.request_id,
           "termination": termination,
           "isolationProfile": isolation_profile.name,
+          "kernelNoNewPrivs": kernel_isolation.no_new_privs,
           "executorMode": executor_mode.as_str()
         })
     );
@@ -2591,11 +2779,25 @@ fn handle_request_with_executor(
 }
 
 #[cfg(test)]
+fn test_kernel_isolation_envelope() -> KernelIsolationEnvelope {
+    KernelIsolationEnvelope {
+        detail: "supported=1;os=test;profile=strict;no_new_privs=1".to_string(),
+        no_new_privs: true,
+    }
+}
+
+#[cfg(test)]
 fn handle_request(
     req: RunRequestEnvelope,
     isolation_profile: &IsolationProfile,
 ) -> RunResponseEnvelope {
-    handle_request_with_executor(req, isolation_profile, WorkerExecutorMode::Simulation, None)
+    handle_request_with_executor(
+        req,
+        isolation_profile,
+        &test_kernel_isolation_envelope(),
+        WorkerExecutorMode::Simulation,
+        None,
+    )
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -2691,6 +2893,9 @@ fn run_worker() -> io::Result<()> {
     let isolation_profile = load_isolation_profile()
         .map_err(|error| io::Error::new(ErrorKind::PermissionDenied, error))?;
     worker_debug("worker_start", "isolation profile loaded");
+    let kernel_isolation = load_kernel_isolation_envelope(&isolation_profile)
+        .map_err(|error| io::Error::new(ErrorKind::PermissionDenied, error))?;
+    worker_debug("worker_start", "kernel isolation envelope loaded");
     let wasi_executor = if matches!(executor_mode, WorkerExecutorMode::Wasi) {
         worker_debug("worker_start", "building wasi executor");
         Some(
@@ -2714,6 +2919,7 @@ fn run_worker() -> io::Result<()> {
             Ok(req) => handle_request_with_executor(
                 req,
                 &isolation_profile,
+                &kernel_isolation,
                 executor_mode,
                 wasi_executor.as_ref(),
             ),

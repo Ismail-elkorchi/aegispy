@@ -29,6 +29,18 @@ const nativeAbiFuzzPath = path.join(
   "security",
   "native-abi-fuzz.json",
 );
+const kernelIsolationRuntimePath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "kernel-isolation-runtime.json",
+);
+const kernelIsolationGatePath = path.join(
+  repoRoot,
+  "artifacts",
+  "gates",
+  "kernel-isolation-check.json",
+);
 const outPath = path.join(
   repoRoot,
   "artifacts",
@@ -125,6 +137,32 @@ function main() {
       failures.push({ error: "native_abi_fuzz_policy_denials_missing" });
   }
 
+  if (!fs.existsSync(kernelIsolationRuntimePath)) {
+    failures.push({
+      error: "missing_kernel_isolation_runtime_artifact",
+      path: "artifacts/security/kernel-isolation-runtime.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(kernelIsolationRuntimePath, "utf8"));
+    if (doc.ok !== true)
+      failures.push({ error: "kernel_isolation_runtime_not_ok" });
+    if (doc.supported !== true)
+      failures.push({ error: "kernel_isolation_runtime_not_supported" });
+    if (doc.noNewPrivs !== true)
+      failures.push({ error: "kernel_isolation_runtime_no_new_privs_missing" });
+  }
+
+  if (!fs.existsSync(kernelIsolationGatePath)) {
+    failures.push({
+      error: "missing_kernel_isolation_gate_artifact",
+      path: "artifacts/gates/kernel-isolation-check.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(kernelIsolationGatePath, "utf8"));
+    if (doc.ok !== true)
+      failures.push({ error: "kernel_isolation_gate_not_ok" });
+  }
+
   const payload = {
     ok: failures.length === 0,
     checked: [
@@ -132,6 +170,8 @@ function main() {
       "artifacts/security/isolation-profile.json",
       "artifacts/security/native-abi-adversarial.json",
       "artifacts/security/native-abi-fuzz.json",
+      "artifacts/security/kernel-isolation-runtime.json",
+      "artifacts/gates/kernel-isolation-check.json",
     ],
     failures,
   };
