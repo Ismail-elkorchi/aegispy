@@ -54,6 +54,31 @@ function capabilityChannel(result: RunResult): string | null {
   return event.detailJson.slice(prefix.length) || null;
 }
 
+function auditDetail(result: RunResult, kind: string): string | null {
+  const audit = result.meta.audit as Array<{
+    kind: string;
+    detailJson: string;
+  }>;
+  const event = audit.find((entry) => entry.kind === kind);
+  return event?.detailJson ?? null;
+}
+
+function parseKernelIsolationDetail(detail: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of detail.split(";")) {
+    if (part.length === 0) continue;
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx);
+    const value = part
+      .slice(idx + 1)
+      .replaceAll("%3B", ";")
+      .replaceAll("%3D", "=");
+    out[key] = value;
+  }
+  return out;
+}
+
 afterEach(() => {
   process.env = { ...originalEnv };
 });
@@ -145,6 +170,15 @@ describe("runtime hardening", () => {
     expect(capabilityChannel(fsResult)).toBe("component-wit");
     expect(capabilityChannel(httpResult)).toBe("component-wit");
     expect(capabilityChannel(isolationResult)).toBe("component-wit");
+    const kernelDetail = auditDetail(isolationResult, "kernel_isolation");
+    expect(kernelDetail).toBeTruthy();
+    const kernelIsolation =
+      kernelDetail === null ? {} : parseKernelIsolationDetail(kernelDetail);
+    expect(kernelIsolation.supported).toBe("1");
+    expect(kernelIsolation.no_new_privs).toBe("1");
+    expect(kernelIsolation.ns_pid).toBeTruthy();
+    expect(kernelIsolation.ns_mnt).toBeTruthy();
+    expect(kernelIsolation.cgroup_path).toBeTruthy();
 
     writeArtifact("artifacts/security/runtime-policy-denials.json", {
       ok: true,
@@ -170,6 +204,30 @@ describe("runtime hardening", () => {
       profile: view.isolationProfile ?? null,
       deniedByProfile: isolationResult.stderrUtf8,
       termination: isolationResult.meta.termination,
+    });
+
+    writeArtifact("artifacts/security/kernel-isolation-runtime.json", {
+      ok: true,
+      invariants: ["INV-SECU-0006"],
+      host: "node",
+      conformanceProfile: capabilities.profile,
+      transport: view.transportKind ?? "unknown",
+      capabilityChannel: capabilityChannel(isolationResult),
+      hardened: capabilities.hardened,
+      supported: kernelIsolation.supported === "1",
+      profile: kernelIsolation.profile ?? null,
+      noNewPrivs: kernelIsolation.no_new_privs === "1",
+      seccompMode: kernelIsolation.seccomp ?? "unknown",
+      seccompFilters: kernelIsolation.seccomp_filters ?? "unknown",
+      cgroupPath: kernelIsolation.cgroup_path ?? null,
+      namespaces: {
+        pid: kernelIsolation.ns_pid ?? null,
+        mnt: kernelIsolation.ns_mnt ?? null,
+        net: kernelIsolation.ns_net ?? null,
+        uts: kernelIsolation.ns_uts ?? null,
+        ipc: kernelIsolation.ns_ipc ?? null,
+        cgroup: kernelIsolation.ns_cgroup ?? null,
+      },
     });
   }, 600_000);
 });

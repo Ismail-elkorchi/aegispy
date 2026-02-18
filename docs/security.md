@@ -32,7 +32,9 @@
 - `artifacts/security/supply-chain-sbom.json`
 - `artifacts/security/supply-chain-attestation.json`
 - `artifacts/security/provenance-verification.json`
+- `artifacts/security/kernel-isolation-runtime.json`
 - `artifacts/gates/provenance-verify-check.json`
+- `artifacts/gates/kernel-isolation-check.json`
 
 ## Invariants
 

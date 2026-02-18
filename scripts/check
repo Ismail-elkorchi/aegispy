@@ -46,6 +46,7 @@ if [ ! -f artifacts/component/aegispy.component.cwasm ]; then
 fi
 
 pnpm test
+bash scripts/kernel_isolation_check
 node scripts/release_evidence.mjs
 node scripts/runtime_guest_abi_probe.mjs
 node scripts/runtime_native_abi_gap_probe.mjs
