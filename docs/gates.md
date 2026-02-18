@@ -18,6 +18,10 @@
 - `scripts/no_stub_path_check`
 - `scripts/component_artifact_check`
 - `scripts/native_host_import_check`
+- `scripts/profile_conformance_check`
+- `scripts/compat_check`
+- `scripts/native_abi_adversarial_check`
+- `scripts/native_abi_fuzz_check`
 
 ## Release Claim Gate
 
@@ -33,7 +37,10 @@
 8. `scripts/runtime_guest_abi_probe.mjs`
 9. `scripts/runtime_native_abi_gap_probe.mjs`
 10. `scripts/real_execution_check`
-11. `scripts/compat_check`
+11. `scripts/profile_conformance_check`
+12. `scripts/compat_check`
+13. `scripts/native_abi_adversarial_check`
+14. `scripts/native_abi_fuzz_check`
 
 - Output artifact: `artifacts/gates/release-claims.json`.
 
@@ -41,14 +48,21 @@
 
 - `artifacts/benchmarks/core-run.json`
 - `artifacts/compat/stdlib-smoke.json`
+- `artifacts/compat/profile-conformance.json`
+- `artifacts/compat/agent-workload-corpus.json`
 - `artifacts/security/runtime-policy-denials.json`
 - `artifacts/security/isolation-profile.json`
+- `artifacts/security/native-abi-adversarial.json`
+- `artifacts/security/native-abi-fuzz.json`
 - `artifacts/tests/real-engine-default.json`
 - `artifacts/component/build.json`
 - `artifacts/gates/component-artifact-check.json`
 - `artifacts/gates/native-host-import-check.json`
 - `artifacts/gates/claim-alignment-check.json`
 - `artifacts/gates/real-execution-check.json`
+- `artifacts/gates/profile-conformance-check.json`
+- `artifacts/gates/native-abi-adversarial-check.json`
+- `artifacts/gates/native-abi-fuzz-check.json`
 - `artifacts/research/runtime-native-abi-gap.json`
 
 ## Invariants

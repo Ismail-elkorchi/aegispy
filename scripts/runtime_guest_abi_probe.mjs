@@ -50,7 +50,9 @@ function buildProbeRequest() {
     run: {
       code: [
         "import aegispy",
+        "meta = aegispy._bridge_info()",
         "print(aegispy.env_get('AEGISPY_CAP_ENV'))",
+        'print(meta.get("dispatch_mode", ""))',
         "print(getattr(aegispy, '__file__', ''))",
       ].join("\n"),
       argv: ["python"],
@@ -166,14 +168,22 @@ runProbe()
     const guestCapabilityExecutionDetected = outputLines.includes(
       "guest-capability-probe",
     );
+    const dispatchModeDetected = outputLines.includes(
+      "host-native-abi-direct-dispatch",
+    );
     const moduleFileLine =
       outputLines.find((line) => line.includes("/aegispy/__init__.py")) ?? "";
     const builtinBridgeRuntimePathDetected =
       moduleFileLine.includes("/runtime/lib/python") &&
       moduleFileLine.endsWith("/aegispy/__init__.py");
+    const probeOk =
+      guestCapabilityModuleDetected &&
+      guestCapabilityExecutionDetected &&
+      dispatchModeDetected &&
+      builtinBridgeRuntimePathDetected;
 
     writeResult({
-      ok: true,
+      ok: probeOk,
       generatedAt: new Date().toISOString(),
       transport: "process",
       capabilityChannel: "component-wit",
@@ -181,15 +191,18 @@ runProbe()
       outputLines,
       builtinBridgeModuleFile: moduleFileLine,
       builtinBridgeRuntimePathDetected,
+      bridgeDispatchMode: dispatchModeDetected
+        ? "host-native-abi-direct-dispatch"
+        : "unknown",
       guestCapabilityModuleDetected,
       guestCapabilityExecutionDetected,
-      conclusion:
-        guestCapabilityModuleDetected &&
-        guestCapabilityExecutionDetected &&
-        builtinBridgeRuntimePathDetected
-          ? "guest_capability_runtime_binding_ok"
-          : "guest_capability_runtime_binding_not_ok",
+      conclusion: probeOk
+        ? "guest_capability_runtime_binding_ok"
+        : "guest_capability_runtime_binding_not_ok",
     });
+    if (!probeOk) {
+      process.exitCode = 1;
+    }
   })
   .catch((error) => {
     writeResult({

@@ -54,7 +54,10 @@ function main() {
     "node scripts/runtime_guest_abi_probe.mjs",
     "node scripts/runtime_native_abi_gap_probe.mjs",
     "bash scripts/real_execution_check",
+    "bash scripts/profile_conformance_check",
     "bash scripts/compat_check",
+    "bash scripts/native_abi_adversarial_check",
+    "bash scripts/native_abi_fuzz_check",
   ];
   const gateFiles = {
     claims: "artifacts/gates/claim-alignment-check.json",
@@ -65,6 +68,10 @@ function main() {
     component: "artifacts/gates/component-artifact-check.json",
     nativeHostImport: "artifacts/gates/native-host-import-check.json",
     nativeAbiGap: "artifacts/research/runtime-native-abi-gap.json",
+    profileConformance: "artifacts/gates/profile-conformance-check.json",
+    agentWorkloadCorpus: "artifacts/compat/agent-workload-corpus.json",
+    nativeAbiAdversarial: "artifacts/gates/native-abi-adversarial-check.json",
+    nativeAbiFuzz: "artifacts/gates/native-abi-fuzz-check.json",
   };
 
   let ok = true;
@@ -81,6 +88,9 @@ function main() {
     component: readGate(gateFiles.component),
     nativeHostImport: readGate(gateFiles.nativeHostImport),
     nativeAbiGap: readNativeAbiGap(gateFiles.nativeAbiGap),
+    profileConformance: readGate(gateFiles.profileConformance),
+    nativeAbiAdversarial: readGate(gateFiles.nativeAbiAdversarial),
+    nativeAbiFuzz: readGate(gateFiles.nativeAbiFuzz),
   };
   if (
     !gateStatus.claims.ok ||
@@ -90,7 +100,10 @@ function main() {
     !gateStatus.compatibility.ok ||
     !gateStatus.component.ok ||
     !gateStatus.nativeHostImport.ok ||
-    !gateStatus.nativeAbiGap.ok
+    !gateStatus.nativeAbiGap.ok ||
+    !gateStatus.profileConformance.ok ||
+    !gateStatus.nativeAbiAdversarial.ok ||
+    !gateStatus.nativeAbiFuzz.ok
   )
     ok = false;
 

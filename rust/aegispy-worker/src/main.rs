@@ -1,27 +1,30 @@
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::cmp::min;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::AsyncWrite;
+use tokio::sync::Notify;
 use wasmtime::component::{
     Component as WasmComponent, HasSelf, Linker as ComponentLinker, ResourceTable,
 };
 use wasmtime::{Config, Engine, OptLevel, Store, StoreLimits, StoreLimitsBuilder};
-use wasmtime_wasi::cli::AsyncStdinStream;
+use wasmtime_wasi::cli::{IsTerminal, StdinStream, StdoutStream};
 use wasmtime_wasi::p2::add_to_linker_sync as add_to_component_linker_sync;
 use wasmtime_wasi::p2::bindings::sync::Command as WasiCommand;
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+use wasmtime_wasi::p2::{InputStream, Pollable, StreamError};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 mod component_host_bindings {
@@ -126,9 +129,9 @@ struct WasiStoreState {
     wasi: WasiCtx,
     table: ResourceTable,
     stdout: MemoryOutputPipe,
-    stderr: MemoryOutputPipe,
+    stderr: NativeHostAbiStderrPipe,
     limits: StoreLimits,
-    native_capability: NativeHostCapabilityState,
+    native_capability: SharedNativeHostCapabilityState,
 }
 
 impl WasiView for WasiStoreState {
@@ -795,6 +798,8 @@ fn rewrite_code_for_determinism(code: &str, run: &Value) -> String {
 }
 
 const CAPABILITY_FS_DIR: &str = "fs";
+const CAPABILITY_NATIVE_REQ_PREFIX: &str = "\u{1e}aegispy-cap-req:";
+const CAPABILITY_NATIVE_RES_PREFIX: &str = "\u{1e}aegispy-cap-res:";
 
 #[derive(Clone, Default)]
 struct HostCapabilityHttpState {
@@ -847,16 +852,55 @@ struct NativeHostCapabilityState {
     engine_error: Option<String>,
 }
 
-struct StaticInputReader {
-    bytes: Vec<u8>,
-    offset: usize,
-}
+type SharedNativeHostCapabilityState = Arc<Mutex<NativeHostCapabilityState>>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct HostCapabilityRequest {
     capability: String,
     field_a: String,
     field_b: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct HostCapabilityRuntimeRequest {
+    id: String,
+    capability: String,
+    field_a: String,
+    field_b: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct HostCapabilityRuntimeResponse {
+    id: String,
+    ok: bool,
+    payload_utf8: String,
+    error_code: String,
+}
+
+#[derive(Default)]
+struct NativeHostAbiInputState {
+    capability_bytes: VecDeque<u8>,
+    stdin_bytes: Vec<u8>,
+    stdin_offset: usize,
+}
+
+#[derive(Clone, Default)]
+struct NativeHostAbiInputPipe {
+    state: Arc<Mutex<NativeHostAbiInputState>>,
+    ready: Arc<Notify>,
+}
+
+struct NativeHostAbiStderrState {
+    output: Vec<u8>,
+    frame_buffer: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct NativeHostAbiStderrPipe {
+    capacity: usize,
+    state: Arc<Mutex<NativeHostAbiStderrState>>,
+    stdin_pipe: NativeHostAbiInputPipe,
+    native_capability: SharedNativeHostCapabilityState,
 }
 
 #[derive(Clone, Debug)]
@@ -884,31 +928,275 @@ fn create_temp_binding_dir(prefix: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-impl StaticInputReader {
+impl NativeHostAbiInputPipe {
     fn from_utf8(input: &str) -> Self {
         Self {
-            bytes: input.as_bytes().to_vec(),
-            offset: 0,
+            state: Arc::new(Mutex::new(NativeHostAbiInputState {
+                capability_bytes: VecDeque::new(),
+                stdin_bytes: input.as_bytes().to_vec(),
+                stdin_offset: 0,
+            })),
+            ready: Arc::new(Notify::new()),
+        }
+    }
+
+    fn push_capability_response_frame(&self, payload: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.capability_bytes.extend(payload.as_bytes());
+        }
+        self.ready.notify_waiters();
+    }
+
+    fn has_available_bytes(&self) -> bool {
+        let Ok(state) = self.state.lock() else {
+            return true;
+        };
+        !state.capability_bytes.is_empty() || state.stdin_offset < state.stdin_bytes.len()
+    }
+}
+
+#[derive(Clone)]
+struct NativeHostAbiInputStream {
+    pipe: NativeHostAbiInputPipe,
+}
+
+impl IsTerminal for NativeHostAbiInputPipe {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl StdinStream for NativeHostAbiInputPipe {
+    fn async_stream(&self) -> Box<dyn tokio::io::AsyncRead + Send + Sync> {
+        Box::new(tokio::io::empty())
+    }
+
+    fn p2_stream(&self) -> Box<dyn InputStream> {
+        Box::new(NativeHostAbiInputStream { pipe: self.clone() })
+    }
+}
+
+#[wasmtime_wasi::async_trait]
+impl Pollable for NativeHostAbiInputStream {
+    async fn ready(&mut self) {
+        loop {
+            if self.pipe.has_available_bytes() {
+                return;
+            }
+
+            // Register for the next wake-up and then re-check availability to
+            // avoid missing a just-arrived capability response frame.
+            let wait = self.pipe.ready.clone().notified_owned();
+            if self.pipe.has_available_bytes() {
+                return;
+            }
+            wait.await;
         }
     }
 }
 
-impl AsyncRead for StaticInputReader {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let this = self.get_mut();
-        if this.offset >= this.bytes.len() {
-            return Poll::Ready(Ok(()));
+#[wasmtime_wasi::async_trait]
+impl InputStream for NativeHostAbiInputStream {
+    fn read(&mut self, size: usize) -> Result<Bytes, StreamError> {
+        let mut state = self
+            .pipe
+            .state
+            .lock()
+            .map_err(|_| StreamError::trap("native_host_abi_input_state_lock_poisoned"))?;
+        if size == 0 {
+            return Ok(Bytes::new());
         }
 
-        let available = this.bytes.len() - this.offset;
-        let chunk_len = min(available, buf.remaining());
-        let end = this.offset + chunk_len;
-        buf.put_slice(&this.bytes[this.offset..end]);
-        this.offset = end;
+        if !state.capability_bytes.is_empty() {
+            let amount = min(size, state.capability_bytes.len());
+            let mut out = Vec::with_capacity(amount);
+            for _ in 0..amount {
+                if let Some(byte) = state.capability_bytes.pop_front() {
+                    out.push(byte);
+                }
+            }
+            return Ok(Bytes::from(out));
+        }
+
+        if state.stdin_offset < state.stdin_bytes.len() {
+            let available = state.stdin_bytes.len() - state.stdin_offset;
+            let amount = min(size, available);
+            let end = state.stdin_offset + amount;
+            let out = Bytes::copy_from_slice(&state.stdin_bytes[state.stdin_offset..end]);
+            state.stdin_offset = end;
+            return Ok(out);
+        }
+
+        // Not closed: native capability responses may arrive asynchronously
+        // after stdin bytes are exhausted.
+        Ok(Bytes::new())
+    }
+}
+
+impl NativeHostAbiStderrPipe {
+    fn new(
+        capacity: usize,
+        stdin_pipe: NativeHostAbiInputPipe,
+        native_capability: SharedNativeHostCapabilityState,
+    ) -> Self {
+        Self {
+            capacity,
+            state: Arc::new(Mutex::new(NativeHostAbiStderrState {
+                output: Vec::new(),
+                frame_buffer: Vec::new(),
+            })),
+            stdin_pipe,
+            native_capability,
+        }
+    }
+
+    fn contents(&self) -> Vec<u8> {
+        let mut output = Vec::new();
+        if let Ok(state) = self.state.lock() {
+            output.extend_from_slice(&state.output);
+            output.extend_from_slice(&state.frame_buffer);
+        }
+        output
+    }
+
+    fn push_runtime_response(&self, request: HostCapabilityRuntimeRequest) {
+        let response_id = request.id;
+        let cap_result = invoke_native_capability_shared(
+            &self.native_capability,
+            &request.capability,
+            request.field_a,
+            request.field_b,
+        );
+        let response = HostCapabilityRuntimeResponse {
+            id: response_id.clone(),
+            ok: cap_result.ok,
+            payload_utf8: cap_result.payload_utf8,
+            error_code: cap_result.error_code,
+        };
+        let response_json = serde_json::to_string(&response).unwrap_or_else(|error| {
+            json!({
+              "id": response_id,
+              "ok": false,
+              "payload_utf8": "",
+              "error_code": format!("native_host_abi_response_serialize_failed:{error}")
+            })
+            .to_string()
+        });
+        let response_frame = format!("{CAPABILITY_NATIVE_RES_PREFIX}{response_json}\n");
+        self.stdin_pipe
+            .push_capability_response_frame(&response_frame);
+    }
+
+    fn write_regular_stderr_bytes(&self, bytes: &[u8]) -> usize {
+        let Ok(mut state) = self.state.lock() else {
+            return 0;
+        };
+        let available = self.capacity.saturating_sub(state.output.len());
+        let amount = min(bytes.len(), available);
+        state.output.extend_from_slice(&bytes[..amount]);
+        amount
+    }
+
+    fn process_runtime_request_frames(&self, bytes: &[u8]) -> Option<usize> {
+        let Ok(mut state) = self.state.lock() else {
+            return None;
+        };
+        let accepted = bytes.len();
+        state.frame_buffer.extend_from_slice(bytes);
+
+        loop {
+            let Some(newline_index) = state.frame_buffer.iter().position(|byte| *byte == b'\n')
+            else {
+                break;
+            };
+
+            let frame = state
+                .frame_buffer
+                .drain(..=newline_index)
+                .collect::<Vec<_>>();
+            let mut trimmed = frame.as_slice();
+            while trimmed.ends_with(b"\n") || trimmed.ends_with(b"\r") {
+                trimmed = &trimmed[..trimmed.len() - 1];
+            }
+
+            if let Some(payload) = trimmed.strip_prefix(CAPABILITY_NATIVE_REQ_PREFIX.as_bytes()) {
+                let parsed = serde_json::from_slice::<HostCapabilityRuntimeRequest>(payload);
+                drop(state);
+                match parsed {
+                    Ok(request) => self.push_runtime_response(request),
+                    Err(error) => {
+                        if let Ok(mut cap_state) = self.native_capability.lock() {
+                            let detail = format!("native_host_abi_request_parse_failed:{error}");
+                            if cap_state.engine_error.is_none() {
+                                cap_state.engine_error = Some(detail.clone());
+                            }
+                            cap_state.audit.push(json!({
+                              "kind": "engine_error",
+                              "detailJson": format!("runtime_denied:{detail}")
+                            }));
+                        }
+                    }
+                }
+                state = match self.state.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return Some(accepted),
+                };
+                continue;
+            }
+
+            let available = self.capacity.saturating_sub(state.output.len());
+            let amount = min(frame.len(), available);
+            state.output.extend_from_slice(&frame[..amount]);
+        }
+
+        if !state.frame_buffer.is_empty()
+            && !CAPABILITY_NATIVE_REQ_PREFIX
+                .as_bytes()
+                .starts_with(&state.frame_buffer)
+        {
+            let tail = std::mem::take(&mut state.frame_buffer);
+            let available = self.capacity.saturating_sub(state.output.len());
+            let amount = min(tail.len(), available);
+            state.output.extend_from_slice(&tail[..amount]);
+        }
+
+        Some(accepted)
+    }
+}
+
+impl IsTerminal for NativeHostAbiStderrPipe {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl StdoutStream for NativeHostAbiStderrPipe {
+    fn async_stream(&self) -> Box<dyn AsyncWrite + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+impl AsyncWrite for NativeHostAbiStderrPipe {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut().clone();
+        if let Some(amount) = this.process_runtime_request_frames(buf) {
+            return Poll::Ready(Ok(amount));
+        }
+        Poll::Ready(Ok(this.write_regular_stderr_bytes(buf)))
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 }
@@ -1099,37 +1387,100 @@ impl NativeHostCapabilityState {
     }
 }
 
+fn cap_result_engine_error(
+    message: &str,
+) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+    component_host_bindings::aegispy::runtime::capability::CapResult {
+        ok: false,
+        payload_utf8: String::new(),
+        error_code: message.to_string(),
+    }
+}
+
+fn invoke_native_capability_shared(
+    native_capability: &SharedNativeHostCapabilityState,
+    capability: &str,
+    field_a: String,
+    field_b: String,
+) -> component_host_bindings::aegispy::runtime::capability::CapResult {
+    let mut state = match native_capability.lock() {
+        Ok(guard) => guard,
+        Err(_) => return cap_result_engine_error("native_capability_state_poisoned"),
+    };
+    state.invoke(capability, field_a, field_b)
+}
+
+fn snapshot_native_capability_state(
+    native_capability: &SharedNativeHostCapabilityState,
+) -> NativeHostCapabilityState {
+    match native_capability.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => NativeHostCapabilityState {
+            config: HostCapabilityConfig {
+                fs: None,
+                http: None,
+                env: None,
+            },
+            fs_root: PathBuf::new(),
+            fs_state: HostCapabilityFsState::default(),
+            http_state: HostCapabilityHttpState::default(),
+            audit: vec![json!({
+              "kind": "engine_error",
+              "detailJson": "runtime_denied:native_capability_state_poisoned"
+            })],
+            policy_denial: None,
+            engine_error: Some("native_capability_state_poisoned".to_string()),
+        },
+    }
+}
+
 impl component_host_bindings::aegispy::runtime::capability::Host for WasiStoreState {
     fn fs_read(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::FsReadInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("fs_read", input.path, String::new())
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "fs_read",
+            input.path,
+            String::new(),
+        )
     }
 
     fn fs_write(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::FsWriteInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("fs_write", input.path, input.data_utf8)
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "fs_write",
+            input.path,
+            input.data_utf8,
+        )
     }
 
     fn http_get(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::HttpGetInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("http_get", input.url, String::new())
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "http_get",
+            input.url,
+            String::new(),
+        )
     }
 
     fn env_get(
         &mut self,
         input: component_host_bindings::aegispy::runtime::capability::EnvGetInput,
     ) -> component_host_bindings::aegispy::runtime::capability::CapResult {
-        self.native_capability
-            .invoke("env_get", input.key, String::new())
+        invoke_native_capability_shared(
+            &self.native_capability,
+            "env_get",
+            input.key,
+            String::new(),
+        )
     }
 }
 
@@ -1313,371 +1664,13 @@ fn process_host_capability_request(
     }
 }
 
-fn extract_argument_tokens(input: &str) -> Vec<String> {
-    let bytes = input.as_bytes();
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    let mut depth = 0_i64;
-    let mut quote: Option<u8> = None;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(active) = quote {
-            if byte == b'\\' && index + 1 < bytes.len() {
-                index += 2;
-                continue;
-            }
-            if byte == active {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        if byte == b'(' || byte == b'[' || byte == b'{' {
-            depth += 1;
-            index += 1;
-            continue;
-        }
-        if byte == b')' || byte == b']' || byte == b'}' {
-            depth -= 1;
-            index += 1;
-            continue;
-        }
-        if byte == b',' && depth == 0 {
-            out.push(input[start..index].trim().to_string());
-            start = index + 1;
-        }
-        index += 1;
-    }
-
-    if start < input.len() {
-        out.push(input[start..].trim().to_string());
-    } else if input.trim().is_empty() {
-        out.clear();
-    } else {
-        out.push(String::new());
-    }
-
-    out
-}
-
-fn is_python_identifier(token: &str) -> bool {
-    if token.is_empty() {
-        return false;
-    }
-    let mut chars = token.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return false;
-    }
-    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-}
-
-fn split_top_level_plus(input: &str) -> Vec<String> {
-    let bytes = input.as_bytes();
-    let mut out = Vec::<String>::new();
-    let mut start = 0;
-    let mut index = 0;
-    let mut depth = 0_i64;
-    let mut quote: Option<u8> = None;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(active) = quote {
-            if byte == b'\\' && index + 1 < bytes.len() {
-                index += 2;
-                continue;
-            }
-            if byte == active {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        if byte == b'(' || byte == b'[' || byte == b'{' {
-            depth += 1;
-            index += 1;
-            continue;
-        }
-        if byte == b')' || byte == b']' || byte == b'}' {
-            depth -= 1;
-            index += 1;
-            continue;
-        }
-        if byte == b'+' && depth == 0 {
-            out.push(input[start..index].trim().to_string());
-            start = index + 1;
-        }
-        index += 1;
-    }
-
-    if start <= input.len() {
-        out.push(input[start..].trim().to_string());
-    }
-
-    if out.len() <= 1 {
-        return vec![input.trim().to_string()];
-    }
-    out
-}
-
-fn trim_wrapping_parens(input: &str) -> &str {
-    let mut out = input.trim();
-    loop {
-        if !(out.starts_with('(') && out.ends_with(')')) {
-            return out;
-        }
-        let Some(end) = find_matching_paren(out, 0) else {
-            return out;
-        };
-        if end + 1 != out.len() {
-            return out;
-        }
-        out = out[1..out.len() - 1].trim();
-    }
-}
-
-fn evaluate_python_string_expr(
-    token: &str,
-    literal_bindings: &BTreeMap<String, String>,
-) -> Option<String> {
-    let trimmed = trim_wrapping_parens(token);
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Some(value) = decode_quoted_literal(trimmed) {
-        return Some(value);
-    }
-    if is_python_identifier(trimmed) {
-        return literal_bindings.get(trimmed).cloned();
-    }
-
-    let parts = split_top_level_plus(trimmed);
-    if parts.len() <= 1 {
-        return None;
-    }
-
-    let mut out = String::new();
-    for part in parts {
-        let value = evaluate_python_string_expr(&part, literal_bindings)?;
-        out.push_str(&value);
-    }
-    Some(out)
-}
-
-fn collect_literal_bindings(code: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    for line in code.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let Some((lhs_raw, rhs_raw)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let lhs = lhs_raw.trim();
-        let rhs = rhs_raw.trim();
-        if !is_python_identifier(lhs) {
-            continue;
-        }
-        if let Some(value) = evaluate_python_string_expr(rhs, &out) {
-            out.insert(lhs.to_string(), value);
-        }
-    }
-    out
-}
-
-fn resolve_capability_argument(
-    token: &str,
-    literal_bindings: &BTreeMap<String, String>,
-) -> Result<String, String> {
-    evaluate_python_string_expr(token, literal_bindings)
-        .ok_or_else(|| "capability_dynamic_binding_unsupported".to_string())
-}
-
-fn encode_python_single_quoted_literal(value: &str) -> String {
-    let escaped = value
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-    format!("'{escaped}'")
-}
-
-fn encode_python_bool_literal(value: bool) -> &'static str {
-    if value {
-        "True"
-    } else {
-        "False"
-    }
-}
-
-fn encode_guest_capability_plan_python_literal(plan: &[GuestCapabilityPlanEntry]) -> String {
-    let mut out = String::from("[");
-    for (index, entry) in plan.iter().enumerate() {
-        if index > 0 {
-            out.push_str(", ");
-        }
-        out.push('{');
-        out.push_str("'capability': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.capability));
-        out.push_str(", 'field_a': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.field_a));
-        out.push_str(", 'field_b': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.field_b));
-        out.push_str(", 'ok': ");
-        out.push_str(encode_python_bool_literal(entry.ok));
-        out.push_str(", 'payload_utf8': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.payload_utf8));
-        out.push_str(", 'error_code': ");
-        out.push_str(&encode_python_single_quoted_literal(&entry.error_code));
-        out.push('}');
-    }
-    out.push(']');
-    out
-}
-
-#[derive(Clone, Copy)]
-struct CapabilityBindingMarker {
-    marker: &'static str,
-    capability: &'static str,
-    arg_count: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
-struct GuestCapabilityPlanEntry {
-    capability: String,
-    field_a: String,
-    field_b: String,
-    ok: bool,
-    payload_utf8: String,
-    error_code: String,
-}
-
-const CAPABILITY_BINDING_MARKERS: [CapabilityBindingMarker; 4] = [
-    CapabilityBindingMarker {
-        marker: "aegispy.fs_write",
-        capability: "fs_write",
-        arg_count: 2,
-    },
-    CapabilityBindingMarker {
-        marker: "aegispy.fs_read",
-        capability: "fs_read",
-        arg_count: 1,
-    },
-    CapabilityBindingMarker {
-        marker: "aegispy.http_get",
-        capability: "http_get",
-        arg_count: 1,
-    },
-    CapabilityBindingMarker {
-        marker: "aegispy.env_get",
-        capability: "env_get",
-        arg_count: 1,
-    },
-];
-
-fn build_guest_runtime_capability_plan(
-    code: &str,
-    native_capability: &mut NativeHostCapabilityState,
-) -> Result<Vec<GuestCapabilityPlanEntry>, String> {
-    let literal_bindings = collect_literal_bindings(code);
-    let mut cursor = 0;
-    let mut plan = Vec::<GuestCapabilityPlanEntry>::new();
-
-    while cursor < code.len() {
-        let mut next_match: Option<(usize, CapabilityBindingMarker)> = None;
-        for marker in CAPABILITY_BINDING_MARKERS {
-            let needle = format!("{}(", marker.marker);
-            if let Some(found) = code[cursor..].find(&needle) {
-                let absolute = cursor + found;
-                match next_match {
-                    None => {
-                        next_match = Some((absolute, marker));
-                    }
-                    Some((idx, _)) if absolute < idx => {
-                        next_match = Some((absolute, marker));
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let Some((call_start, marker)) = next_match else {
-            break;
-        };
-
-        let needle_len = marker.marker.len() + 1;
-        let open_paren_index = call_start + needle_len - 1;
-        let Some(close_paren_index) = find_matching_paren(code, open_paren_index) else {
-            return Err("capability_dynamic_binding_unsupported".to_string());
-        };
-        let args_raw = &code[open_paren_index + 1..close_paren_index];
-        let args = extract_argument_tokens(args_raw);
-        if args.len() != marker.arg_count {
-            return Err("capability_dynamic_binding_unsupported".to_string());
-        }
-
-        let field_a = resolve_capability_argument(args[0].as_str(), &literal_bindings)?;
-        let field_b = if marker.arg_count > 1 {
-            resolve_capability_argument(args[1].as_str(), &literal_bindings)?
-        } else {
-            String::new()
-        };
-
-        let response =
-            native_capability.invoke_internal(marker.capability, field_a.clone(), field_b.clone());
-        match response {
-            Ok(value) => {
-                let payload_utf8 = match value {
-                    HostCapabilityValue::None => String::new(),
-                    HostCapabilityValue::Utf8(payload) => payload,
-                };
-                plan.push(GuestCapabilityPlanEntry {
-                    capability: marker.capability.to_string(),
-                    field_a,
-                    field_b,
-                    ok: true,
-                    payload_utf8,
-                    error_code: String::new(),
-                });
-            }
-            Err(_) => return Err("capability_runtime_binding_failed".to_string()),
-        }
-        cursor = close_paren_index + 1;
-    }
-
-    Ok(plan)
-}
-
-fn build_guest_runtime_bootstrap_code(
-    code: &str,
-    plan: &[GuestCapabilityPlanEntry],
-) -> Result<String, String> {
-    let plan_literal = encode_guest_capability_plan_python_literal(plan);
-    Ok(format!(
+fn build_guest_runtime_bootstrap_code(code: &str) -> String {
+    format!(
         "import aegispy as _aegispy\n\
-_aegispy._install_plan({plan_literal})\n\
 aegispy = _aegispy\n\
 del _aegispy\n\
 {code}\n",
-    ))
+    )
 }
 
 fn detect_python_stdlib_guest_path(python_home: &Path, guest_root: &str) -> Option<String> {
@@ -2177,8 +2170,6 @@ impl WasiExecutor {
             }
         }
 
-        let stdout_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stdout_limit));
-        let stderr_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stderr_limit));
         let capability_config = build_host_capability_config(run, wall_ms);
         let capability_host_root = match create_temp_binding_dir("aegispy-worker-capability") {
             Ok(path) => path,
@@ -2205,99 +2196,26 @@ impl WasiExecutor {
                 audit,
             );
         }
-        let mut native_capability =
-            NativeHostCapabilityState::new(capability_config.clone(), capability_fs_root);
+        let native_capability = Arc::new(Mutex::new(NativeHostCapabilityState::new(
+            capability_config.clone(),
+            capability_fs_root,
+        )));
+        let native_stdin_pipe = NativeHostAbiInputPipe::from_utf8(stdin_utf8);
+        let stdout_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stdout_limit));
+        let stderr_pipe = NativeHostAbiStderrPipe::new(
+            clamp_u64_to_usize(stderr_limit),
+            native_stdin_pipe.clone(),
+            native_capability.clone(),
+        );
         let deterministic_code = rewrite_code_for_determinism(code, run);
-        let guest_capability_plan = match build_guest_runtime_capability_plan(
-            &deterministic_code,
-            &mut native_capability,
-        ) {
-            Ok(value) => value,
-            Err(message) => {
-                audit.extend(native_capability.audit.clone());
-                let policy_denial = native_capability.policy_denial.clone();
-                let engine_error = native_capability.engine_error.clone();
-                let _ = fs::remove_dir_all(&capability_host_root);
-                if let Some(detail) = policy_denial {
-                    return make_error_result(
-                        "AEG-POLICY-DENIED",
-                        &detail,
-                        "policy_denied",
-                        started_ts_ms,
-                        started_ts_ms + 1,
-                        audit,
-                    );
-                }
-                if let Some(detail) = engine_error {
-                    return make_error_result(
-                        "AEG-ENGINE",
-                        &detail,
-                        "engine_error",
-                        started_ts_ms,
-                        started_ts_ms + 1,
-                        audit,
-                    );
-                }
-                return make_error_result(
-                    "AEG-ENGINE",
-                    &message,
-                    "engine_error",
-                    started_ts_ms,
-                    started_ts_ms + 1,
-                    audit,
-                );
-            }
-        };
-        let runtime_code = if guest_capability_plan.is_empty() {
-            deterministic_code.clone()
-        } else {
-            match build_guest_runtime_bootstrap_code(&deterministic_code, &guest_capability_plan) {
-                Ok(value) => value,
-                Err(message) => {
-                    audit.extend(native_capability.audit.clone());
-                    let policy_denial = native_capability.policy_denial.clone();
-                    let engine_error = native_capability.engine_error.clone();
-                    let _ = fs::remove_dir_all(&capability_host_root);
-                    if let Some(detail) = policy_denial {
-                        return make_error_result(
-                            "AEG-POLICY-DENIED",
-                            &detail,
-                            "policy_denied",
-                            started_ts_ms,
-                            started_ts_ms + 1,
-                            audit,
-                        );
-                    }
-                    if let Some(detail) = engine_error {
-                        return make_error_result(
-                            "AEG-ENGINE",
-                            &detail,
-                            "engine_error",
-                            started_ts_ms,
-                            started_ts_ms + 1,
-                            audit,
-                        );
-                    }
-                    return make_error_result(
-                        "AEG-ENGINE",
-                        &message,
-                        "engine_error",
-                        started_ts_ms,
-                        started_ts_ms + 1,
-                        audit,
-                    );
-                }
-            }
-        };
+        let runtime_code = build_guest_runtime_bootstrap_code(&deterministic_code);
         worker_debug("wasi_runtime_code", &runtime_code);
         let guest_root = "/runtime";
         let program_name = std::env::var("AEGISPY_WORKER_WASI_PROGRAM_NAME")
             .unwrap_or_else(|_| "python.wasm".to_string());
         let py_path = detect_python_stdlib_guest_path(&self.python_home, guest_root);
         let mut builder = WasiCtxBuilder::new();
-        builder.stdin(AsyncStdinStream::new(StaticInputReader::from_utf8(
-            stdin_utf8,
-        )));
+        builder.stdin(native_stdin_pipe.clone());
         builder
             .stdout(stdout_pipe.clone())
             .stderr(stderr_pipe.clone());
@@ -2322,7 +2240,8 @@ impl WasiExecutor {
             )
             .is_err()
         {
-            audit.extend(native_capability.audit.clone());
+            let native_capability_state = snapshot_native_capability_state(&native_capability);
+            audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
                 "AEG-ENGINE",
@@ -2364,7 +2283,8 @@ impl WasiExecutor {
                 .set_fuel(cpu_ms.saturating_mul(20_000).max(10_000))
                 .is_err()
         {
-            let native_capability_state = store.data().native_capability.clone();
+            let native_capability_state =
+                snapshot_native_capability_state(&store.data().native_capability);
             audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
@@ -2400,7 +2320,8 @@ impl WasiExecutor {
             if let Some(handle) = ticker {
                 let _ = handle.join();
             }
-            let native_capability_state = store.data().native_capability.clone();
+            let native_capability_state =
+                snapshot_native_capability_state(&store.data().native_capability);
             audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
@@ -2422,7 +2343,8 @@ impl WasiExecutor {
             if let Some(handle) = ticker {
                 let _ = handle.join();
             }
-            let native_capability_state = store.data().native_capability.clone();
+            let native_capability_state =
+                snapshot_native_capability_state(&store.data().native_capability);
             audit.extend(native_capability_state.audit);
             let _ = fs::remove_dir_all(&capability_host_root);
             return make_error_result(
@@ -2437,12 +2359,13 @@ impl WasiExecutor {
 
         let run_outcome = WasiCommand::instantiate(&mut store, &self.component, &linker)
             .and_then(|command| command.wasi_cli_run().call_run(&mut store));
-        let native_capability_state = store.data().native_capability.clone();
 
         stop.store(true, Ordering::Relaxed);
         if let Some(handle) = ticker {
             let _ = handle.join();
         }
+        let native_capability_state =
+            snapshot_native_capability_state(&store.data().native_capability);
         let _ = fs::remove_dir_all(&capability_host_root);
         audit.extend(native_capability_state.audit.clone());
 
@@ -2555,6 +2478,20 @@ impl WasiExecutor {
                         "AEG-MEMORY-LIMIT",
                         "memory budget reached",
                         "memory_limit",
+                        started_ts_ms,
+                        ended_ts_ms,
+                        audit,
+                    );
+                }
+
+                if !stderr_utf8.trim().is_empty() {
+                    return make_error_result(
+                        "AEG-ENGINE",
+                        &format!(
+                            "wasi execution failed: {message}; guest stderr: {}",
+                            stderr_utf8.trim()
+                        ),
+                        "engine_error",
                         started_ts_ms,
                         ended_ts_ms,
                         audit,
@@ -2876,6 +2813,49 @@ mod tests {
         dir
     }
 
+    fn fuzz_next_u64(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        x
+    }
+
+    fn fuzz_random_bytes(state: &mut u64, len: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            out.push((fuzz_next_u64(state) & 0xff) as u8);
+        }
+        out
+    }
+
+    fn fuzz_random_ascii_token(state: &mut u64, len: usize) -> String {
+        let alphabet = b"abcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = String::new();
+        for _ in 0..len {
+            let idx = (fuzz_next_u64(state) as usize) % alphabet.len();
+            out.push(alphabet[idx] as char);
+        }
+        out
+    }
+
+    fn drain_runtime_responses(
+        stdin_pipe: &NativeHostAbiInputPipe,
+    ) -> Vec<HostCapabilityRuntimeResponse> {
+        let bytes = {
+            let mut state = stdin_pipe.state.lock().expect("stdin state");
+            state.capability_bytes.drain(..).collect::<Vec<u8>>()
+        };
+        let text = String::from_utf8(bytes).unwrap_or_default();
+        text.lines()
+            .filter_map(|line| line.strip_prefix(CAPABILITY_NATIVE_RES_PREFIX))
+            .filter_map(|payload| {
+                serde_json::from_str::<HostCapabilityRuntimeResponse>(payload).ok()
+            })
+            .collect()
+    }
+
     fn test_isolation_profile() -> IsolationProfile {
         IsolationProfile {
             name: "strict".to_string(),
@@ -3018,91 +2998,82 @@ mod tests {
     }
 
     #[test]
-    fn guest_capability_plan_python_literal_encodes_fields() {
-        let literal = encode_guest_capability_plan_python_literal(&[GuestCapabilityPlanEntry {
-            capability: "env_get".to_string(),
-            field_a: "A'B".to_string(),
-            field_b: "slash\\line\n".to_string(),
-            ok: true,
-            payload_utf8: "value".to_string(),
-            error_code: String::new(),
-        }]);
-        assert!(literal.starts_with("[{"));
-        assert!(literal.contains("'capability': 'env_get'"));
-        assert!(literal.contains("'field_a': 'A\\'B'"));
-        assert!(literal.contains("'field_b': 'slash\\\\line\\n'"));
-        assert!(literal.contains("'ok': True"));
-        assert!(literal.contains("'payload_utf8': 'value'"));
-        assert!(literal.ends_with("}]"));
-    }
-
-    #[test]
     fn guest_runtime_bootstrap_uses_builtin_bridge_path() {
-        let runtime_code = build_guest_runtime_bootstrap_code("print(aegispy.env_get('A'))", &[])
-            .expect("bootstrap code");
+        let runtime_code = build_guest_runtime_bootstrap_code("print(aegispy.env_get('A'))");
         assert!(runtime_code.contains("import aegispy as _aegispy"));
-        assert!(runtime_code.contains("_install_plan([])"));
         assert!(runtime_code.contains("aegispy = _aegispy"));
         assert!(runtime_code.contains("del _aegispy"));
         assert!(runtime_code.contains("print(aegispy.env_get('A'))"));
+        assert!(!runtime_code.contains("_install_plan("));
         assert!(!runtime_code.contains("AegisPy guest capability bindings"));
         assert!(!runtime_code.contains("class _AegisPyBridge"));
         assert!(!runtime_code.contains("exec("));
     }
 
     #[test]
-    fn guest_capability_plan_uses_native_dispatch() {
+    fn native_host_abi_dispatch_processes_requests() {
         let _env_guard = env_mutation_lock().lock().expect("env lock");
         let env_key = "AEGISPY_TEST_CAPABILITY_NATIVE_BINDING";
         let _restore = EnvVarRestore::capture(env_key);
         std::env::set_var(env_key, "native-wire-ok");
 
         let config = HostCapabilityConfig {
-            fs: Some(HostCapabilityFsConfig {
-                read_roots: vec!["/sandbox/write".to_string()],
-                write_roots: vec!["/sandbox/write".to_string()],
-                max_bytes: 1024,
-                max_files: 4,
-            }),
+            fs: None,
             http: None,
             env: Some(HostCapabilityEnvConfig {
                 allow_keys: vec![env_key.to_string()],
             }),
         };
-        let temp_dir = unique_temp_dir("capability-native");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code = format!(
-            "path = \"/sandbox/write/out.txt\"\n\
-             data = \"abc\"\n\
-             aegispy.fs_write(path, data)\n\
-             print(aegispy.fs_read(path))\n\
-             env_key = \"{env_key}\"\n\
-             print(aegispy.env_get(env_key))"
+        let temp_dir = unique_temp_dir("capability-native-runtime");
+        let fs_root = temp_dir.join("fs");
+        fs::create_dir_all(&fs_root).expect("create fs root");
+        let native = Arc::new(Mutex::new(NativeHostCapabilityState::new(config, fs_root)));
+        let stdin_pipe = NativeHostAbiInputPipe::from_utf8("");
+        let stderr_pipe = NativeHostAbiStderrPipe::new(8192, stdin_pipe.clone(), native.clone());
+
+        let request_frame = format!(
+            "{CAPABILITY_NATIVE_REQ_PREFIX}{}\n",
+            serde_json::to_string(&HostCapabilityRuntimeRequest {
+                id: "native-1".to_string(),
+                capability: "env_get".to_string(),
+                field_a: env_key.to_string(),
+                field_b: String::new(),
+            })
+            .expect("serialize request")
         );
+        let accepted = stderr_pipe
+            .process_runtime_request_frames(request_frame.as_bytes())
+            .expect("dispatch request frame");
+        assert_eq!(accepted, request_frame.len());
 
-        let plan = build_guest_runtime_capability_plan(&code, &mut native).expect("plan success");
-        assert_eq!(plan.len(), 3);
-        assert_eq!(plan[0].capability, "fs_write");
-        assert_eq!(plan[0].payload_utf8, "");
-        assert_eq!(plan[1].capability, "fs_read");
-        assert_eq!(plan[1].payload_utf8, "abc");
-        assert_eq!(plan[2].capability, "env_get");
-        assert_eq!(plan[2].payload_utf8, "native-wire-ok");
-        assert!(native.policy_denial.is_none());
-        assert!(native.engine_error.is_none());
-
-        let host_file = temp_dir.join("sandbox/write/out.txt");
-        let contents = fs::read_to_string(host_file).expect("host file written");
-        assert_eq!(contents, "abc");
+        let response_frame = {
+            let state = stdin_pipe.state.lock().expect("stdin state");
+            String::from_utf8(state.capability_bytes.iter().copied().collect())
+                .expect("response utf8")
+        };
+        assert!(response_frame.starts_with(CAPABILITY_NATIVE_RES_PREFIX));
+        let response_json = response_frame
+            .trim_end_matches('\n')
+            .strip_prefix(CAPABILITY_NATIVE_RES_PREFIX)
+            .expect("response prefix");
+        let response: HostCapabilityRuntimeResponse =
+            serde_json::from_str(response_json).expect("parse response");
+        assert_eq!(response.id, "native-1");
+        assert!(response.ok);
+        assert_eq!(response.payload_utf8, "native-wire-ok");
+        assert_eq!(response.error_code, "");
+        let native_state = snapshot_native_capability_state(&native);
+        assert!(native_state.policy_denial.is_none());
+        assert!(native_state.engine_error.is_none());
 
         write_artifact(
             "artifacts/security/capability-channel-protocol.json",
             &json!({
               "ok": true,
-              "protocol": "component-host-guest-runtime-module-plan-dispatch",
-              "requestEncoding": "host-plan-dispatch",
-              "responseEncoding": "guest-module-plan-python-literal",
-              "proof": "build_guest_runtime_capability_plan"
+              "protocol": "component-host-guest-runtime-native-abi-dispatch",
+              "requestEncoding": "guest-native-abi-stderr-request-frame",
+              "responseEncoding": "host-native-abi-stdin-response-frame",
+              "proof": "process_runtime_request_frames"
             }),
         );
 
@@ -3110,64 +3081,7 @@ mod tests {
     }
 
     #[test]
-    fn guest_capability_plan_supports_simple_dynamic_string_expressions() {
-        let config = HostCapabilityConfig {
-            fs: Some(HostCapabilityFsConfig {
-                read_roots: vec!["/sandbox/write".to_string()],
-                write_roots: vec!["/sandbox/write".to_string()],
-                max_bytes: 1024,
-                max_files: 4,
-            }),
-            http: None,
-            env: None,
-        };
-        let temp_dir = unique_temp_dir("capability-native-dynamic");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code = "root = \"/sandbox/write\"\n\
-                    path = (root + \"/out\") + \".txt\"\n\
-                    aegispy.fs_write(path, \"x\")\n\
-                    print(aegispy.fs_read(path))";
-
-        let plan =
-            build_guest_runtime_capability_plan(code, &mut native).expect("dynamic plan success");
-        assert_eq!(plan.len(), 2);
-        assert_eq!(plan[0].capability, "fs_write");
-        assert_eq!(plan[0].field_a, "/sandbox/write/out.txt");
-        assert_eq!(plan[1].capability, "fs_read");
-        assert_eq!(plan[1].payload_utf8, "x");
-        assert!(native.policy_denial.is_none());
-        assert!(native.engine_error.is_none());
-
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn guest_capability_plan_rejects_unresolved_runtime_expressions() {
-        let config = HostCapabilityConfig {
-            fs: Some(HostCapabilityFsConfig {
-                read_roots: vec!["/sandbox/write".to_string()],
-                write_roots: vec!["/sandbox/write".to_string()],
-                max_bytes: 1024,
-                max_files: 4,
-            }),
-            http: None,
-            env: None,
-        };
-        let temp_dir = unique_temp_dir("capability-native-unresolved");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code =
-            "suffix = input(\"ignored\")\npath = \"/sandbox/write/out\" + suffix\naegispy.fs_write(path, \"x\")";
-
-        let error = build_guest_runtime_capability_plan(code, &mut native).expect_err("plan error");
-        assert_eq!(error, "capability_dynamic_binding_unsupported");
-        assert!(native.policy_denial.is_none());
-        assert!(native.engine_error.is_none());
-
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn guest_capability_plan_reports_policy_denials() {
+    fn native_host_abi_dispatch_reports_policy_denials() {
         let config = HostCapabilityConfig {
             fs: None,
             http: None,
@@ -3176,13 +3090,298 @@ mod tests {
             }),
         };
         let temp_dir = unique_temp_dir("capability-native-deny");
-        let mut native = NativeHostCapabilityState::new(config, temp_dir.clone());
-        let code = "aegispy.env_get(\"BLOCKED\")";
+        let fs_root = temp_dir.join("fs");
+        fs::create_dir_all(&fs_root).expect("create fs root");
+        let native = Arc::new(Mutex::new(NativeHostCapabilityState::new(config, fs_root)));
+        let stdin_pipe = NativeHostAbiInputPipe::from_utf8("");
+        let stderr_pipe = NativeHostAbiStderrPipe::new(8192, stdin_pipe.clone(), native.clone());
 
-        let error = build_guest_runtime_capability_plan(code, &mut native).expect_err("plan error");
-        assert_eq!(error, "capability_runtime_binding_failed");
-        assert_eq!(native.policy_denial.as_deref(), Some("env_key_denied"));
-        assert!(native.engine_error.is_none());
+        let request_frame = format!(
+            "{CAPABILITY_NATIVE_REQ_PREFIX}{}\n",
+            serde_json::to_string(&HostCapabilityRuntimeRequest {
+                id: "native-deny".to_string(),
+                capability: "env_get".to_string(),
+                field_a: "BLOCKED".to_string(),
+                field_b: String::new(),
+            })
+            .expect("serialize request")
+        );
+        let accepted = stderr_pipe
+            .process_runtime_request_frames(request_frame.as_bytes())
+            .expect("dispatch deny request frame");
+        assert_eq!(accepted, request_frame.len());
+
+        let response_frame = {
+            let state = stdin_pipe.state.lock().expect("stdin state");
+            String::from_utf8(state.capability_bytes.iter().copied().collect())
+                .expect("response utf8")
+        };
+        assert!(response_frame.starts_with(CAPABILITY_NATIVE_RES_PREFIX));
+        let response_json = response_frame
+            .trim_end_matches('\n')
+            .strip_prefix(CAPABILITY_NATIVE_RES_PREFIX)
+            .expect("response prefix");
+        let response: HostCapabilityRuntimeResponse =
+            serde_json::from_str(response_json).expect("parse response");
+        assert_eq!(response.id, "native-deny");
+        assert!(!response.ok);
+        assert_eq!(response.payload_utf8, "");
+        assert_eq!(response.error_code, "env_key_denied");
+        let native_state = snapshot_native_capability_state(&native);
+        assert_eq!(
+            native_state.policy_denial.as_deref(),
+            Some("env_key_denied")
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn native_abi_mutation_fuzz_gate() {
+        let _env_guard = env_mutation_lock().lock().expect("env lock");
+        let env_key = "AEGISPY_TEST_FUZZ_ENV_ALLOW";
+        let _restore = EnvVarRestore::capture(env_key);
+        std::env::set_var(env_key, "native-fuzz-env-ok");
+
+        let config = HostCapabilityConfig {
+            fs: Some(HostCapabilityFsConfig {
+                read_roots: vec!["/sandbox/write".to_string()],
+                write_roots: vec!["/sandbox/write".to_string()],
+                max_bytes: 4096,
+                max_files: 8,
+            }),
+            http: None,
+            env: Some(HostCapabilityEnvConfig {
+                allow_keys: vec![env_key.to_string()],
+            }),
+        };
+
+        let temp_dir = unique_temp_dir("native-abi-fuzz");
+        let fs_root = temp_dir.join("fs");
+        fs::create_dir_all(&fs_root).expect("create fs root");
+        let native = Arc::new(Mutex::new(NativeHostCapabilityState::new(config, fs_root)));
+        let stdin_pipe = NativeHostAbiInputPipe::from_utf8("");
+        let stderr_pipe =
+            NativeHostAbiStderrPipe::new(16 * 1024, stdin_pipe.clone(), native.clone());
+
+        let mut seed = 0x9d6c1ef4b3a27518_u64;
+        let iterations = 640_u64;
+        let mut accepted_bytes = 0_u64;
+        let mut valid_request_frames = 0_u64;
+        let mut malformed_frames = 0_u64;
+        let mut ok_responses = 0_u64;
+        let mut denied_responses = 0_u64;
+
+        for i in 0..iterations {
+            let scenario = fuzz_next_u64(&mut seed) % 7;
+            let bytes = match scenario {
+                0 => {
+                    malformed_frames += 1;
+                    let len = ((fuzz_next_u64(&mut seed) % 64) + 1) as usize;
+                    let mut raw = fuzz_random_bytes(&mut seed, len);
+                    raw.push(b'\n');
+                    raw
+                }
+                1 => {
+                    malformed_frames += 1;
+                    let len = ((fuzz_next_u64(&mut seed) % 96) + 1) as usize;
+                    let payload = fuzz_random_bytes(&mut seed, len);
+                    let mut frame = CAPABILITY_NATIVE_REQ_PREFIX.as_bytes().to_vec();
+                    frame.extend(payload);
+                    frame.push(b'\n');
+                    frame
+                }
+                2 => {
+                    valid_request_frames += 1;
+                    let request = HostCapabilityRuntimeRequest {
+                        id: format!("fuzz-{i}-env-ok"),
+                        capability: "env_get".to_string(),
+                        field_a: env_key.to_string(),
+                        field_b: String::new(),
+                    };
+                    let mut frame = CAPABILITY_NATIVE_REQ_PREFIX.as_bytes().to_vec();
+                    frame.extend(
+                        serde_json::to_string(&request)
+                            .expect("serialize request")
+                            .as_bytes(),
+                    );
+                    frame.push(b'\n');
+                    frame
+                }
+                3 => {
+                    valid_request_frames += 1;
+                    let request = HostCapabilityRuntimeRequest {
+                        id: format!("fuzz-{i}-env-denied"),
+                        capability: "env_get".to_string(),
+                        field_a: format!("BLOCKED_{}", fuzz_random_ascii_token(&mut seed, 6)),
+                        field_b: String::new(),
+                    };
+                    let mut frame = CAPABILITY_NATIVE_REQ_PREFIX.as_bytes().to_vec();
+                    frame.extend(
+                        serde_json::to_string(&request)
+                            .expect("serialize request")
+                            .as_bytes(),
+                    );
+                    frame.push(b'\n');
+                    frame
+                }
+                4 => {
+                    valid_request_frames += 1;
+                    let request = HostCapabilityRuntimeRequest {
+                        id: format!("fuzz-{i}-fs-write"),
+                        capability: "fs_write".to_string(),
+                        field_a: "/sandbox/write/fuzz.txt".to_string(),
+                        field_b: fuzz_random_ascii_token(&mut seed, 12),
+                    };
+                    let mut frame = CAPABILITY_NATIVE_REQ_PREFIX.as_bytes().to_vec();
+                    frame.extend(
+                        serde_json::to_string(&request)
+                            .expect("serialize request")
+                            .as_bytes(),
+                    );
+                    frame.push(b'\n');
+                    frame
+                }
+                5 => {
+                    valid_request_frames += 1;
+                    let request = HostCapabilityRuntimeRequest {
+                        id: format!("fuzz-{i}-fs-traversal"),
+                        capability: "fs_read".to_string(),
+                        field_a: "/sandbox/write/../escape.txt".to_string(),
+                        field_b: String::new(),
+                    };
+                    let mut frame = CAPABILITY_NATIVE_REQ_PREFIX.as_bytes().to_vec();
+                    frame.extend(
+                        serde_json::to_string(&request)
+                            .expect("serialize request")
+                            .as_bytes(),
+                    );
+                    frame.push(b'\n');
+                    frame
+                }
+                _ => {
+                    valid_request_frames += 2;
+                    let req_a = HostCapabilityRuntimeRequest {
+                        id: format!("fuzz-{i}-pair-a"),
+                        capability: "env_get".to_string(),
+                        field_a: env_key.to_string(),
+                        field_b: String::new(),
+                    };
+                    let req_b = HostCapabilityRuntimeRequest {
+                        id: format!("fuzz-{i}-pair-b"),
+                        capability: "capability_unknown".to_string(),
+                        field_a: String::new(),
+                        field_b: String::new(),
+                    };
+                    let mut frame = CAPABILITY_NATIVE_REQ_PREFIX.as_bytes().to_vec();
+                    frame.extend(
+                        serde_json::to_string(&req_a)
+                            .expect("serialize request")
+                            .as_bytes(),
+                    );
+                    frame.push(b'\n');
+                    frame.extend(CAPABILITY_NATIVE_REQ_PREFIX.as_bytes());
+                    frame.extend(
+                        serde_json::to_string(&req_b)
+                            .expect("serialize request")
+                            .as_bytes(),
+                    );
+                    frame.push(b'\n');
+                    frame
+                }
+            };
+
+            if scenario == 6 {
+                let split = bytes.len() / 2;
+                let accepted_a = stderr_pipe
+                    .process_runtime_request_frames(&bytes[..split])
+                    .expect("accepted bytes");
+                let accepted_b = stderr_pipe
+                    .process_runtime_request_frames(&bytes[split..])
+                    .expect("accepted bytes");
+                assert_eq!(accepted_a, split);
+                assert_eq!(accepted_b, bytes.len() - split);
+                accepted_bytes += accepted_a as u64 + accepted_b as u64;
+            } else {
+                let accepted = stderr_pipe
+                    .process_runtime_request_frames(&bytes)
+                    .expect("accepted bytes");
+                assert_eq!(accepted, bytes.len());
+                accepted_bytes += accepted as u64;
+            }
+
+            for response in drain_runtime_responses(&stdin_pipe) {
+                if response.ok {
+                    ok_responses += 1;
+                } else {
+                    denied_responses += 1;
+                }
+            }
+        }
+
+        let native_state = snapshot_native_capability_state(&native);
+        let parse_failures = native_state
+            .audit
+            .iter()
+            .filter(|entry| {
+                entry.get("kind").and_then(Value::as_str) == Some("engine_error")
+                    && entry
+                        .get("detailJson")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .contains("native_host_abi_request_parse_failed")
+            })
+            .count() as u64;
+        let policy_denials = native_state
+            .audit
+            .iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("policy_denied"))
+            .count() as u64;
+        let output_len = {
+            let state = stderr_pipe.state.lock().expect("stderr state");
+            state.output.len() as u64
+        };
+
+        let ok = iterations == 640
+            && accepted_bytes > 0
+            && valid_request_frames >= 320
+            && malformed_frames >= 120
+            && ok_responses > 0
+            && denied_responses > 0
+            && parse_failures > 0
+            && policy_denials > 0
+            && output_len <= 16 * 1024;
+        assert!(ok);
+
+        write_artifact(
+            "artifacts/security/native-abi-fuzz.json",
+            &json!({
+              "ok": ok,
+              "invariants": ["INV-SECU-0006", "INV-FEAT-0025"],
+              "generatedAt": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+              "seedHex": format!("{:016x}", 0x9d6c1ef4b3a27518_u64),
+              "iterations": iterations,
+              "acceptedBytes": accepted_bytes,
+              "cases": {
+                "validRequestFrames": valid_request_frames,
+                "malformedFrames": malformed_frames
+              },
+              "responses": {
+                "ok": ok_responses,
+                "denied": denied_responses
+              },
+              "audit": {
+                "parseFailures": parse_failures,
+                "policyDenials": policy_denials
+              },
+              "transport": "process",
+              "capabilityChannel": "component-wit",
+              "dispatchMode": "host-native-abi-direct-dispatch"
+            }),
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

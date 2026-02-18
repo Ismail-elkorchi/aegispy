@@ -1,5 +1,7 @@
 export type HostKind = "node" | "deno" | "bun" | "browser";
 
+export type ConformanceProfile = "server-hardened" | "browser-subset";
+
 export type TerminationReason =
   | "ok"
   | "engine_error"
@@ -127,8 +129,21 @@ export interface RunResultError {
 
 export type RunResult = RunResultOk | RunResultError;
 
+export interface RuntimeCapabilities {
+  host: HostKind;
+  profile: ConformanceProfile;
+  transport: "process" | "simulation" | "inprocess" | "worker";
+  capabilityChannel: "component-wit" | "worker-timeout" | "none";
+  fs: boolean;
+  http: boolean;
+  env: boolean;
+  deterministic: boolean;
+  hardened: boolean;
+}
+
 export interface AegisPyRuntime {
   host: HostKind;
+  capabilities(): RuntimeCapabilities;
   run(req: RunRequest): Promise<RunResult>;
   close(): Promise<void>;
 }

@@ -49,7 +49,7 @@ function main() {
   const doc = JSON.parse(fs.readFileSync(buildPath, "utf8"));
 
   if (doc.ok !== true) failures.push({ error: "component_manifest_not_ok" });
-  if (doc.runtimeBridge !== "component-host-guest-runtime-module-plan-dispatch")
+  if (doc.runtimeBridge !== "component-host-guest-runtime-native-abi-dispatch")
     failures.push({ error: "component_runtime_bridge_unexpected" });
   if (doc.nativeHostImportDetected !== true)
     failures.push({ error: "component_native_host_import_not_detected" });

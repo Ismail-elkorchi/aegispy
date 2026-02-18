@@ -3,6 +3,7 @@ import { simulateRun } from "../../../aegispy-core/src/execution/simulated";
 import type {
   AegisPyRuntime,
   CreateRuntimeOptions,
+  RuntimeCapabilities,
   RunRequest,
   RunResult,
 } from "@aegispy/core";
@@ -33,10 +34,56 @@ function timeoutResult(wallMs: number): RunResult {
   };
 }
 
+function unsupportedCapabilitiesResult(unsupported: string[]): RunResult {
+  const now = Date.now();
+  const reason = unsupported.join(",");
+  return {
+    status: "error",
+    exitCode: 2,
+    stdoutUtf8: "",
+    stderrUtf8: "unsupported browser capability request",
+    meta: {
+      startedTsMs: now,
+      endedTsMs: now,
+      durationMs: 0,
+      cpuMs: 0,
+      memoryPeakBytes: 0,
+      stdoutBytes: 0,
+      stderrBytes: 38,
+      termination: "internal_error",
+      audit: [],
+    },
+    error: makeAegisPyError(
+      "AEG-UNSUPPORTED-HOST",
+      "unsupported browser capability request",
+      {
+        host: "browser",
+        unsupportedCapabilities: unsupported,
+        profile: "browser-subset",
+        reason,
+      },
+    ),
+  };
+}
+
 export class BrowserRuntime implements AegisPyRuntime {
   public readonly host = "browser" as const;
 
   private closed = false;
+
+  public capabilities(): RuntimeCapabilities {
+    return {
+      host: this.host,
+      profile: "browser-subset",
+      transport: "worker",
+      capabilityChannel: "worker-timeout",
+      fs: false,
+      http: false,
+      env: false,
+      deterministic: true,
+      hardened: false,
+    };
+  }
 
   public async run(req: RunRequest): Promise<RunResult> {
     if (this.closed) {
@@ -60,6 +107,14 @@ export class BrowserRuntime implements AegisPyRuntime {
           host: "browser",
         }),
       };
+    }
+
+    const unsupported: string[] = [];
+    if (req.permissions.fs !== null) unsupported.push("fs");
+    if (req.permissions.http !== null) unsupported.push("http");
+    if (req.permissions.env !== null) unsupported.push("env");
+    if (unsupported.length > 0) {
+      return unsupportedCapabilitiesResult(unsupported);
     }
 
     const emulateLongTask =
