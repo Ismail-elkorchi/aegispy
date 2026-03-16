@@ -48,6 +48,22 @@ Fix:
 - raise the relevant byte budget
 - or reduce stdout/stderr volume and in-memory working set size
 
+## `AEG-ENGINE`
+
+Cause:
+
+- the worker-backed runtime failed before guest completion
+- `browser-real-engine` now also returns `AEG-ENGINE` when browser package
+  requests are not backed by a verified `packageLockfile`
+- `browser-real-engine` with `assetBaseUrl` also returns `AEG-ENGINE` when a
+  pinned Pyodide asset hash does not match
+
+Fix:
+
+- verify the browser lockfile entry set and hashes
+- verify that `assetBaseUrl` serves the expected Pyodide asset set
+- or remove custom browser package and asset configuration from the request
+
 ## Runtime behavior differs by host
 
 Cause:

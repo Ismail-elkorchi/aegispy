@@ -82,4 +82,31 @@ describe("protocol framing", () => {
       { numRuns: 100 },
     );
   });
+
+  it("keeps frame decoding stable across fuzzed malformed payloads", () => {
+    let runs = 0;
+    let decodedFrames = 0;
+    let trailingBytes = 0;
+
+    fc.assert(
+      fc.property(fc.uint8Array({ maxLength: 256 }), (payload) => {
+        runs += 1;
+        const decoded = decodeFrames(Buffer.from(payload));
+        decodedFrames += decoded.frames.length;
+        trailingBytes += decoded.remaining.length;
+
+        expect(Array.isArray(decoded.frames)).toBe(true);
+        expect(decoded.remaining.length).toBeGreaterThanOrEqual(0);
+      }),
+      { numRuns: 120 },
+    );
+
+    writeArtifact("artifacts/security/protocol-framing-fuzz.json", {
+      ok: true,
+      invariants: ["INV-ARCH-0003", "INV-SECU-0011"],
+      runs,
+      decodedFrames,
+      trailingBytes,
+    });
+  });
 });

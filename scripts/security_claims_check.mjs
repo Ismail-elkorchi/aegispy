@@ -29,6 +29,36 @@ const nativeAbiFuzzPath = path.join(
   "security",
   "native-abi-fuzz.json",
 );
+const replayAttestationPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "replay-attestation.json",
+);
+const browserInputFuzzPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "browser-input-fuzz.json",
+);
+const browserIntegrityFuzzPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "browser-integrity-fuzz.json",
+);
+const runtimeEnvelopeFuzzPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "runtime-envelope-fuzz.json",
+);
+const protocolFramingFuzzPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "protocol-framing-fuzz.json",
+);
 const kernelIsolationRuntimePath = path.join(
   repoRoot,
   "artifacts",
@@ -50,6 +80,10 @@ const outPath = path.join(
 
 function ensureDir(p) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 function main() {
@@ -137,6 +171,108 @@ function main() {
       failures.push({ error: "native_abi_fuzz_policy_denials_missing" });
   }
 
+  if (!fs.existsSync(replayAttestationPath)) {
+    failures.push({
+      error: "missing_replay_attestation_artifact",
+      path: "artifacts/security/replay-attestation.json",
+    });
+  } else {
+    const doc = readJson(replayAttestationPath);
+    if (doc.ok !== true) failures.push({ error: "replay_attestation_not_ok" });
+    if (!Array.isArray(doc.hosts) || doc.hosts.length !== 4) {
+      failures.push({ error: "replay_attestation_host_coverage_invalid" });
+    } else {
+      for (const hostDoc of doc.hosts) {
+        if (!Array.isArray(hostDoc.cases)) {
+          failures.push({ error: "replay_attestation_cases_invalid" });
+          continue;
+        }
+        const sameSeed = hostDoc.cases.find(
+          (entry) => entry.caseId === "same-seed",
+        );
+        const differentSeed = hostDoc.cases.find(
+          (entry) => entry.caseId === "different-seed",
+        );
+        if (sameSeed?.match !== true) {
+          failures.push({
+            error: "replay_attestation_same_seed_mismatch",
+            host: hostDoc.host,
+          });
+        }
+        if (differentSeed?.match !== false) {
+          failures.push({
+            error: "replay_attestation_different_seed_mismatch",
+            host: hostDoc.host,
+          });
+        }
+      }
+    }
+  }
+
+  if (!fs.existsSync(browserInputFuzzPath)) {
+    failures.push({
+      error: "missing_browser_input_fuzz_artifact",
+      path: "artifacts/security/browser-input-fuzz.json",
+    });
+  } else {
+    const doc = readJson(browserInputFuzzPath);
+    if (doc.ok !== true) failures.push({ error: "browser_input_fuzz_not_ok" });
+    if (typeof doc.validCases !== "number" || doc.validCases <= 0) {
+      failures.push({ error: "browser_input_fuzz_valid_cases_missing" });
+    }
+    if (typeof doc.invalidCases !== "number" || doc.invalidCases <= 0) {
+      failures.push({ error: "browser_input_fuzz_invalid_cases_missing" });
+    }
+  }
+
+  if (!fs.existsSync(browserIntegrityFuzzPath)) {
+    failures.push({
+      error: "missing_browser_integrity_fuzz_artifact",
+      path: "artifacts/security/browser-integrity-fuzz.json",
+    });
+  } else {
+    const doc = readJson(browserIntegrityFuzzPath);
+    if (doc.ok !== true)
+      failures.push({ error: "browser_integrity_fuzz_not_ok" });
+    if (typeof doc.packageRuns !== "number" || doc.packageRuns <= 0) {
+      failures.push({ error: "browser_integrity_fuzz_package_runs_missing" });
+    }
+    if (typeof doc.assetRuns !== "number" || doc.assetRuns <= 0) {
+      failures.push({ error: "browser_integrity_fuzz_asset_runs_missing" });
+    }
+  }
+
+  if (!fs.existsSync(runtimeEnvelopeFuzzPath)) {
+    failures.push({
+      error: "missing_runtime_envelope_fuzz_artifact",
+      path: "artifacts/security/runtime-envelope-fuzz.json",
+    });
+  } else {
+    const doc = readJson(runtimeEnvelopeFuzzPath);
+    if (doc.ok !== true)
+      failures.push({ error: "runtime_envelope_fuzz_not_ok" });
+    if (typeof doc.validCases !== "number" || doc.validCases <= 0) {
+      failures.push({ error: "runtime_envelope_fuzz_valid_cases_missing" });
+    }
+    if (typeof doc.invalidCases !== "number" || doc.invalidCases <= 0) {
+      failures.push({ error: "runtime_envelope_fuzz_invalid_cases_missing" });
+    }
+  }
+
+  if (!fs.existsSync(protocolFramingFuzzPath)) {
+    failures.push({
+      error: "missing_protocol_framing_fuzz_artifact",
+      path: "artifacts/security/protocol-framing-fuzz.json",
+    });
+  } else {
+    const doc = readJson(protocolFramingFuzzPath);
+    if (doc.ok !== true)
+      failures.push({ error: "protocol_framing_fuzz_not_ok" });
+    if (typeof doc.runs !== "number" || doc.runs <= 0) {
+      failures.push({ error: "protocol_framing_fuzz_runs_missing" });
+    }
+  }
+
   if (!fs.existsSync(kernelIsolationRuntimePath)) {
     failures.push({
       error: "missing_kernel_isolation_runtime_artifact",
@@ -170,6 +306,11 @@ function main() {
       "artifacts/security/isolation-profile.json",
       "artifacts/security/native-abi-adversarial.json",
       "artifacts/security/native-abi-fuzz.json",
+      "artifacts/security/replay-attestation.json",
+      "artifacts/security/browser-input-fuzz.json",
+      "artifacts/security/browser-integrity-fuzz.json",
+      "artifacts/security/runtime-envelope-fuzz.json",
+      "artifacts/security/protocol-framing-fuzz.json",
       "artifacts/security/kernel-isolation-runtime.json",
       "artifacts/gates/kernel-isolation-check.json",
     ],

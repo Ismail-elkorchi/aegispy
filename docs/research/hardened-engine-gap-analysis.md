@@ -33,7 +33,7 @@ target hardening posture for untrusted coding-agent execution.
 1. Compatibility corpus breadth
 
 - Broaden the generated workload matrix and reason-code coverage across all hosts.
-- Keep pure-Python package fixture metadata explicit and pinned until runtime package loading becomes part of the public contract.
+- Keep pure-Python package fixture metadata explicit and pinned as part of the public package-loading contract.
 
 2. Enforced isolation profile
 
@@ -47,7 +47,7 @@ target hardening posture for untrusted coding-agent execution.
 
 4. Determinism and replay
 
-- Expand deterministic replay coverage from targeted proofs into a larger compatibility corpus.
+- Broaden replay coverage beyond the current cross-host attestation corpus.
 
 5. Supply-chain integrity
 
@@ -55,7 +55,8 @@ target hardening posture for untrusted coding-agent execution.
 
 6. Adversarial testing
 
-- Gate releases on protocol fuzzing and sandbox escape regression suites.
+- Keep protocol-framing, runtime-envelope, browser-input, and native-ABI fuzz gates growing with the runtime surface.
+- Gate releases on sandbox escape regression suites and the required security-claim gate.
 
 ## Claim Publication Rule
 

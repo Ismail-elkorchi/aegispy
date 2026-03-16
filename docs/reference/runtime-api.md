@@ -17,9 +17,13 @@
 - `packages?: string[]`
 - `packageLockfile?: Lockfile`
 
-`packageLockfile` is currently metadata-only. It does not yet enforce browser
-package integrity at runtime, so callers must not treat it as an active
-security boundary.
+When `packages` are requested in `browser-real-engine`, `packageLockfile`
+becomes an active runtime boundary:
+
+- requested browser packages must be backed by verified lockfile entries
+- lockfile hash mismatches fail closed with `AEG-ENGINE`
+- when `assetBaseUrl` is set, the browser runtime also verifies pinned Pyodide
+  asset hashes before guest code runs
 
 ## Host Kinds
 
@@ -69,6 +73,8 @@ fails closed with `AEG-ENGINE` before guest code runs.
   `termination=policy_denied`
 - `browser-real-engine` rejects filesystem, HTTP, and environment permission
   grants with `AEG-UNSUPPORTED-HOST` and `termination=policy_denied`
+- `browser-real-engine` returns `AEG-ENGINE` before execution when browser
+  package integrity or pinned engine-asset verification fails
 - runtime-bound deny results start with runtime-boundary audit entries before
   the terminal denial event
   - `runtime_channel`

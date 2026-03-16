@@ -23,6 +23,8 @@
 6. The browser real-engine path uses the same request/response contract, runs a
    worker-backed Python engine, and keeps filesystem, HTTP, and environment
    access denied at the runtime boundary.
+   Browser package requests are bound to verified lockfile entries, and
+   `assetBaseUrl` runs verify pinned Pyodide asset hashes before execution.
 7. Runtime returns `RunResult` with `meta` and `audit`.
 
 ## Capability Channel
@@ -49,6 +51,9 @@
 - `artifacts/tests/node-adapter.json`
 - `artifacts/e2e/node-run.json`
 - `artifacts/e2e/browser-run.json`
+- `artifacts/security/replay-attestation.json`
+- `artifacts/security/protocol-framing-fuzz.json`
+- `artifacts/security/browser-input-fuzz.json`
 - `artifacts/security/microvm-execution.json` when a compatible self-hosted
   microVM launcher is configured
 
