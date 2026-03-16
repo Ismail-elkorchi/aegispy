@@ -32,6 +32,10 @@ function writeGate(payload) {
   );
 }
 
+function isPositiveNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function main() {
   const failures = [];
 
@@ -51,11 +55,20 @@ function main() {
     if (doc.transport !== "process") {
       failures.push({ error: "kernel_isolation_transport_not_process" });
     }
+    if (doc.executionMode !== "process") {
+      failures.push({ error: "kernel_isolation_mode_not_process" });
+    }
+    if (doc?.executionBackend?.available !== true) {
+      failures.push({ error: "kernel_isolation_backend_unavailable" });
+    }
     if (doc.capabilityChannel !== "component-wit") {
       failures.push({ error: "kernel_isolation_channel_not_component_wit" });
     }
     if (doc.supported !== true) {
       failures.push({ error: "kernel_isolation_not_supported" });
+    }
+    if (doc.profile !== "strict") {
+      failures.push({ error: "kernel_isolation_profile_not_strict" });
     }
     if (doc.noNewPrivs !== true) {
       failures.push({ error: "kernel_isolation_no_new_privs_not_enforced" });
@@ -73,6 +86,50 @@ function main() {
           namespace: name,
         });
       }
+    }
+
+    const limitEnvelope = doc.limitEnvelope ?? {};
+    for (const field of [
+      "wallMs",
+      "cpuMs",
+      "memoryBytes",
+      "stdoutBytes",
+      "stderrBytes",
+    ]) {
+      if (!isPositiveNumber(limitEnvelope[field])) {
+        failures.push({
+          error: "kernel_isolation_limit_invalid",
+          field,
+        });
+      }
+    }
+    if (limitEnvelope.denyEnvCapability !== true) {
+      failures.push({ error: "kernel_isolation_env_guard_missing" });
+    }
+
+    const controlStatus = doc.controlStatus ?? {};
+    if (controlStatus.noNewPrivs !== true) {
+      failures.push({ error: "kernel_isolation_control_no_new_privs_missing" });
+    }
+    if (controlStatus.cgroup !== true) {
+      failures.push({ error: "kernel_isolation_control_cgroup_missing" });
+    }
+    for (const name of ["pid", "mnt", "net", "uts", "ipc", "cgroup"]) {
+      if (controlStatus?.namespaces?.[name] !== true) {
+        failures.push({
+          error: "kernel_isolation_control_namespace_missing",
+          namespace: name,
+        });
+      }
+    }
+    if (controlStatus?.seccomp?.mode !== doc.seccompMode) {
+      failures.push({ error: "kernel_isolation_seccomp_mode_mismatch" });
+    }
+    if (controlStatus?.seccomp?.filters !== doc.seccompFilters) {
+      failures.push({ error: "kernel_isolation_seccomp_filters_mismatch" });
+    }
+    if (typeof controlStatus?.seccomp?.active !== "boolean") {
+      failures.push({ error: "kernel_isolation_seccomp_state_missing" });
     }
   }
 

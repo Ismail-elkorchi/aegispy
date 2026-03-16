@@ -32,6 +32,16 @@ const baseRequest: Omit<RunRequest, "code"> = {
 
 const originalEnv = { ...process.env };
 
+interface IsolationProfileView {
+  name?: string;
+  maxWallMs?: number;
+  maxCpuMs?: number;
+  maxMemoryBytes?: number;
+  maxStdoutBytes?: number;
+  maxStderrBytes?: number;
+  denyEnvCapability?: boolean;
+}
+
 function runtimeView(runtime: AegisPyRuntime): {
   transportKind?: string;
   isolationProfile?: unknown;
@@ -97,6 +107,44 @@ function parseKernelIsolationDetail(detail: string): Record<string, string> {
   return out;
 }
 
+function isolationProfileView(
+  runtime: AegisPyRuntime,
+): IsolationProfileView | null {
+  const view = runtimeView(runtime);
+  return (view.isolationProfile as IsolationProfileView | null) ?? null;
+}
+
+async function runStrictIsolationCase(
+  envOverrides: Record<string, string>,
+  request: RunRequest,
+): Promise<{
+  capabilities: ReturnType<AegisPyRuntime["capabilities"]>;
+  isolationProfile: IsolationProfileView | null;
+  result: RunResult;
+  view: ReturnType<typeof runtimeView>;
+}> {
+  process.env = {
+    ...originalEnv,
+    AEGISPY_NODE_TRANSPORT: "process",
+    AEGISPY_ISOLATION_PROFILE: "strict",
+    ...envOverrides,
+  };
+
+  const runtime = await createRuntime({ host: "node" });
+  const view = runtimeView(runtime);
+  const profile = isolationProfileView(runtime);
+  const capabilities = runtime.capabilities();
+  const result = await runtime.run(request);
+  await runtime.close();
+
+  return {
+    capabilities,
+    isolationProfile: profile,
+    result,
+    view,
+  };
+}
+
 afterEach(() => {
   process.env = { ...originalEnv };
 });
@@ -144,9 +192,11 @@ describe("runtime hardening", () => {
     process.env.AEGISPY_NODE_TRANSPORT = "process";
     process.env.AEGISPY_ISOLATION_PROFILE = "strict";
     process.env.AEGISPY_ISOLATION_MAX_WALL_MS = "300";
+    process.env.AEGISPY_RUNTIME_ENV_VALUE = "strict-env";
 
     const runtime = await createRuntime({ host: "node" });
     const view = runtimeView(runtime);
+    const profile = isolationProfileView(runtime);
     const capabilities = runtime.capabilities();
 
     const fsResult = await runtime.run({
@@ -156,6 +206,16 @@ describe("runtime hardening", () => {
     const httpResult = await runtime.run({
       ...baseRequest,
       code: 'aegispy.http_get("https://example.com/secret")',
+    });
+    const envResult = await runtime.run({
+      ...baseRequest,
+      code: 'print(aegispy.env_get("AEGISPY_RUNTIME_ENV_VALUE"))',
+      permissions: {
+        ...baseRequest.permissions,
+        env: {
+          allowKeys: ["AEGISPY_RUNTIME_ENV_VALUE"],
+        },
+      },
     });
     const isolationResult = await runtime.run({
       ...baseRequest,
@@ -178,11 +238,13 @@ describe("runtime hardening", () => {
     expect(capabilities.hardened).toBe(true);
     expect(fsResult.status).toBe("error");
     expect(httpResult.status).toBe("error");
+    expect(envResult.status).toBe("error");
     expect(isolationResult.status).toBe("error");
 
     if (
       fsResult.status !== "error" ||
       httpResult.status !== "error" ||
+      envResult.status !== "error" ||
       isolationResult.status !== "error"
     ) {
       throw new Error("expected runtime-bound denials");
@@ -190,6 +252,7 @@ describe("runtime hardening", () => {
 
     expect(fsResult.error.code).toBe("AEG-POLICY-DENIED");
     expect(httpResult.error.code).toBe("AEG-POLICY-DENIED");
+    expect(envResult.error.code).toBe("AEG-POLICY-DENIED");
     expect(isolationResult.error.code).toBe("AEG-POLICY-DENIED");
     expect(auditKinds(fsResult).slice(0, 2)).toEqual([
       "runtime_channel",
@@ -199,11 +262,18 @@ describe("runtime hardening", () => {
       "runtime_channel",
       "runtime_binding",
     ]);
+    expect(auditKinds(envResult).slice(0, 2)).toEqual([
+      "runtime_channel",
+      "runtime_binding",
+    ]);
     expect(auditKinds(fsResult)).toContain("policy_denied");
     expect(auditKinds(httpResult)).toContain("policy_denied");
+    expect(auditKinds(envResult)).toContain("policy_denied");
+    expect(envResult.stderrUtf8).toContain("env capability blocked");
     expect(isolationResult.stderrUtf8).toContain("isolation_");
     expect(capabilityChannel(fsResult)).toBe("component-wit");
     expect(capabilityChannel(httpResult)).toBe("component-wit");
+    expect(capabilityChannel(envResult)).toBe("component-wit");
     expect(capabilityChannel(isolationResult)).toBe("component-wit");
     const kernelDetail = auditDetail(isolationResult, "kernel_isolation");
     expect(kernelDetail).toBeTruthy();
@@ -214,6 +284,36 @@ describe("runtime hardening", () => {
     expect(kernelIsolation.ns_pid).toBeTruthy();
     expect(kernelIsolation.ns_mnt).toBeTruthy();
     expect(kernelIsolation.cgroup_path).toBeTruthy();
+    expect(profile?.name).toBe("strict");
+
+    const controlStatus = {
+      noNewPrivs: kernelIsolation.no_new_privs === "1",
+      cgroup: Boolean(kernelIsolation.cgroup_path),
+      namespaces: {
+        pid: Boolean(kernelIsolation.ns_pid),
+        mnt: Boolean(kernelIsolation.ns_mnt),
+        net: Boolean(kernelIsolation.ns_net),
+        uts: Boolean(kernelIsolation.ns_uts),
+        ipc: Boolean(kernelIsolation.ns_ipc),
+        cgroup: Boolean(kernelIsolation.ns_cgroup),
+      },
+      seccomp: {
+        mode: kernelIsolation.seccomp ?? "unknown",
+        filters: kernelIsolation.seccomp_filters ?? "unknown",
+        active:
+          kernelIsolation.seccomp !== undefined &&
+          kernelIsolation.seccomp !== "0",
+      },
+    };
+
+    const limitEnvelope = {
+      wallMs: profile?.maxWallMs ?? null,
+      cpuMs: profile?.maxCpuMs ?? null,
+      memoryBytes: profile?.maxMemoryBytes ?? null,
+      stdoutBytes: profile?.maxStdoutBytes ?? null,
+      stderrBytes: profile?.maxStderrBytes ?? null,
+      denyEnvCapability: profile?.denyEnvCapability ?? null,
+    };
 
     writeArtifact("artifacts/security/runtime-policy-denials.json", {
       ok: true,
@@ -227,7 +327,11 @@ describe("runtime hardening", () => {
       hardened: capabilities.hardened,
       fsDenied: fsResult.error.code === "AEG-POLICY-DENIED",
       httpDenied: httpResult.error.code === "AEG-POLICY-DENIED",
+      envDenied: envResult.error.code === "AEG-POLICY-DENIED",
       isolationDenied: isolationResult.error.code === "AEG-POLICY-DENIED",
+      limitReasons: {
+        wall: isolationResult.stderrUtf8,
+      },
     });
 
     writeArtifact("artifacts/security/isolation-profile.json", {
@@ -240,7 +344,9 @@ describe("runtime hardening", () => {
       executionBackend: view.executionBackend ?? null,
       capabilityChannel: capabilityChannel(isolationResult),
       hardened: capabilities.hardened,
-      profile: view.isolationProfile ?? null,
+      profile: profile,
+      limitEnvelope,
+      controlStatus,
       deniedByProfile: isolationResult.stderrUtf8,
       termination: isolationResult.meta.termination,
     });
@@ -257,6 +363,8 @@ describe("runtime hardening", () => {
       hardened: capabilities.hardened,
       supported: kernelIsolation.supported === "1",
       profile: kernelIsolation.profile ?? null,
+      limitEnvelope,
+      controlStatus,
       noNewPrivs: kernelIsolation.no_new_privs === "1",
       seccompMode: kernelIsolation.seccomp ?? "unknown",
       seccompFilters: kernelIsolation.seccomp_filters ?? "unknown",
@@ -268,6 +376,116 @@ describe("runtime hardening", () => {
         uts: kernelIsolation.ns_uts ?? null,
         ipc: kernelIsolation.ns_ipc ?? null,
         cgroup: kernelIsolation.ns_cgroup ?? null,
+      },
+    });
+  }, 600_000);
+
+  it("records hostile limit-envelope denials for cpu, memory, stdout, and stderr", async () => {
+    const cpuCase = await runStrictIsolationCase(
+      {
+        AEGISPY_ISOLATION_MAX_CPU_MS: "300",
+      },
+      {
+        ...baseRequest,
+        code: 'print("cpu-bound envelope")',
+        limits: {
+          ...baseRequest.limits,
+          time: {
+            wallMs: 250,
+            cpuMs: 2000,
+          },
+        },
+      },
+    );
+    const memoryCase = await runStrictIsolationCase(
+      {
+        AEGISPY_ISOLATION_MAX_MEMORY_BYTES: "1048576",
+      },
+      {
+        ...baseRequest,
+        code: 'print("memory envelope")',
+      },
+    );
+    const stdoutCase = await runStrictIsolationCase(
+      {
+        AEGISPY_ISOLATION_MAX_STDOUT_BYTES: "128",
+      },
+      {
+        ...baseRequest,
+        code: 'print("stdout envelope")',
+      },
+    );
+    const stderrCase = await runStrictIsolationCase(
+      {
+        AEGISPY_ISOLATION_MAX_STDERR_BYTES: "128",
+      },
+      {
+        ...baseRequest,
+        code: 'import sys\nprint("stderr envelope", file=sys.stderr)',
+      },
+    );
+
+    expect(cpuCase.capabilities.profile).toBe("server-hardened");
+    expect(cpuCase.isolationProfile?.maxCpuMs).toBe(300);
+    expect(memoryCase.isolationProfile?.maxMemoryBytes).toBe(1048576);
+    expect(stdoutCase.isolationProfile?.maxStdoutBytes).toBe(128);
+    expect(stderrCase.isolationProfile?.maxStderrBytes).toBe(128);
+
+    const cases = {
+      cpu: cpuCase.result,
+      memory: memoryCase.result,
+      stdout: stdoutCase.result,
+      stderr: stderrCase.result,
+    };
+
+    for (const result of Object.values(cases)) {
+      expect(result.status).toBe("error");
+      if (result.status !== "error") {
+        throw new Error("expected strict isolation denial");
+      }
+      expect(result.error.code).toBe("AEG-POLICY-DENIED");
+      expect(result.meta.termination).toBe("policy_denied");
+      expect(capabilityChannel(result)).toBe("component-wit");
+      expect(auditKinds(result)).toContain("kernel_isolation");
+      expect(auditKinds(result)).toContain("policy_denied");
+    }
+
+    expect(cpuCase.result.stderrUtf8).toContain("isolation_cpu_limit_exceeded");
+    expect(memoryCase.result.stderrUtf8).toContain(
+      "isolation_memory_limit_exceeded",
+    );
+    expect(stdoutCase.result.stderrUtf8).toContain(
+      "isolation_stdout_limit_exceeded",
+    );
+    expect(stderrCase.result.stderrUtf8).toContain(
+      "isolation_stderr_limit_exceeded",
+    );
+
+    writeArtifact("artifacts/security/isolation-limit-denials.json", {
+      ok: true,
+      invariants: ["INV-SECU-0006"],
+      host: "node",
+      conformanceProfile: cpuCase.capabilities.profile,
+      transport: cpuCase.view.transportKind ?? "unknown",
+      executionMode: cpuCase.view.executionMode ?? null,
+      executionBackend: cpuCase.view.executionBackend ?? null,
+      cases: {
+        cpu: {
+          denied: true,
+          reason: cpuCase.result.stderrUtf8,
+        },
+        memory: {
+          denied: true,
+          reason: memoryCase.result.stderrUtf8,
+        },
+        stdout: {
+          denied: true,
+          reason: stdoutCase.result.stderrUtf8,
+        },
+        stderr: {
+          denied: true,
+          reason: stderrCase.result.stderrUtf8,
+        },
       },
     });
   }, 600_000);
