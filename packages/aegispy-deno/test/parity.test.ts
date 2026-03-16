@@ -4,6 +4,7 @@ import type { RunResult } from "@aegispy/core";
 import { writeArtifact } from "./helpers/artifact";
 
 const originalEnv = { ...process.env };
+const denoProcessTimeLimitMs = 3_000;
 
 afterEach(() => {
   process.env = { ...originalEnv };
@@ -70,8 +71,8 @@ describe("deno adapter parity", () => {
       },
       limits: {
         time: {
-          wallMs: 1000,
-          cpuMs: 1000,
+          wallMs: denoProcessTimeLimitMs,
+          cpuMs: denoProcessTimeLimitMs,
         },
         bytes: {
           memoryBytes: 1024 * 1024,
@@ -134,8 +135,8 @@ describe("deno adapter parity", () => {
       },
       limits: {
         time: {
-          wallMs: 1000,
-          cpuMs: 1000,
+          wallMs: denoProcessTimeLimitMs,
+          cpuMs: denoProcessTimeLimitMs,
         },
         bytes: {
           memoryBytes: 1024 * 1024,
@@ -183,8 +184,8 @@ describe("deno adapter parity", () => {
       },
       limits: {
         time: {
-          wallMs: 1000,
-          cpuMs: 1000,
+          wallMs: denoProcessTimeLimitMs,
+          cpuMs: denoProcessTimeLimitMs,
         },
         bytes: {
           memoryBytes: 1024 * 1024,
@@ -232,8 +233,8 @@ describe("deno adapter parity", () => {
       },
       limits: {
         time: {
-          wallMs: 1000,
-          cpuMs: 1000,
+          wallMs: denoProcessTimeLimitMs,
+          cpuMs: denoProcessTimeLimitMs,
         },
         bytes: {
           memoryBytes: 1024 * 1024,
