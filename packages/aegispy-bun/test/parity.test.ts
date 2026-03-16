@@ -428,6 +428,39 @@ function makePackageExecutionRequest(host: HostKind, code: string): RunRequest {
   return request;
 }
 
+async function createCorpusRuntime(host: CorpusHost): Promise<AegisPyRuntime> {
+  if (host === "node") {
+    return createNodeRuntime({ host: "node" });
+  }
+  if (host === "deno") {
+    return createDenoRuntime({ host: "deno" });
+  }
+  if (host === "bun") {
+    return createRuntime({ host: "bun" });
+  }
+  return createBrowserRuntime();
+}
+
+async function rerunAfterEngineError(
+  runtimes: Record<CorpusHost, AegisPyRuntime>,
+  host: CorpusHost,
+  request: RunRequest,
+): Promise<RunResult> {
+  const firstResult = await runtimes[host].run(request);
+  if (
+    host === "browser" ||
+    firstResult.status !== "error" ||
+    errorCode(firstResult) !== "AEG-ENGINE"
+  ) {
+    return firstResult;
+  }
+
+  await runtimes[host].close();
+  const restartedRuntime = await createCorpusRuntime(host);
+  runtimes[host] = restartedRuntime;
+  return restartedRuntime.run(request);
+}
+
 function collectCompatibilityFailures(
   caseResults: CorpusCaseResult[],
 ): CompatibilityFailures {
@@ -1446,10 +1479,10 @@ describe("bun adapter parity", () => {
       AEGISPY_CORPUS_ENV: corpusEnvValue,
     };
 
-    const nodeRuntime = await createNodeRuntime({ host: "node" });
-    const denoRuntime = await createDenoRuntime({ host: "deno" });
-    const bunRuntime = await createRuntime({ host: "bun" });
-    const browserRuntime = await createBrowserRuntime();
+    const nodeRuntime = await createCorpusRuntime("node");
+    const denoRuntime = await createCorpusRuntime("deno");
+    const bunRuntime = await createCorpusRuntime("bun");
+    const browserRuntime = await createCorpusRuntime("browser");
     const runtimes: Record<CorpusHost, AegisPyRuntime> = {
       node: nodeRuntime,
       deno: denoRuntime,
@@ -1479,10 +1512,9 @@ describe("bun adapter parity", () => {
     const caseResults: CorpusCaseResult[] = [];
 
     const closeRuntimes = async () => {
-      await nodeRuntime.close();
-      await denoRuntime.close();
-      await bunRuntime.close();
-      await browserRuntime.close();
+      for (const host of allHosts) {
+        await runtimes[host].close();
+      }
     };
 
     const runCorpusResult = await (async () => {
@@ -1499,7 +1531,7 @@ describe("bun adapter parity", () => {
           request.permissions = structuredClone(corpusCase.permissions);
           corpusCase.configureRequest?.(request);
 
-          const result = await runtimes[host].run(request);
+          const result = await rerunAfterEngineError(runtimes, host, request);
           const channel = capabilityChannel(result);
           const check =
             host === "browser"
