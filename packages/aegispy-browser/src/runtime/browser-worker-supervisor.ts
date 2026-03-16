@@ -35,11 +35,19 @@ interface WorkerPortHandle {
   onError(handler: (error: unknown) => void): void;
 }
 
+type WorkerPortFactory = () => Promise<WorkerPortHandle>;
+
+interface PendingRequest {
+  resolve: (payload: BrowserWorkerRunResult) => void;
+  reject: (error: Error) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+}
+
 function workerModuleUrl(): URL {
   return new URL("./pyodide-worker.mjs", import.meta.url);
 }
 
-async function createWorkerPort(): Promise<WorkerPortHandle> {
+async function defaultWorkerPortFactory(): Promise<WorkerPortHandle> {
   if (typeof process !== "undefined" && process.versions?.node) {
     const { Worker: NodeWorker } = await import("node:worker_threads");
     const worker = new NodeWorker(workerModuleUrl());
@@ -92,17 +100,19 @@ async function createWorkerPort(): Promise<WorkerPortHandle> {
 }
 
 export class BrowserWorkerSupervisor {
+  private readonly createWorkerPort: WorkerPortFactory;
+
   private workerPromise: Promise<WorkerPortHandle> | null = null;
 
   private workerToken = 0;
 
-  private pending = new Map<
-    string,
-    {
-      resolve: (payload: BrowserWorkerRunResult) => void;
-      reject: (error: Error) => void;
-    }
-  >();
+  private pending = new Map<string, PendingRequest>();
+
+  public constructor(
+    createWorkerPort: WorkerPortFactory = defaultWorkerPortFactory,
+  ) {
+    this.createWorkerPort = createWorkerPort;
+  }
 
   private async worker(): Promise<WorkerPortHandle> {
     if (this.workerPromise !== null) {
@@ -110,12 +120,9 @@ export class BrowserWorkerSupervisor {
     }
 
     const token = ++this.workerToken;
-    this.workerPromise = createWorkerPort().then((worker) => {
+    this.workerPromise = this.createWorkerPort().then((worker) => {
       worker.onMessage((payload) => {
-        const pending = this.pending.get(payload.requestId);
-        if (!pending) return;
-        this.pending.delete(payload.requestId);
-        pending.resolve(payload);
+        this.resolvePending(payload.requestId, payload);
       });
       worker.onError((error) => {
         if (token !== this.workerToken) {
@@ -127,6 +134,7 @@ export class BrowserWorkerSupervisor {
         this.pending.clear();
         this.workerPromise = null;
         for (const pending of pendingEntries) {
+          clearTimeout(pending.timeoutHandle);
           pending.reject(new Error(message));
         }
       });
@@ -141,29 +149,36 @@ export class BrowserWorkerSupervisor {
     wallMs: number,
   ): Promise<BrowserWorkerRunResult> {
     const worker = await this.worker();
+
     const resultPromise = new Promise<BrowserWorkerRunResult>(
       (resolve, reject) => {
-        this.pending.set(request.requestId, { resolve, reject });
+        const timeoutHandle = setTimeout(() => {
+          const pending = this.pending.get(request.requestId);
+          if (!pending) {
+            return;
+          }
+          this.pending.delete(request.requestId);
+          void this.reset().then(() => {
+            resolve({
+              requestId: request.requestId,
+              status: "error",
+              stdoutUtf8: "",
+              stderrUtf8: "wall time reached",
+              errorMessage: "wall time reached",
+            });
+          });
+        }, wallMs);
+
+        this.pending.set(request.requestId, {
+          resolve,
+          reject,
+          timeoutHandle,
+        });
       },
     );
 
     worker.postMessage(request);
-
-    const timeoutPromise = new Promise<BrowserWorkerRunResult>((resolve) => {
-      setTimeout(async () => {
-        this.pending.delete(request.requestId);
-        await this.reset();
-        resolve({
-          requestId: request.requestId,
-          status: "error",
-          stdoutUtf8: "",
-          stderrUtf8: "wall time reached",
-          errorMessage: "wall time reached",
-        });
-      }, wallMs);
-    });
-
-    return Promise.race([resultPromise, timeoutPromise]);
+    return resultPromise;
   }
 
   public async reset(): Promise<void> {
@@ -177,6 +192,22 @@ export class BrowserWorkerSupervisor {
 
   public async close(): Promise<void> {
     await this.reset();
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeoutHandle);
+    }
     this.pending.clear();
+  }
+
+  private resolvePending(
+    requestId: string,
+    payload: BrowserWorkerRunResult,
+  ): void {
+    const pending = this.pending.get(requestId);
+    if (!pending) {
+      return;
+    }
+    this.pending.delete(requestId);
+    clearTimeout(pending.timeoutHandle);
+    pending.resolve(payload);
   }
 }
