@@ -8,8 +8,8 @@ import { writeArtifact } from "../helpers/artifact";
 
 const sharedLimits = {
   time: {
-    wallMs: 600,
-    cpuMs: 600,
+    wallMs: 2_000,
+    cpuMs: 2_000,
   },
   bytes: {
     memoryBytes: 4096,

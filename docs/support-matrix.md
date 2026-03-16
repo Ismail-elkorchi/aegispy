@@ -25,6 +25,31 @@
 | env                    | gated by `permissions.env`  | gated by `permissions.env`  | gated by `permissions.env`  | unsupported in `browser-real-engine` (`AEG-UNSUPPORTED-HOST`) |
 | deterministic time/rng | supported                   | supported                   | supported                   | supported                                                     |
 
+## Workload Classification
+
+Generated workload coverage is grouped into:
+
+- `core-stdlib`
+- `text-stdlib`
+- `data-stdlib`
+- `numeric-stdlib`
+- `capability-fs`
+- `capability-http`
+- `capability-env`
+- `policy`
+- `resource-limits`
+
+## Stable Reason Codes
+
+- `supported` for workloads that satisfy the contract
+- `unsupported_browser_capability` for browser workloads that require `fs`,
+  `http`, or `env`
+- `policy_denied_expected` for correct deny-by-default enforcement
+- `output_limit_expected` for correct output-limit enforcement
+- failure codes such as `browser_engine_timeout`,
+  `capability_channel_not_component_wit`, or `stdlib_digest_missing` when a
+  host diverges from the expected contract
+
 ## Parity Evidence
 
 - `artifacts/e2e/deno-parity.json`
@@ -32,8 +57,13 @@
 - `artifacts/e2e/host-parity-contract.json`
 - `artifacts/compat/profile-conformance.json`
 - `artifacts/compat/agent-workload-corpus.json`
+- `artifacts/compat/workload-compatibility-matrix.json`
+- `artifacts/compat/package-fixture-lockfiles.json`
 - `artifacts/security/native-abi-adversarial.json`
 - `artifacts/security/native-abi-fuzz.json`
+
+See `docs/reference/compatibility-matrix.md` for the generated workload-family
+and reason-code details.
 
 ## Invariants
 

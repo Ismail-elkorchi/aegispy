@@ -14,7 +14,8 @@ AegisPy provides a capability-gated Python runtime API across Node, Deno, Bun, a
 
 1. Read `docs/tutorial/first-run.md`.
 2. Choose the host profile in `docs/how-to/choose-a-host.md`.
-3. Check supported behavior in `docs/support-matrix.md`.
+3. Check supported behavior in `docs/support-matrix.md` and
+   `docs/reference/compatibility-matrix.md`.
 4. Use `docs/how-to/troubleshoot-common-failures.md` when the runtime contract
    does not match your expectations.
 
@@ -31,6 +32,7 @@ AegisPy provides a capability-gated Python runtime API across Node, Deno, Bun, a
 - `docs/tutorial/first-run.md`
 - `docs/how-to/choose-a-host.md`
 - `docs/reference/runtime-api.md`
+- `docs/reference/compatibility-matrix.md`
 - `docs/support-matrix.md`
 
 ## Contributing

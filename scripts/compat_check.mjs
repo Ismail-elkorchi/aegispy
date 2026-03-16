@@ -23,6 +23,18 @@ const agentCorpusPath = path.join(
   "compat",
   "agent-workload-corpus.json",
 );
+const workloadMatrixPath = path.join(
+  repoRoot,
+  "artifacts",
+  "compat",
+  "workload-compatibility-matrix.json",
+);
+const packageFixturesPath = path.join(
+  repoRoot,
+  "artifacts",
+  "compat",
+  "package-fixture-lockfiles.json",
+);
 const outPath = path.join(repoRoot, "artifacts", "gates", "compat-check.json");
 
 function ensureDir(p) {
@@ -95,6 +107,118 @@ function main() {
         failures.push({
           error: "agent_workload_corpus_browser_profile_invalid",
         });
+      }
+      if (!Array.isArray(doc?.families) || doc.families.length === 0) {
+        failures.push({ error: "agent_workload_corpus_families_missing" });
+      }
+      if (!Array.isArray(doc?.reasonCodes) || doc.reasonCodes.length === 0) {
+        failures.push({ error: "agent_workload_corpus_reason_codes_missing" });
+      }
+    }
+  }
+
+  if (!fs.existsSync(workloadMatrixPath)) {
+    failures.push({
+      error: "missing_workload_compatibility_matrix_artifact",
+      path: "artifacts/compat/workload-compatibility-matrix.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(workloadMatrixPath, "utf8"));
+    if (doc.ok !== true)
+      failures.push({ error: "workload_compatibility_matrix_not_ok" });
+    if (
+      typeof doc.reasonCodes !== "object" ||
+      doc.reasonCodes === null ||
+      Object.keys(doc.reasonCodes).length === 0
+    ) {
+      failures.push({ error: "workload_compatibility_reason_codes_missing" });
+    }
+    if (
+      typeof doc.families !== "object" ||
+      doc.families === null ||
+      Object.keys(doc.families).length === 0
+    ) {
+      failures.push({ error: "workload_compatibility_families_missing" });
+    }
+    if (!Array.isArray(doc.workloads) || doc.workloads.length === 0) {
+      failures.push({ error: "workload_compatibility_workloads_missing" });
+    } else {
+      for (const workload of doc.workloads) {
+        if (
+          typeof workload?.workloadId !== "string" ||
+          workload.workloadId.length === 0
+        ) {
+          failures.push({
+            error: "workload_compatibility_workload_id_missing",
+          });
+          continue;
+        }
+        const hosts = workload?.hosts ?? {};
+        for (const host of ["node", "deno", "bun", "browser"]) {
+          const hostResult = hosts?.[host];
+          if (!hostResult) {
+            failures.push({
+              error: "workload_compatibility_host_result_missing",
+              workloadId: workload.workloadId,
+              host,
+            });
+            continue;
+          }
+          if (
+            typeof hostResult.reasonCode !== "string" ||
+            hostResult.reasonCode.length === 0
+          ) {
+            failures.push({
+              error: "workload_compatibility_reason_code_missing",
+              workloadId: workload.workloadId,
+              host,
+            });
+          }
+          if (
+            hostResult.expectation !== "supported" &&
+            hostResult.expectation !== "unsupported-by-profile"
+          ) {
+            failures.push({
+              error: "workload_compatibility_expectation_invalid",
+              workloadId: workload.workloadId,
+              host,
+            });
+          }
+        }
+      }
+    }
+    if (doc?.hosts?.browser?.profile !== "browser-real-engine") {
+      failures.push({
+        error: "workload_compatibility_browser_profile_invalid",
+      });
+    }
+  }
+
+  if (!fs.existsSync(packageFixturesPath)) {
+    failures.push({
+      error: "missing_package_fixture_lockfiles_artifact",
+      path: "artifacts/compat/package-fixture-lockfiles.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(packageFixturesPath, "utf8"));
+    if (doc.ok !== true)
+      failures.push({ error: "package_fixture_lockfiles_not_ok" });
+    if (!Array.isArray(doc.fixtures) || doc.fixtures.length === 0) {
+      failures.push({ error: "package_fixture_lockfiles_missing_entries" });
+    } else {
+      for (const fixture of doc.fixtures) {
+        if (fixture?.coverageBasis !== "metadata-only") {
+          failures.push({
+            error: "package_fixture_coverage_basis_invalid",
+            fixtureId: fixture?.fixtureId ?? null,
+          });
+        }
+        if (fixture?.verification?.ok !== true) {
+          failures.push({
+            error: "package_fixture_verification_failed",
+            fixtureId: fixture?.fixtureId ?? null,
+          });
+        }
       }
     }
   }
