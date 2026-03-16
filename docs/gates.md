@@ -54,6 +54,9 @@
 - Compatibility proof specifically writes `artifacts/compat/agent-workload-corpus.json`,
   `artifacts/compat/workload-compatibility-matrix.json`, and
   `artifacts/compat/package-fixture-lockfiles.json`.
+- The compatibility gate treats support claims as host-specific proof:
+  `supportedFailures` and `unsupportedByProfileFailures` must be empty in the
+  generated compatibility artifacts.
 - Security proof writes `artifacts/security/replay-attestation.json`,
   `artifacts/security/browser-input-fuzz.json`,
   `artifacts/security/browser-integrity-fuzz.json`,

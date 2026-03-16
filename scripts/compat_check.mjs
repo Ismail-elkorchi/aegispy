@@ -41,6 +41,22 @@ function ensureDir(p) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
 }
 
+function pushFailureEntries(failures, doc, key, error) {
+  const entries = doc?.[key];
+  if (!Array.isArray(entries)) {
+    failures.push({ error: `${error}_missing` });
+    return;
+  }
+  for (const entry of entries) {
+    failures.push({
+      error,
+      caseId: entry?.caseId ?? null,
+      host: entry?.host ?? null,
+      reasonCode: entry?.reasonCode ?? null,
+    });
+  }
+}
+
 function main() {
   const failures = [];
   if (!fs.existsSync(stdlibPath)) {
@@ -74,47 +90,39 @@ function main() {
     const doc = JSON.parse(fs.readFileSync(agentCorpusPath, "utf8"));
     if (doc.ok !== true)
       failures.push({ error: "agent_workload_corpus_not_ok" });
-
-    const threshold = doc?.thresholds?.serverPassRateMin;
-    if (
-      typeof threshold !== "number" ||
-      !Number.isFinite(threshold) ||
-      threshold <= 0 ||
-      threshold > 1
-    ) {
-      failures.push({ error: "agent_workload_corpus_threshold_invalid" });
-    } else {
-      const hosts = doc?.hosts ?? {};
-      for (const host of ["node", "deno", "bun"]) {
-        const passRate = hosts?.[host]?.passRate;
-        if (typeof passRate !== "number" || !Number.isFinite(passRate)) {
-          failures.push({
-            error: "agent_workload_corpus_pass_rate_missing",
-            host,
-          });
-          continue;
-        }
-        if (passRate < threshold) {
-          failures.push({
-            error: "agent_workload_corpus_pass_rate_below_threshold",
-            host,
-            passRate,
-            threshold,
-          });
-        }
-      }
-      if (hosts?.browser?.profile !== "browser-real-engine") {
+    const hosts = doc?.hosts ?? {};
+    for (const host of ["node", "deno", "bun", "browser"]) {
+      const passRate = hosts?.[host]?.passRate;
+      if (typeof passRate !== "number" || !Number.isFinite(passRate)) {
         failures.push({
-          error: "agent_workload_corpus_browser_profile_invalid",
+          error: "agent_workload_corpus_pass_rate_missing",
+          host,
         });
       }
-      if (!Array.isArray(doc?.families) || doc.families.length === 0) {
-        failures.push({ error: "agent_workload_corpus_families_missing" });
-      }
-      if (!Array.isArray(doc?.reasonCodes) || doc.reasonCodes.length === 0) {
-        failures.push({ error: "agent_workload_corpus_reason_codes_missing" });
-      }
     }
+    if (hosts?.browser?.profile !== "browser-real-engine") {
+      failures.push({
+        error: "agent_workload_corpus_browser_profile_invalid",
+      });
+    }
+    if (!Array.isArray(doc?.families) || doc.families.length === 0) {
+      failures.push({ error: "agent_workload_corpus_families_missing" });
+    }
+    if (!Array.isArray(doc?.reasonCodes) || doc.reasonCodes.length === 0) {
+      failures.push({ error: "agent_workload_corpus_reason_codes_missing" });
+    }
+    pushFailureEntries(
+      failures,
+      doc,
+      "supportedFailures",
+      "agent_workload_corpus_supported_failure",
+    );
+    pushFailureEntries(
+      failures,
+      doc,
+      "unsupportedByProfileFailures",
+      "agent_workload_corpus_unsupported_by_profile_failure",
+    );
   }
 
   if (!fs.existsSync(workloadMatrixPath)) {
@@ -192,6 +200,18 @@ function main() {
         error: "workload_compatibility_browser_profile_invalid",
       });
     }
+    pushFailureEntries(
+      failures,
+      doc,
+      "supportedFailures",
+      "workload_compatibility_supported_failure",
+    );
+    pushFailureEntries(
+      failures,
+      doc,
+      "unsupportedByProfileFailures",
+      "workload_compatibility_unsupported_by_profile_failure",
+    );
   }
 
   if (!fs.existsSync(packageFixturesPath)) {
