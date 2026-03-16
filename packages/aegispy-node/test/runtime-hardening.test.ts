@@ -35,10 +35,22 @@ const originalEnv = { ...process.env };
 function runtimeView(runtime: AegisPyRuntime): {
   transportKind?: string;
   isolationProfile?: unknown;
+  executionMode?: string | null;
+  executionBackend?: {
+    available?: boolean;
+    backendName?: string;
+    reason?: string | null;
+  } | null;
 } {
   return runtime as unknown as {
     transportKind?: string;
     isolationProfile?: unknown;
+    executionMode?: string | null;
+    executionBackend?: {
+      available?: boolean;
+      backendName?: string;
+      reason?: string | null;
+    } | null;
   };
 }
 
@@ -98,6 +110,9 @@ describe("runtime hardening", () => {
     await runtime.close();
 
     expect(view.transportKind).toBe("process");
+    expect(view.executionMode).toBe("process");
+    expect(view.executionBackend?.available).toBe(true);
+    expect(view.executionBackend?.backendName).toBe("native-process");
     expect(capabilities.profile).toBe("server-hardened");
     expect(capabilities.hardened).toBe(true);
     expect(result.status).toBe("ok");
@@ -109,6 +124,8 @@ describe("runtime hardening", () => {
       host: "node",
       profile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
+      executionMode: view.executionMode ?? null,
+      executionBackend: view.executionBackend ?? null,
       capabilityChannel: capabilityChannel(result),
       isolationProfile: view.isolationProfile ?? null,
       hardened: capabilities.hardened,
@@ -149,6 +166,8 @@ describe("runtime hardening", () => {
     await runtime.close();
 
     expect(view.transportKind).toBe("process");
+    expect(view.executionMode).toBe("process");
+    expect(view.executionBackend?.available).toBe(true);
     expect(capabilities.profile).toBe("server-hardened");
     expect(capabilities.hardened).toBe(true);
     expect(fsResult.status).toBe("error");
@@ -186,6 +205,8 @@ describe("runtime hardening", () => {
       host: "node",
       profile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
+      executionMode: view.executionMode ?? null,
+      executionBackend: view.executionBackend ?? null,
       capabilityChannel: capabilityChannel(fsResult),
       hardened: capabilities.hardened,
       fsDenied: fsResult.error.code === "AEG-POLICY-DENIED",
@@ -199,6 +220,8 @@ describe("runtime hardening", () => {
       host: "node",
       conformanceProfile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
+      executionMode: view.executionMode ?? null,
+      executionBackend: view.executionBackend ?? null,
       capabilityChannel: capabilityChannel(isolationResult),
       hardened: capabilities.hardened,
       profile: view.isolationProfile ?? null,
@@ -212,6 +235,8 @@ describe("runtime hardening", () => {
       host: "node",
       conformanceProfile: capabilities.profile,
       transport: view.transportKind ?? "unknown",
+      executionMode: view.executionMode ?? null,
+      executionBackend: view.executionBackend ?? null,
       capabilityChannel: capabilityChannel(isolationResult),
       hardened: capabilities.hardened,
       supported: kernelIsolation.supported === "1",
@@ -230,4 +255,67 @@ describe("runtime hardening", () => {
       },
     });
   }, 600_000);
+
+  it("fails closed when microvm mode is selected without a launcher", async () => {
+    process.env.AEGISPY_NODE_TRANSPORT = "process";
+    process.env.AEGISPY_WORKER_EXECUTION_MODE = "microvm";
+    delete process.env.AEGISPY_MICROVM_LAUNCHER;
+    delete process.env.AEGISPY_MICROVM_LAUNCHER_ARGS_JSON;
+
+    const runtime = await createRuntime({ host: "node" });
+    const view = runtimeView(runtime);
+
+    const result = await runtime.run({
+      ...baseRequest,
+      code: 'print("microvm-unavailable")',
+    });
+    await runtime.close();
+
+    expect(view.transportKind).toBe("process");
+    expect(view.executionMode).toBe("microvm");
+    expect(view.executionBackend?.available).toBe(false);
+    expect(view.executionBackend?.backendName).toBe("microvm-launcher");
+    expect(result.status).toBe("error");
+    if (result.status !== "error") {
+      throw new Error("expected microvm startup denial");
+    }
+    expect(result.error.code).toBe("AEG-ENGINE");
+    expect(result.stderrUtf8).toContain("microvm execution mode unavailable");
+  }, 600_000);
+
+  it.runIf(Boolean(process.env.AEGISPY_MICROVM_LAUNCHER))(
+    "records configured microvm execution mode when a launcher is available",
+    async () => {
+      process.env.AEGISPY_NODE_TRANSPORT = "process";
+      process.env.AEGISPY_WORKER_EXECUTION_MODE = "microvm";
+
+      const runtime = await createRuntime({ host: "node" });
+      const view = runtimeView(runtime);
+      const result = await runtime.run({
+        ...baseRequest,
+        code: 'print("microvm-runtime")',
+      });
+      await runtime.close();
+
+      expect(view.transportKind).toBe("process");
+      expect(view.executionMode).toBe("microvm");
+      expect(view.executionBackend?.available).toBe(true);
+      expect(view.executionBackend?.backendName).toBe("microvm-launcher");
+      expect(result.status).toBe("ok");
+      expect(capabilityChannel(result)).toBe("component-wit");
+
+      writeArtifact("artifacts/security/microvm-execution.json", {
+        ok: true,
+        invariants: ["INV-SECU-0008"],
+        host: "node",
+        transport: view.transportKind ?? "unknown",
+        executionMode: view.executionMode ?? null,
+        executionBackend: view.executionBackend ?? null,
+        capabilityChannel: capabilityChannel(result),
+        termination: result.meta.termination,
+        status: result.status,
+      });
+    },
+    600_000,
+  );
 });

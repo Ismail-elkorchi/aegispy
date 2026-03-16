@@ -15,6 +15,9 @@
 1. Host calls `createRuntime` with a host kind.
 2. Runtime validates `RunRequest` shape.
 3. `node`, `deno`, and `bun` default to process transport backed by the Rust worker.
+   The default execution mode is native process execution, and the same
+   process transport can be switched to an experimental `microvm` launcher
+   mode with `AEGISPY_WORKER_EXECUTION_MODE=microvm`.
 4. The WASI worker imports the shipped runtime `aegispy` module from WASI Python and serves guest capability calls through runtime request/response dispatch to the host ABI on the fixed `component-wit` channel.
 5. The server-hardened path enforces runtime-bound capability policy plus limits for wall time, memory marker, and output bytes.
 6. The browser real-engine path uses the same request/response contract, runs a
@@ -46,6 +49,8 @@
 - `artifacts/tests/node-adapter.json`
 - `artifacts/e2e/node-run.json`
 - `artifacts/e2e/browser-run.json`
+- `artifacts/security/microvm-execution.json` when a compatible self-hosted
+  microVM launcher is configured
 
 ## Invariants
 

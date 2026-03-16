@@ -11,6 +11,10 @@ import { InProcessTransport } from "../../aegispy-node/src/runtime/in-process-tr
 import type { IsolationProfile } from "../../aegispy-node/src/runtime/isolation-profile";
 import { RustWorkerTransport } from "../../aegispy-node/src/runtime/rust-worker-transport";
 import type { WorkerTransport } from "../../aegispy-node/src/runtime/worker-transport";
+import type {
+  WorkerExecutionBackendInfo,
+  WorkerExecutionMode,
+} from "../../aegispy-node/src/runtime/worker-execution-mode";
 
 function engineErrorResult(message: string): RunResult {
   const now = Date.now();
@@ -42,6 +46,8 @@ interface TransportSelection {
   transport: WorkerTransport;
   mode: DenoTransportMode;
   isolationProfile: IsolationProfile | null;
+  executionMode: WorkerExecutionMode | null;
+  executionBackend: WorkerExecutionBackendInfo | null;
 }
 
 export function resolveDenoTransportMode(
@@ -63,12 +69,16 @@ function createTransport(): TransportSelection {
       transport,
       mode,
       isolationProfile: transport.isolationProfile,
+      executionMode: transport.executionMode,
+      executionBackend: transport.executionBackend,
     };
   }
   return {
     transport: new InProcessTransport(),
     mode,
     isolationProfile: null,
+    executionMode: null,
+    executionBackend: null,
   };
 }
 
@@ -81,12 +91,18 @@ export class DenoRuntime implements AegisPyRuntime {
 
   public readonly isolationProfile: IsolationProfile | null;
 
+  public readonly executionMode: WorkerExecutionMode | null;
+
+  public readonly executionBackend: WorkerExecutionBackendInfo | null;
+
   private closed = false;
 
   public constructor(selection: TransportSelection = createTransport()) {
     this.transport = selection.transport;
     this.transportKind = selection.mode;
     this.isolationProfile = selection.isolationProfile;
+    this.executionMode = selection.executionMode;
+    this.executionBackend = selection.executionBackend;
   }
 
   public capabilities(): RuntimeCapabilities {
@@ -137,11 +153,13 @@ export class DenoRuntime implements AegisPyRuntime {
       return engineErrorResult("host mismatch");
     }
 
-    return this.transport.run(req).catch((error: unknown) => {
-      return engineErrorResult(
-        error instanceof Error ? error.message : "unknown transport error",
+    return Promise.resolve(req)
+      .then((request) => this.transport.run(request))
+      .catch((error: unknown) =>
+        engineErrorResult(
+          error instanceof Error ? error.message : "unknown transport error",
+        ),
       );
-    });
   }
 
   public async close(): Promise<void> {

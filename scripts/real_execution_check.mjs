@@ -51,6 +51,10 @@ function main() {
     if (realEngine.ok !== true) failures.push({ error: "real_engine_not_ok" });
     if (realEngine.transport !== "process")
       failures.push({ error: "real_engine_not_process_transport" });
+    if (realEngine.executionMode !== "process")
+      failures.push({ error: "real_engine_not_process_execution_mode" });
+    if (realEngine.executionBackend?.available !== true)
+      failures.push({ error: "real_engine_backend_not_available" });
     if (realEngine.capabilityChannel !== "component-wit")
       failures.push({ error: "real_engine_not_component_wit_channel" });
   }
@@ -69,6 +73,10 @@ function main() {
     if (isolation.ok !== true) failures.push({ error: "isolation_not_ok" });
     if (isolation.transport !== "process")
       failures.push({ error: "isolation_not_process_transport" });
+    if (isolation.executionMode !== "process")
+      failures.push({ error: "isolation_not_process_execution_mode" });
+    if (isolation.executionBackend?.available !== true)
+      failures.push({ error: "isolation_backend_not_available" });
     if (isolation.capabilityChannel !== "component-wit")
       failures.push({ error: "isolation_not_component_wit_channel" });
     if (profileName !== "strict")
@@ -86,6 +94,10 @@ function main() {
       failures.push({ error: "runtime_denials_not_ok" });
     if (runtimeDenials.transport !== "process")
       failures.push({ error: "runtime_denials_not_process_transport" });
+    if (runtimeDenials.executionMode !== "process")
+      failures.push({ error: "runtime_denials_not_process_execution_mode" });
+    if (runtimeDenials.executionBackend?.available !== true)
+      failures.push({ error: "runtime_denials_backend_not_available" });
     if (runtimeDenials.capabilityChannel !== "component-wit")
       failures.push({ error: "runtime_denials_not_component_wit_channel" });
     if (runtimeDenials.fsDenied !== true)
@@ -106,6 +118,10 @@ function main() {
     if (denoParity.ok !== true) failures.push({ error: "deno_parity_not_ok" });
     if (denoParity.transport !== "process")
       failures.push({ error: "deno_parity_not_process_transport" });
+    if (denoParity.executionMode !== "process")
+      failures.push({ error: "deno_parity_not_process_execution_mode" });
+    if (denoParity.executionBackend?.available !== true)
+      failures.push({ error: "deno_parity_backend_not_available" });
     if (denoParity.capabilityChannel !== "component-wit")
       failures.push({ error: "deno_parity_not_component_wit_channel" });
   }
@@ -120,6 +136,10 @@ function main() {
     if (bunParity.ok !== true) failures.push({ error: "bun_parity_not_ok" });
     if (bunParity.transport !== "process")
       failures.push({ error: "bun_parity_not_process_transport" });
+    if (bunParity.executionMode !== "process")
+      failures.push({ error: "bun_parity_not_process_execution_mode" });
+    if (bunParity.executionBackend?.available !== true)
+      failures.push({ error: "bun_parity_backend_not_available" });
     if (bunParity.capabilityChannel !== "component-wit")
       failures.push({ error: "bun_parity_not_component_wit_channel" });
   }

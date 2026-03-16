@@ -1,0 +1,60 @@
+name: microvm-self-hosted
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-microvm-smoke:
+    name: node-microvm-smoke
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - microvm
+    timeout-minutes: 60
+    env:
+      AEGISPY_NODE_TRANSPORT: process
+      AEGISPY_WORKER_EXECUTION_MODE: microvm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Load Runtime Policy
+        id: runtime-policy
+        shell: bash
+        run: |
+          node -e "const fs=require('node:fs');const p=JSON.parse(fs.readFileSync('tools/runtime-versions.json','utf8'));fs.appendFileSync(process.env.GITHUB_OUTPUT,'node_pinned='+p.node.pinned+'\\n');fs.appendFileSync(process.env.GITHUB_OUTPUT,'rust_toolchain='+p.rust.toolchain+'\\n');"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: ${{ steps.runtime-policy.outputs.node_pinned }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.runtime-policy.outputs.rust_toolchain }}
+
+      - name: Microvm Smoke
+        run: pnpm vitest run packages/aegispy-node/test/runtime-hardening.test.ts -t "records configured microvm execution mode when a launcher is available"
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: microvm-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/**
+          if-no-files-found: ignore
+          retention-days: 14

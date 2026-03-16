@@ -4,7 +4,9 @@
 
 AegisPy now ships a real server-side execution path for `node`, `deno`, and
 `bun` using process transport, a Rust worker, WASI Python, and the
-`component-wit` capability channel.
+`component-wit` capability channel. The default execution mode is native
+process execution. An experimental `microvm` launcher mode is now available as
+an opt-in self-hosted path through `AEGISPY_WORKER_EXECUTION_MODE=microvm`.
 
 The browser profile now uses an experimental real-engine worker runtime with
 explicit `fs=false`, `http=false`, and `env=false` capability limits. Deeper
@@ -27,7 +29,8 @@ A real hardened Python engine suitable for hostile agent workloads.
 2. Isolation hardening for server hosts
 
 - Deepen seccomp, namespace, cgroup v2, rlimit, and no-new-privs enforcement.
-- Provide optional microVM isolation profile for high-risk tenants.
+- Keep the experimental microVM launcher path self-hosted-ready and extend it
+  into a stronger isolation profile for high-risk tenants.
 - Exit criteria: adversarial escape suite blocked by enforced profile.
 
 3. Capability enforcement at runtime boundary

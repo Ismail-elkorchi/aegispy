@@ -26,6 +26,13 @@
   - prepares the real worker/component runtime surface before running the
     host-oriented suites
 
+## Manual Self-Hosted Workflow
+
+- `.github/workflows/microvm-self-hosted.yml` provides a manual self-hosted
+  microVM smoke lane.
+- That workflow is intentionally non-required and is only meant for runners
+  that already expose a compatible microVM launcher.
+
 ## Release Claim Gate
 
 - `bash scripts/release_claims_check` runs the release-grade claim gate and

@@ -9,12 +9,12 @@
 
 ## Host Status
 
-| Host    | Profile             | Runtime Path                                    | Status       | Exception Tag                |
-| ------- | ------------------- | ----------------------------------------------- | ------------ | ---------------------------- |
-| node    | server-hardened     | Process transport with component capability ABI | pass         | none                         |
-| deno    | server-hardened     | Process transport with component capability ABI | pass         | none                         |
-| bun     | server-hardened     | Process transport with component capability ABI | pass         | none                         |
-| browser | browser-real-engine | Worker-backed real Python engine                | experimental | `browser-capability-limited` |
+| Host    | Profile             | Runtime Path                                                                       | Status       | Exception Tag                |
+| ------- | ------------------- | ---------------------------------------------------------------------------------- | ------------ | ---------------------------- |
+| node    | server-hardened     | Process transport with native-process default and optional `microvm` launcher mode | pass         | none                         |
+| deno    | server-hardened     | Process transport with native-process default and optional `microvm` launcher mode | pass         | none                         |
+| bun     | server-hardened     | Process transport with native-process default and optional `microvm` launcher mode | pass         | none                         |
+| browser | browser-real-engine | Worker-backed real Python engine                                                   | experimental | `browser-capability-limited` |
 
 ## Capability Status
 
@@ -61,6 +61,8 @@ Generated workload coverage is grouped into:
 - `artifacts/compat/package-fixture-lockfiles.json`
 - `artifacts/security/native-abi-adversarial.json`
 - `artifacts/security/native-abi-fuzz.json`
+- `artifacts/security/microvm-execution.json` when a compatible self-hosted
+  launcher is present
 
 See `docs/reference/compatibility-matrix.md` for the generated workload-family
 and reason-code details.
