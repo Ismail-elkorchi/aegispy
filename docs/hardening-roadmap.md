@@ -2,8 +2,13 @@
 
 ## Current Position
 
-AegisPy currently validates contracts and policy behavior, but default execution
-paths still rely on simulation and stub engine artifacts.
+AegisPy now ships a real server-side execution path for `node`, `deno`, and
+`bun` using process transport, a Rust worker, WASI Python, and the
+`component-wit` capability channel.
+
+The browser profile still uses a simulated subset execution path, and deeper
+hardening work remains open for isolation depth, package compatibility breadth,
+release-attestation enforcement, and high-risk tenant isolation.
 
 ## Target
 
@@ -11,20 +16,20 @@ A real hardened Python engine suitable for hostile agent workloads.
 
 ## Required Engineering Tracks
 
-1. Real engine execution by default
+1. Browser real-engine execution
 
-- Replace simulation-default paths with real CPython WASI/browser engine execution.
-- Exit criteria: runtime tests execute against real engine artifacts.
+- Replace the browser simulated subset with a real browser Python engine path.
+- Exit criteria: browser runtime tests execute against a real browser engine artifact.
 
 2. Isolation hardening for server hosts
 
-- Enforce seccomp, namespaces, cgroup v2 limits, rlimits, and no-new-privs.
+- Deepen seccomp, namespace, cgroup v2, rlimit, and no-new-privs enforcement.
 - Provide optional microVM isolation profile for high-risk tenants.
 - Exit criteria: adversarial escape suite blocked by enforced profile.
 
 3. Capability enforcement at runtime boundary
 
-- Bind policy decisions to concrete filesystem/network/environment operations.
+- Extend policy decisions across the full supported resource surface with stable audit semantics.
 - Exit criteria: denied operations are blocked by runtime, not only pre-check logic.
 
 4. Deterministic replay and attestation
@@ -34,8 +39,8 @@ A real hardened Python engine suitable for hostile agent workloads.
 
 5. Supply-chain security and release integrity
 
-- Generate SBOM and signed provenance attestation for release artifacts.
-- Exit criteria: release gate verifies signatures and provenance before publish.
+- Keep SBOM and provenance attestation generation in the mandatory release path.
+- Exit criteria: release gate verifies signatures and provenance before publish in required mode.
 
 6. Security assurance and operations
 

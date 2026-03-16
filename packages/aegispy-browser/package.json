@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "test": "cd ../.. && pnpm vitest run packages/aegispy-browser/test/*.test.ts packages/aegispy-browser/test/e2e/*.test.ts",
+    "test": "cd ../.. && pnpm vitest run packages/aegispy-browser/test packages/aegispy-browser/test/e2e",
     "test:e2e": "cd ../.. && pnpm vitest run packages/aegispy-browser/test/e2e/browser-run.test.ts"
   },
   "dependencies": {

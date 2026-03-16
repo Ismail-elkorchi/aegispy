@@ -18,7 +18,8 @@
 - Engine artifacts live at `artifacts/engine/`.
 - `manifest.json` records SHA-256 hashes.
 - `provenance.json` records source script and build timestamp.
-- `scripts/engine/verify.mjs` validates manifest hash matches.
+- repository verification publishes matching integrity evidence for shipped
+  engine artifacts.
 
 ## Security Evidence
 

@@ -1,25 +1,14 @@
 # Claim Validity Matrix
 
-Date: 2026-02-16
+Date: 2026-03-16
 
-| Claim                         | Current State                        | Required Evidence Before Publication                           |
-| ----------------------------- | ------------------------------------ | -------------------------------------------------------------- |
-| Capability-gated API          | Valid for contract and policy checks | Runtime-bound deny tests with audit artifacts                  |
-| Hardened Python engine        | Not valid                            | Real interpreter execution and isolation evidence              |
-| Engine artifact integrity     | Partial                              | Signed provenance and SBOM verification logs                   |
-| Deterministic replay          | Prototype-level                      | Stable replay hashes from real runtime corpus                  |
-| Enterprise security readiness | Not valid                            | Vulnerability SLA metrics and incident runbook drill artifacts |
-
-## Software Position Baseline
-
-- RestrictedPython explicitly states it is not a full sandbox model and receives security restriction updates.
-- CodeJail documents AppArmor/process isolation requirements and operational caveats.
-- Wasmtime and Firecracker provide stronger isolation primitives than current AegisPy runtime paths.
-
-Sources:
-
-- https://restrictedpython.readthedocs.io/en/latest/usage/policy.html
-- https://restrictedpython.readthedocs.io/en/stable/changes.html
-- https://github.com/openedx/codejail
-- https://docs.wasmtime.dev/security.html
-- https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/docs/design.md
+| Claim                                      | Current State                                         | Required Evidence Before Publication                                    |
+| ------------------------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| Capability-gated API                       | Valid                                                 | Contract validation plus runtime-bound deny tests with audit artifacts  |
+| Real interpreter execution on server hosts | Valid for `node` / `deno` / `bun`                     | Real-execution and profile-conformance artifacts                        |
+| Real interpreter execution in the browser  | Not valid                                             | Browser runtime tests against a real browser engine artifact            |
+| Engine artifact integrity                  | Valid for hashed artifacts and provenance metadata    | Mandatory release-mode provenance verification plus SBOM evidence       |
+| Runtime-bound policy enforcement           | Valid for current `fs` / `http` / `env` server claims | Capability-binding and denial artifacts for each supported capability   |
+| Deterministic replay                       | Partial                                               | Stable replay hashes across a broader real-runtime compatibility corpus |
+| High-risk tenant isolation                 | Not valid                                             | Enforced seccomp depth and optional microVM isolation evidence          |
+| Enterprise security readiness              | Not valid                                             | Vulnerability SLA metrics and incident runbook drill artifacts          |

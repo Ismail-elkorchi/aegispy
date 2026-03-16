@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "test": "cd ../.. && pnpm vitest run packages/aegispy-deno/test/*.test.ts"
+    "test": "cd ../.. && pnpm vitest run packages/aegispy-deno/test"
   },
   "dependencies": {
     "@aegispy/core": "workspace:*"

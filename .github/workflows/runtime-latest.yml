@@ -1,0 +1,63 @@
+name: runtime-latest
+
+on:
+  schedule:
+    - cron: "13 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-latest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  latest-node-smoke:
+    name: latest-node-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Load Runtime Policy
+        id: runtime-policy
+        shell: bash
+        run: |
+          node -e "const fs=require('node:fs');const p=JSON.parse(fs.readFileSync('tools/runtime-versions.json','utf8'));fs.appendFileSync(process.env.GITHUB_OUTPUT,'rust_toolchain='+p.rust.toolchain+'\\n');"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: current
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.runtime-policy.outputs.rust_toolchain }}
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Portable check
+        run: pnpm run check:portable
+
+      - name: Host contracts
+        run: pnpm run test:host-contracts
+
+      - name: Fail on tracked-file churn
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain=v1)" ]]; then
+            echo "Tracked files changed during runtime-latest run:"
+            git status --porcelain=v1
+            exit 1
+          fi

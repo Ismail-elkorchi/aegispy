@@ -11,6 +11,7 @@ bash scripts/banned_token_scan
 bash scripts/req_coverage_check
 bash scripts/entrypoint_check
 bash scripts/core_io_scan
+node scripts/workflow_policy_check.mjs
 bash scripts/docs_check
 bash scripts/claim_alignment_check
 bash scripts/repo_layout_check
