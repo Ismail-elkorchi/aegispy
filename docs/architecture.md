@@ -14,20 +14,21 @@
 
 1. Host calls `createRuntime` with a host kind.
 2. Runtime validates `RunRequest` shape.
-3. Runtime evaluates policy grants for each capability access attempt.
-4. WASI worker imports the shipped runtime `aegispy` module from WASI Python and serves guest capability calls through runtime request/response dispatch to the host ABI on the fixed `component-wit` channel.
-5. Runtime enforces limits for wall time, memory marker, and output bytes.
-6. Runtime returns `RunResult` with `meta` and `audit`.
+3. `node`, `deno`, and `bun` default to process transport backed by the Rust worker.
+4. The WASI worker imports the shipped runtime `aegispy` module from WASI Python and serves guest capability calls through runtime request/response dispatch to the host ABI on the fixed `component-wit` channel.
+5. The server-hardened path enforces runtime-bound capability policy plus limits for wall time, memory marker, and output bytes.
+6. The browser-subset path uses the same request/response contract but remains a simulated timeout-bounded subset rather than a real browser Python engine.
+7. Runtime returns `RunResult` with `meta` and `audit`.
 
 ## Capability Channel
 
-- Channel: `component-wit` (fixed default for Node/WASI runtime path).
+- Channel: `component-wit` (fixed default for the server-hardened runtime path).
 - Runtime bridge: `component-host-guest-runtime-native-abi-dispatch` (guest module runtime path using native host ABI request/response frames).
 - Component artifact is composed with a typed native host-import contract (`aegispy:runtime/capability`) and worker linker bindings.
 - Native host-import contract is declared in `wit/aegispy.wit` (`world aegispy-runtime` imports `aegispy:runtime/capability`).
 - File-bridge request/response transport is removed from the runtime path.
 - Guest bridge calls are dispatched through native host ABI request/response frames without polling loops.
-- Runtime source-injection bridge loading is removed from default hardened execution; guest bridge code is loaded from the shipped WASI Python runtime module path.
+- Runtime source-injection bridge loading is removed from the default server-hardened execution path; guest bridge code is loaded from the shipped WASI Python runtime module path.
 - Worker binding mode is fixed to `guest-runtime-abi`; legacy `rewrite` modes are removed.
 - Guest-callable native host ABI is validated through the shipped builtin bridge module path (`engine/python/aegispy/__init__.py`) without `dlopen` dependency.
 

@@ -17,7 +17,18 @@ function dirExists(relPath) {
 }
 
 function main() {
-  const requiredDirs = ["packages", "rust", "scripts", "docs", ".github"];
+  const requiredDirs = [
+    "packages",
+    "rust",
+    "scripts",
+    "tools",
+    "docs",
+    "docs/tutorial",
+    "docs/how-to",
+    "docs/reference",
+    "docs/maintainers",
+    ".github",
+  ];
   const missing = requiredDirs.filter((p) => !dirExists(p));
 
   const payload =

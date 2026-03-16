@@ -1,0 +1,9 @@
+{
+  "node": {
+    "floor": "24.0.0",
+    "pinned": "24"
+  },
+  "rust": {
+    "toolchain": "stable"
+  }
+}
