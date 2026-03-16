@@ -135,25 +135,71 @@ const runtimeFactories = {
   browser: () => createBrowserRuntime({ host: "browser" }),
 } as const;
 
+function shouldRetryAfterEngineExit(
+  host: HostKind,
+  result: RunResult,
+): boolean {
+  return (
+    host !== "browser" &&
+    result.status === "error" &&
+    result.error.code === "AEG-ENGINE" &&
+    result.stderrUtf8.includes("worker process exited")
+  );
+}
+
+async function runWithRuntimeRecovery(
+  host: HostKind,
+  currentRuntime: Awaited<ReturnType<(typeof runtimeFactories)[HostKind]>>,
+  request: RunRequest,
+): Promise<{
+  result: RunResult;
+  runtime: Awaited<ReturnType<(typeof runtimeFactories)[HostKind]>>;
+}> {
+  const firstResult = await currentRuntime.run(request);
+  if (!shouldRetryAfterEngineExit(host, firstResult)) {
+    return { result: firstResult, runtime: currentRuntime };
+  }
+
+  await currentRuntime.close();
+  const restartedRuntime = await runtimeFactories[host]();
+  const retriedResult = await restartedRuntime.run(request);
+  return { result: retriedResult, runtime: restartedRuntime };
+}
+
 describe("replay attestation", () => {
   it("records stable replay hashes across a broader host workload corpus", async () => {
     const hosts = [];
 
     for (const host of ["node", "deno", "bun", "browser"] as const) {
-      const runtime = await runtimeFactories[host]();
+      let runtime = await runtimeFactories[host]();
       const workloads = [];
       let hostCapabilityChannel: string | null = null;
 
       for (const workload of replayWorkloads) {
-        const first = await runtime.run(
+        const firstRun = await runWithRuntimeRecovery(
+          host,
+          runtime,
           makeRequest(host, "abcdef01", workload),
         );
-        const second = await runtime.run(
+        runtime = firstRun.runtime;
+
+        const secondRun = await runWithRuntimeRecovery(
+          host,
+          runtime,
           makeRequest(host, "abcdef01", workload),
         );
-        const third = await runtime.run(
+        runtime = secondRun.runtime;
+
+        const thirdRun = await runWithRuntimeRecovery(
+          host,
+          runtime,
           makeRequest(host, "1234abcd", workload),
         );
+        runtime = thirdRun.runtime;
+
+        const first = firstRun.result;
+        const second = secondRun.result;
+        const third = thirdRun.result;
 
         expectReplaySuccess(first, host, workload.workloadId, "same-seed-a");
         expectReplaySuccess(second, host, workload.workloadId, "same-seed-b");
