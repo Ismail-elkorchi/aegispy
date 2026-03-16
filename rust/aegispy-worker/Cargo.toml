@@ -13,3 +13,4 @@ ureq = "3.2"
 wasmtime = { version = "42.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
 wasmtime-wasi = { version = "42.0.1", default-features = false, features = ["p2"] }
 bytes = "1.11"
+libc = "0.2"

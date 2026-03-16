@@ -102,6 +102,15 @@ function isPositiveNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isBlockedProbe(probe) {
+  return (
+    probe?.blocked === true &&
+    isPositiveNumber(probe?.errnoCode) &&
+    typeof probe?.errnoName === "string" &&
+    probe.errnoName.length > 0
+  );
+}
+
 function main() {
   const failures = [];
   if (!fs.existsSync(runtimeDenialsPath)) {
@@ -187,6 +196,32 @@ function main() {
     }
     if (typeof controlStatus?.seccomp?.active !== "boolean") {
       failures.push({ error: "isolation_profile_seccomp_state_missing" });
+    }
+    if (controlStatus?.seccomp?.active !== true) {
+      failures.push({ error: "isolation_profile_seccomp_inactive" });
+    }
+    if (!isPositiveNumber(Number(controlStatus?.seccomp?.filters))) {
+      failures.push({ error: "isolation_profile_seccomp_filters_invalid" });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.cpuSeconds?.soft)) {
+      failures.push({ error: "isolation_profile_rlimit_cpu_soft_missing" });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.cpuSeconds?.hard)) {
+      failures.push({ error: "isolation_profile_rlimit_cpu_hard_missing" });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.addressSpaceBytes?.soft)) {
+      failures.push({ error: "isolation_profile_rlimit_as_soft_missing" });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.addressSpaceBytes?.hard)) {
+      failures.push({ error: "isolation_profile_rlimit_as_hard_missing" });
+    }
+    for (const probeName of ["unshare", "setns", "mount", "ptrace"]) {
+      if (!isBlockedProbe(doc?.controlProbes?.[probeName])) {
+        failures.push({
+          error: "isolation_profile_probe_missing",
+          probe: probeName,
+        });
+      }
     }
   }
 
@@ -553,6 +588,52 @@ function main() {
       failures.push({
         error: "kernel_isolation_runtime_control_cgroup_missing",
       });
+    }
+    if (controlStatus?.seccomp?.active !== true) {
+      failures.push({
+        error: "kernel_isolation_runtime_control_seccomp_inactive",
+      });
+    }
+    if (!isPositiveNumber(Number(controlStatus?.seccomp?.filters))) {
+      failures.push({
+        error: "kernel_isolation_runtime_control_seccomp_filters_invalid",
+      });
+    }
+    if (doc.seccompMode === "0") {
+      failures.push({ error: "kernel_isolation_runtime_seccomp_inactive" });
+    }
+    if (!isPositiveNumber(Number(doc.seccompFilters))) {
+      failures.push({
+        error: "kernel_isolation_runtime_seccomp_filters_invalid",
+      });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.cpuSeconds?.soft)) {
+      failures.push({
+        error: "kernel_isolation_runtime_rlimit_cpu_soft_missing",
+      });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.cpuSeconds?.hard)) {
+      failures.push({
+        error: "kernel_isolation_runtime_rlimit_cpu_hard_missing",
+      });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.addressSpaceBytes?.soft)) {
+      failures.push({
+        error: "kernel_isolation_runtime_rlimit_as_soft_missing",
+      });
+    }
+    if (!isPositiveNumber(doc?.rlimits?.addressSpaceBytes?.hard)) {
+      failures.push({
+        error: "kernel_isolation_runtime_rlimit_as_hard_missing",
+      });
+    }
+    for (const probeName of ["unshare", "setns", "mount", "ptrace"]) {
+      if (!isBlockedProbe(doc?.controlProbes?.[probeName])) {
+        failures.push({
+          error: "kernel_isolation_runtime_probe_missing",
+          probe: probeName,
+        });
+      }
     }
   }
 

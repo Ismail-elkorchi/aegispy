@@ -65,6 +65,7 @@ Generated workload coverage is grouped into:
 - `artifacts/security/browser-integrity-fuzz.json`
 - `artifacts/security/native-abi-adversarial.json`
 - `artifacts/security/native-abi-fuzz.json`
+- `artifacts/security/kernel-isolation-runtime.json`
 - `artifacts/security/microvm-execution.json` when a compatible self-hosted
   launcher is present
 

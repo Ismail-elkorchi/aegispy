@@ -14,9 +14,11 @@ Properties:
 - capability enforcement at the runtime boundary
 - `component-wit` capability channel
 - explicit denial semantics for filesystem, HTTP, and environment permissions
-- strict-profile evidence for no-new-privs, namespace, cgroup, and
+- strict-profile evidence for no-new-privs, active seccomp filtering,
+  namespace, cgroup, process-level CPU/address-space ceilings, and
   limit-envelope controls
-- recorded seccomp state without a published high-risk tenant claim
+- blocked kernel-control probes for `unshare`, `setns`, `mount`, and `ptrace`
+  without a published high-risk tenant claim
 
 ## `browser-real-engine`
 
