@@ -45,6 +45,7 @@ records the expected rejection reason for that host.
 | `browser_engine_timeout`               | the browser real-engine path timed out                                    |
 | `browser_engine_error`                 | the browser real-engine path returned an engine error                     |
 | `capability_channel_not_component_wit` | a server host failed to expose the required capability channel            |
+| `timeout_expected`                     | the runtime correctly enforced the configured wall-clock timeout          |
 
 ## Browser Truth
 
@@ -65,6 +66,7 @@ gate to remain green.
 ## Package Fixture Metadata
 
 `artifacts/compat/package-fixture-lockfiles.json` contains pinned lockfile
-metadata for representative pure-Python package families. The compatibility
-fixtures remain corpus metadata, and `browser-real-engine` package requests now
-fail closed unless they are backed by a verified `packageLockfile`.
+proof for representative pure-Python package families. That artifact now mixes
+`metadata-only` fixtures with `browser-executed` fixtures when the
+`browser-real-engine` runtime can import the package through a verified
+`packageLockfile`.

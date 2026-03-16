@@ -46,6 +46,7 @@ Generated workload coverage is grouped into:
   `http`, or `env`
 - `policy_denied_expected` for correct deny-by-default enforcement
 - `output_limit_expected` for correct output-limit enforcement
+- `timeout_expected` for correct wall-clock timeout enforcement
 - failure codes such as `browser_engine_timeout`,
   `capability_channel_not_component_wit`, or `stdlib_digest_missing` when a
   host diverges from the expected contract
@@ -58,7 +59,8 @@ Generated workload coverage is grouped into:
 - `artifacts/compat/profile-conformance.json`
 - `artifacts/compat/agent-workload-corpus.json`
 - `artifacts/compat/workload-compatibility-matrix.json`
-- `artifacts/compat/package-fixture-lockfiles.json`
+- `artifacts/compat/package-fixture-lockfiles.json` now mixes
+  `metadata-only` and `browser-executed` package-fixture proof
 - `artifacts/security/replay-attestation.json`
 - `artifacts/security/browser-integrity-fuzz.json`
 - `artifacts/security/native-abi-adversarial.json`

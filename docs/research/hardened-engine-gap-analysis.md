@@ -33,7 +33,9 @@ target hardening posture for untrusted coding-agent execution.
 1. Compatibility corpus breadth
 
 - Broaden the generated workload matrix and reason-code coverage across all hosts.
-- Keep pure-Python package fixture metadata explicit and pinned as part of the public package-loading contract.
+- Keep pure-Python package fixture proof explicit and pinned as part of the
+  public package-loading contract, including browser-executed coverage where
+  the runtime can verify the package safely.
 
 2. Enforced isolation profile
 

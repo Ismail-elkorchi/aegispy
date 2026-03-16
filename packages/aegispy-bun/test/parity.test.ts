@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime, type AegisPyRuntime } from "../src/index";
 import { createRuntime as createNodeRuntime } from "../../aegispy-node/src/index";
 import { createRuntime as createDenoRuntime } from "../../aegispy-deno/src/index";
-import { createRuntime as createBrowserRuntime } from "../../aegispy-browser/src/index";
+import { createBrowserRuntime } from "../../aegispy-browser/src/index";
 import { resolveLockfile, verifyLockfile } from "../../aegispy-pack/src/index";
 import type { HostKind, RunRequest, RunResult } from "@aegispy/core";
 import { writeArtifact } from "./helpers/artifact";
@@ -74,12 +74,41 @@ interface CorpusCaseResult {
   results: Record<CorpusHost, CaseOutcome>;
 }
 
+type PackageFixtureCoverage = "metadata-only" | "browser-executed";
+
+interface PackageFixtureExecutionPlan {
+  host: "browser";
+  packages: string[];
+  code: string;
+  expectedStdout: string;
+}
+
+interface PackageFixtureExecutionProof {
+  host: "browser";
+  packages: string[];
+  ok: boolean;
+  reasonCode: string;
+  stdoutUtf8: string;
+  stderrUtf8: string;
+}
+
 interface PackageFixture {
   fixtureId: string;
-  coverageBasis: "metadata-only";
+  coverageBasis: PackageFixtureCoverage;
   description: string;
   lockfile: ReturnType<typeof resolveLockfile>;
   verification: ReturnType<typeof verifyLockfile>;
+  executionPlan?: PackageFixtureExecutionPlan;
+}
+
+interface PackageFixtureSummary {
+  fixtureId: string;
+  coverageBasis: PackageFixtureCoverage;
+  description: string;
+  dependencyCount: number;
+  lockfile: ReturnType<typeof resolveLockfile>;
+  verification: ReturnType<typeof verifyLockfile>;
+  execution: PackageFixtureExecutionProof | null;
 }
 
 const workloadFamilies: Record<WorkloadFamily, { description: string }> = {
@@ -184,6 +213,16 @@ const compatibilityReasonCodes = {
     description:
       "A server host did not report the required component-wit capability channel.",
   },
+  timeout_expected: {
+    expectation: "supported",
+    description:
+      "The runtime correctly enforced the configured wall-clock timeout for the workload.",
+  },
+  timeout_missing: {
+    expectation: "supported",
+    description:
+      "The runtime failed to enforce the configured wall-clock timeout for the workload.",
+  },
 } as const;
 
 function makePackageFixture(
@@ -208,6 +247,30 @@ function makePackageFixture(
   };
 }
 
+function makeBrowserExecutedPackageFixture(
+  fixtureId: string,
+  description: string,
+  dependencies: Array<{
+    name: string;
+    version: string;
+    kind: "pure_python";
+  }>,
+  executionPlan: PackageFixtureExecutionPlan,
+): PackageFixture {
+  const lockfile = resolveLockfile({
+    dependencies,
+    generatedAt: "2026-03-16T00:00:00.000Z",
+  });
+  return {
+    fixtureId,
+    coverageBasis: "browser-executed",
+    description,
+    lockfile,
+    verification: verifyLockfile(lockfile),
+    executionPlan,
+  };
+}
+
 const packageFixtures: PackageFixture[] = [
   makePackageFixture(
     "pure-python-text-tooling",
@@ -224,6 +287,17 @@ const packageFixtures: PackageFixture[] = [
       { name: "pyyaml", version: "6.0.2", kind: "pure_python" },
       { name: "attrs", version: "24.2.0", kind: "pure_python" },
     ],
+  ),
+  makeBrowserExecutedPackageFixture(
+    "browser-micropip-import",
+    "Verified browser package import proof for the bundled Pyodide micropip package.",
+    [{ name: "micropip", version: "0.10.1", kind: "pure_python" }],
+    {
+      host: "browser",
+      packages: ["micropip"],
+      code: ["import micropip", "print(micropip.__name__)"].join("\n"),
+      expectedStdout: "micropip",
+    },
   ),
 ];
 
@@ -309,6 +383,14 @@ function isOutputLimitDenied(result: RunResult): boolean {
   );
 }
 
+function isTimeoutDenied(result: RunResult): boolean {
+  return (
+    result.status === "error" &&
+    result.meta.termination === "timeout" &&
+    errorCode(result) === "AEG-TIMEOUT"
+  );
+}
+
 function makeRequest(host: HostKind, code: string): RunRequest {
   return {
     host,
@@ -378,6 +460,77 @@ function isCompatibilityCorpusOk(
   );
 }
 
+async function summarizePackageFixture(
+  fixture: PackageFixture,
+): Promise<PackageFixtureSummary> {
+  const summary: PackageFixtureSummary = {
+    fixtureId: fixture.fixtureId,
+    coverageBasis: fixture.coverageBasis,
+    description: fixture.description,
+    dependencyCount: fixture.lockfile.entries.length,
+    lockfile: fixture.lockfile,
+    verification: fixture.verification,
+    execution: null,
+  };
+
+  if (
+    fixture.coverageBasis !== "browser-executed" ||
+    fixture.executionPlan === undefined
+  ) {
+    return summary;
+  }
+  const executionPlan = fixture.executionPlan;
+
+  const runtime = await createBrowserRuntime({
+    packages: executionPlan.packages,
+    packageLockfile: fixture.lockfile,
+  });
+
+  return runtime
+    .run(makeRequest(executionPlan.host, executionPlan.code))
+    .then((result) => {
+      const ok =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes(executionPlan.expectedStdout);
+      summary.execution = {
+        host: executionPlan.host,
+        packages: [...executionPlan.packages],
+        ok,
+        reasonCode: ok
+          ? "supported"
+          : result.meta.termination === "engine_error"
+            ? "browser_engine_error"
+            : result.meta.termination === "timeout"
+              ? "browser_engine_timeout"
+              : "stdout_missing",
+        stdoutUtf8: result.stdoutUtf8,
+        stderrUtf8: result.stderrUtf8,
+      };
+      return summary;
+    })
+    .finally(async () => {
+      await runtime.close();
+    });
+}
+
+function arePackageFixturesOk(fixtures: PackageFixtureSummary[]): boolean {
+  const hasExecutionBackedFixture = fixtures.some(
+    (fixture) => fixture.coverageBasis === "browser-executed",
+  );
+  return (
+    hasExecutionBackedFixture &&
+    fixtures.every((fixture) => {
+      if (!fixture.verification.ok) {
+        return false;
+      }
+      if (fixture.coverageBasis === "browser-executed") {
+        return fixture.execution?.ok === true;
+      }
+      return fixture.execution === null;
+    })
+  );
+}
+
 const corpusCases: CorpusCase[] = [
   {
     caseId: "simple-print",
@@ -430,6 +583,33 @@ const corpusCases: CorpusCase[] = [
     },
   },
   {
+    caseId: "pathlib-pure-path",
+    family: "core-stdlib",
+    description: "pure pathlib path-join workload",
+    code: [
+      "from pathlib import PurePosixPath",
+      'path = PurePosixPath("/sandbox/write").joinpath("nested", "file.txt")',
+      "print(path)",
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("/sandbox/write/nested/file.txt");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("/sandbox/write/nested/file.txt");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
     caseId: "stdlib-json-hash",
     family: "data-stdlib",
     description: "stdlib json/hashlib workload",
@@ -469,6 +649,55 @@ const corpusCases: CorpusCase[] = [
     },
   },
   {
+    caseId: "csv-dictreader-roundtrip",
+    family: "data-stdlib",
+    description: "stdlib csv parsing workload",
+    code: [
+      "import csv",
+      "import io",
+      'data = io.StringIO("name,value\\nalpha,1\\nbeta,2\\n")',
+      "rows = list(csv.DictReader(data))",
+      'print(rows[0]["name"] + "-" + rows[1]["value"])',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("alpha-2");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("alpha-2");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "collections-counter",
+    family: "data-stdlib",
+    description: "stdlib collections counting workload",
+    code: [
+      "from collections import Counter",
+      'print(Counter("mississippi")["s"])',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("4");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("4");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
     caseId: "text-regex-unicode",
     family: "text-stdlib",
     description: "stdlib text normalization and regex workload",
@@ -489,6 +718,36 @@ const corpusCases: CorpusCase[] = [
     },
     validateBrowser(result) {
       const pass = result.status === "ok" && result.stdoutUtf8.includes("cafe");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "textwrap-shlex",
+    family: "text-stdlib",
+    description: "stdlib text wrapping and shell tokenization workload",
+    code: [
+      "import shlex",
+      "import textwrap",
+      'print("|".join(shlex.split(\'cmd --name "agent corpus"\')))',
+      'print(textwrap.fill("alpha beta gamma delta", width=10).replace("\\n", "|"))',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("cmd|--name|agent corpus") &&
+        result.stdoutUtf8.includes("alpha beta|gamma|delta");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("cmd|--name|agent corpus") &&
+        result.stdoutUtf8.includes("alpha beta|gamma|delta");
       return supportedCheck(pass, "stdout_missing");
     },
   },
@@ -515,6 +774,28 @@ const corpusCases: CorpusCase[] = [
     validateBrowser(result) {
       const pass =
         result.status === "ok" && result.stdoutUtf8.includes("0.250");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "statistics-fmean",
+    family: "numeric-stdlib",
+    description: "stdlib statistics workload",
+    code: [
+      "import statistics",
+      'print(f"{statistics.fmean([0.25, 0.5, 0.75]):.2f}")',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("0.50");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("0.50");
       return supportedCheck(pass, "stdout_missing");
     },
   },
@@ -712,6 +993,40 @@ const corpusCases: CorpusCase[] = [
     },
   },
   {
+    caseId: "timeout-abuse",
+    family: "resource-limits",
+    description: "deny a runaway cpu-bound workload through wall-clock timeout",
+    code: ["while True:", "    pass"].join("\n"),
+    tags: ["adversarial"],
+    configureRequest(request) {
+      request.limits.time.wallMs = 200;
+      request.limits.time.cpuMs = 200;
+    },
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass = isTimeoutDenied(result);
+      return {
+        pass,
+        expectation: "supported",
+        exceptionTag: null,
+        reasonCode: pass ? "timeout_expected" : "timeout_missing",
+      };
+    },
+    validateBrowser(result) {
+      const pass = isTimeoutDenied(result);
+      return {
+        pass,
+        expectation: "supported",
+        exceptionTag: null,
+        reasonCode: pass ? "timeout_expected" : "timeout_missing",
+      };
+    },
+  },
+  {
     caseId: "output-abuse",
     family: "resource-limits",
     description: "deny abusive stdout payload",
@@ -751,6 +1066,10 @@ afterEach(() => {
 });
 
 describe("bun adapter parity", () => {
+  it("keeps the compatibility corpus breadth above the current floor", () => {
+    expect(corpusCases.length).toBeGreaterThanOrEqual(18);
+  });
+
   it("fails the corpus when a supported host workload fails", () => {
     const failures = collectCompatibilityFailures([
       {
@@ -812,6 +1131,56 @@ describe("bun adapter parity", () => {
     ]);
     expect(failures.unsupportedByProfile).toEqual([]);
     expect(isCompatibilityCorpusOk(failures, true)).toBe(false);
+  });
+
+  it("requires browser-executed package fixtures to keep a passing run proof", () => {
+    expect(
+      arePackageFixturesOk([
+        {
+          fixtureId: "metadata-fixture",
+          coverageBasis: "metadata-only",
+          description: "metadata only",
+          dependencyCount: 1,
+          lockfile: resolveLockfile({
+            dependencies: [
+              {
+                name: "attrs",
+                version: "24.2.0",
+                kind: "pure_python",
+              },
+            ],
+            generatedAt: "2026-03-16T00:00:00.000Z",
+          }),
+          verification: { ok: true, failures: [] },
+          execution: null,
+        },
+        {
+          fixtureId: "browser-fixture",
+          coverageBasis: "browser-executed",
+          description: "browser executed",
+          dependencyCount: 1,
+          lockfile: resolveLockfile({
+            dependencies: [
+              {
+                name: "micropip",
+                version: "0.10.1",
+                kind: "pure_python",
+              },
+            ],
+            generatedAt: "2026-03-16T00:00:00.000Z",
+          }),
+          verification: { ok: true, failures: [] },
+          execution: {
+            host: "browser",
+            packages: ["micropip"],
+            ok: false,
+            reasonCode: "browser_engine_error",
+            stdoutUtf8: "",
+            stderrUtf8: "engine error",
+          },
+        },
+      ]),
+    ).toBe(false);
   });
 
   it("defaults to process transport and matches node contract shape", async () => {
@@ -1073,7 +1442,7 @@ describe("bun adapter parity", () => {
     const nodeRuntime = await createNodeRuntime({ host: "node" });
     const denoRuntime = await createDenoRuntime({ host: "deno" });
     const bunRuntime = await createRuntime({ host: "bun" });
-    const browserRuntime = await createBrowserRuntime({ host: "browser" });
+    const browserRuntime = await createBrowserRuntime();
     const runtimes: Record<CorpusHost, AegisPyRuntime> = {
       node: nodeRuntime,
       deno: denoRuntime,
@@ -1211,17 +1580,15 @@ describe("bun adapter parity", () => {
 
     expect(hostSummary.browser.profile).toBe("browser-real-engine");
 
-    const fixtureSummary = packageFixtures.map((fixture) => ({
-      fixtureId: fixture.fixtureId,
-      coverageBasis: fixture.coverageBasis,
-      description: fixture.description,
-      dependencyCount: fixture.lockfile.entries.length,
-      lockfile: fixture.lockfile,
-      verification: fixture.verification,
-    }));
-    const packageFixturesOk = fixtureSummary.every(
-      (fixture) => fixture.verification.ok,
+    const fixtureSummary = await Promise.all(
+      packageFixtures.map((fixture) => summarizePackageFixture(fixture)),
     );
+    const packageFixturesOk = arePackageFixturesOk(fixtureSummary);
+    expect(
+      fixtureSummary.some(
+        (fixture) => fixture.coverageBasis === "browser-executed",
+      ),
+    ).toBe(true);
     expect(packageFixturesOk).toBe(true);
 
     const compatibilityFailures = collectCompatibilityFailures(caseResults);
