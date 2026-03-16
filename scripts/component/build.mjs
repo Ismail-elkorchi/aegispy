@@ -14,6 +14,7 @@ const baseComponentPath = path.join(outDir, "aegispy-base-component.wasm");
 const wrapperWatPath = path.join(outDir, "host-import-wrapper.wat");
 const wrapperWasmPath = path.join(outDir, "host-import-wrapper.wasm");
 const buildPath = path.join(outDir, "build.json");
+const compiledComponentPath = path.join(outDir, "aegispy.component.cwasm");
 const interfacePath = path.join(outDir, "interface.wit");
 const witPath = path.join(repoRoot, "wit", "aegispy.wit");
 
@@ -338,6 +339,7 @@ function main() {
   };
 
   fs.writeFileSync(buildPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  fs.rmSync(compiledComponentPath, { force: true });
   console.log(JSON.stringify(manifest, null, 2));
 }
 

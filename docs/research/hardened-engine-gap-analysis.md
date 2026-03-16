@@ -1,17 +1,18 @@
 # Hardened Engine Gap Analysis
 
-Date: 2026-02-16
+Date: 2026-03-16
 
 ## Objective
 
-Define the exact gaps between current AegisPy behavior and a hardened real-engine runtime for untrusted coding-agent execution.
+Define the remaining public gaps between current AegisPy behavior and the
+target hardening posture for untrusted coding-agent execution.
 
-## Verified Internal Gaps
+## Verified Current State
 
-- Node default runtime path uses in-process simulation when transport override is absent.
-- Core runtime factory includes simulated runtime execution.
-- Engine build scripts emit stub payload artifacts.
-- Rust worker executes simulated logic, not real CPython engine code.
+- `node`, `deno`, and `bun` default to process transport backed by the Rust worker.
+- The worker defaults to the WASI executor and the `component-wit` capability channel.
+- Real-execution, capability-binding, and profile-conformance evidence artifacts are present.
+- The browser profile remains a simulated subset rather than a real browser Python engine.
 
 ## External Security Baseline
 
@@ -26,28 +27,28 @@ Define the exact gaps between current AegisPy behavior and a hardened real-engin
 - Linux Landlock: https://man7.org/linux/man-pages/man7/landlock.7.html
 - Linux cgroup v2: https://docs.kernel.org/admin-guide/cgroup-v2.html
 
-## Required Engineering Changes
+## Remaining Public Gaps
 
-1. Real interpreter path
+1. Browser real-engine execution
 
-- Replace simulation-default execution with real CPython engine execution in server and browser paths.
+- Replace the browser simulated subset with a real browser Python engine path.
 
 2. Enforced isolation profile
 
-- Bind worker execution to seccomp, namespace, cgroup, and rlimit controls.
+- Deepen worker execution enforcement for seccomp, namespace, cgroup, and rlimit controls.
 - Add microVM execution profile for hostile multi-tenant workloads.
 
 3. Capability boundary enforcement
 
-- Bind policy gates to real runtime resource handles for filesystem, network, and environment access.
+- Extend runtime-bound policy coverage across the supported capability surface and keep audits stable.
 
 4. Determinism and replay
 
-- Implement runtime clock and RNG controls with replay hash receipts.
+- Expand deterministic replay coverage from targeted proofs into a larger compatibility corpus.
 
 5. Supply-chain integrity
 
-- Produce SBOM and signed provenance for released engine artifacts.
+- Keep SBOM and signed provenance verification in the mandatory release path.
 
 6. Adversarial testing
 

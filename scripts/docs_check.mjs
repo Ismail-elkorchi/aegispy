@@ -14,7 +14,14 @@ function ensureDir(p) {
 
 function main() {
   const required = [
+    "docs/index.md",
     "docs/architecture.md",
+    "docs/tutorial/first-run.md",
+    "docs/how-to/choose-a-host.md",
+    "docs/how-to/troubleshoot-common-failures.md",
+    "docs/reference/runtime-api.md",
+    "docs/reference/profiles.md",
+    "docs/maintainers/ci-and-governance.md",
     "docs/security.md",
     "docs/gates.md",
     "docs/runbook.md",

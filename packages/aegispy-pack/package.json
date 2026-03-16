@@ -10,6 +10,6 @@
     }
   },
   "scripts": {
-    "test": "cd ../.. && pnpm vitest run packages/aegispy-pack/test/*.test.ts"
+    "test": "cd ../.. && pnpm vitest run packages/aegispy-pack/test"
   }
 }
