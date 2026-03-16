@@ -91,7 +91,7 @@ function main() {
           });
         }
       }
-      if (hosts?.browser?.profile !== "browser-subset") {
+      if (hosts?.browser?.profile !== "browser-real-engine") {
         failures.push({
           error: "agent_workload_corpus_browser_profile_invalid",
         });

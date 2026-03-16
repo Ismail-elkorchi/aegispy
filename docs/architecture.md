@@ -17,7 +17,9 @@
 3. `node`, `deno`, and `bun` default to process transport backed by the Rust worker.
 4. The WASI worker imports the shipped runtime `aegispy` module from WASI Python and serves guest capability calls through runtime request/response dispatch to the host ABI on the fixed `component-wit` channel.
 5. The server-hardened path enforces runtime-bound capability policy plus limits for wall time, memory marker, and output bytes.
-6. The browser-subset path uses the same request/response contract but remains a simulated timeout-bounded subset rather than a real browser Python engine.
+6. The browser real-engine path uses the same request/response contract, runs a
+   worker-backed Python engine, and keeps filesystem, HTTP, and environment
+   access denied at the runtime boundary.
 7. Runtime returns `RunResult` with `meta` and `audit`.
 
 ## Capability Channel

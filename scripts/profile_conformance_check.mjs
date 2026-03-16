@@ -99,8 +99,8 @@ function main() {
   }
 
   if (browser) {
-    if (browser.profile !== "browser-subset")
-      failures.push({ error: "browser_profile_not_subset" });
+    if (browser.profile !== "browser-real-engine")
+      failures.push({ error: "browser_profile_not_real_engine" });
     if (browser.hardened !== false)
       failures.push({ error: "browser_hardened_flag_not_false" });
     if (
@@ -109,7 +109,7 @@ function main() {
       browser.capabilityModel.http !== false ||
       browser.capabilityModel.env !== false
     ) {
-      failures.push({ error: "browser_capability_subset_shape_invalid" });
+      failures.push({ error: "browser_capability_shape_invalid" });
     }
   }
 
@@ -127,9 +127,9 @@ function main() {
         failures.push({ error: "host_parity_deno_profile_invalid" });
       if (runs.bun?.profile !== "server-hardened")
         failures.push({ error: "host_parity_bun_profile_invalid" });
-      if (runs.browser?.profile !== "browser-subset")
+      if (runs.browser?.profile !== "browser-real-engine")
         failures.push({ error: "host_parity_browser_profile_invalid" });
-      if (runs.browser?.exceptionTag !== "browser-subset")
+      if (runs.browser?.exceptionTag !== null)
         failures.push({ error: "host_parity_browser_exception_tag_invalid" });
     }
   }
@@ -145,7 +145,7 @@ function main() {
         requiredCapabilityChannel: "component-wit",
         requiredIsolationProfile: "strict",
       },
-      browserSubset: {
+      browserRealEngine: {
         hosts: ["browser"],
         requiredTransport: "worker",
         unsupportedCapabilities: ["fs", "http", "env"],

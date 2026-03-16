@@ -214,9 +214,9 @@ const corpusCases: CorpusCase[] = [
         return { pass: true, exceptionTag: null, reason: null };
       }
       return {
-        pass: true,
-        exceptionTag: "browser-subset-semantic-gap",
-        reason: "browser_simulated_stdlib_semantics",
+        pass: false,
+        exceptionTag: null,
+        reason: "browser_stdlib_digest_missing",
       };
     },
   },
@@ -253,8 +253,8 @@ const corpusCases: CorpusCase[] = [
         errorCode(result) === "AEG-UNSUPPORTED-HOST";
       return {
         pass,
-        exceptionTag: "browser-subset",
-        reason: pass ? null : "browser_subset_rejection_missing",
+        exceptionTag: "browser-capability-limited",
+        reason: pass ? null : "browser_capability_rejection_missing",
       };
     },
   },
@@ -284,8 +284,8 @@ const corpusCases: CorpusCase[] = [
         errorCode(result) === "AEG-UNSUPPORTED-HOST";
       return {
         pass,
-        exceptionTag: "browser-subset",
-        reason: pass ? null : "browser_subset_rejection_missing",
+        exceptionTag: "browser-capability-limited",
+        reason: pass ? null : "browser_capability_rejection_missing",
       };
     },
   },
@@ -335,13 +335,11 @@ const corpusCases: CorpusCase[] = [
       };
     },
     validateBrowser(result) {
-      const pass =
-        result.status === "error" &&
-        errorCode(result) === "AEG-UNSUPPORTED-HOST";
+      const pass = isPolicyDenied(result);
       return {
         pass,
-        exceptionTag: "browser-subset",
-        reason: pass ? null : "browser_subset_rejection_missing",
+        exceptionTag: null,
+        reason: pass ? null : "fs_default_denial_missing",
       };
     },
   },
@@ -374,8 +372,8 @@ const corpusCases: CorpusCase[] = [
         errorCode(result) === "AEG-UNSUPPORTED-HOST";
       return {
         pass,
-        exceptionTag: "browser-subset",
-        reason: pass ? null : "browser_subset_rejection_missing",
+        exceptionTag: "browser-capability-limited",
+        reason: pass ? null : "browser_capability_rejection_missing",
       };
     },
   },
@@ -398,13 +396,10 @@ const corpusCases: CorpusCase[] = [
       };
     },
     validateBrowser(result) {
-      const code = errorCode(result);
-      const pass =
-        result.status === "error" &&
-        (code === "AEG-POLICY-DENIED" || code === "AEG-UNSUPPORTED-HOST");
+      const pass = isPolicyDenied(result);
       return {
         pass,
-        exceptionTag: code === "AEG-UNSUPPORTED-HOST" ? "browser-subset" : null,
+        exceptionTag: null,
         reason: pass ? null : "env_default_denial_missing",
       };
     },
@@ -706,7 +701,7 @@ describe("bun adapter parity", () => {
         serverPassRateMin,
       );
     }
-    expect(hostSummary.browser.profile).toBe("browser-subset");
+    expect(hostSummary.browser.profile).toBe("browser-real-engine");
 
     const corpusOk =
       hostSummary.node.passRate >= serverPassRateMin &&
@@ -737,10 +732,7 @@ describe("bun adapter parity", () => {
         serverPassRateMin,
       },
       hosts: hostSummary,
-      allowedBrowserExceptionTags: [
-        "browser-subset",
-        "browser-subset-semantic-gap",
-      ],
+      allowedBrowserExceptionTags: ["browser-capability-limited"],
       cases: caseResults,
     });
 
@@ -913,7 +905,7 @@ describe("bun adapter parity", () => {
           termination: parityCase.results.browser.termination,
           status: parityCase.results.browser.status,
           capabilityChannel: parityCase.results.browser.capabilityChannel,
-          exceptionTag: "browser-subset",
+          exceptionTag: null,
         },
       },
       corpus: {

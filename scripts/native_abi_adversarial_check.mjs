@@ -115,7 +115,7 @@ function main() {
       }
     }
 
-    if (hosts?.browser?.profile !== "browser-subset") {
+    if (hosts?.browser?.profile !== "browser-real-engine") {
       failures.push({
         error: "adversarial_browser_profile_invalid",
       });

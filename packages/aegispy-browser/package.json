@@ -14,6 +14,8 @@
     "test:e2e": "cd ../.. && pnpm vitest run packages/aegispy-browser/test/e2e/browser-run.test.ts"
   },
   "dependencies": {
-    "@aegispy/core": "workspace:*"
+    "@aegispy/core": "workspace:*",
+    "@aegispy/pack": "workspace:*",
+    "pyodide": "^0.29.3"
   }
 }

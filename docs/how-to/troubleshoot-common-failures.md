@@ -4,8 +4,8 @@
 
 Cause:
 
-- the `browser-subset` profile does not expose filesystem, HTTP, or environment
-  capabilities
+- the `browser-real-engine` profile does not expose filesystem, HTTP, or
+  environment capabilities
 
 Fix:
 
@@ -51,7 +51,7 @@ Fix:
 Cause:
 
 - `node`, `deno`, and `bun` use the `server-hardened` profile, while `browser`
-  uses the `browser-subset` profile
+  uses the experimental `browser-real-engine` profile
 
 Fix:
 

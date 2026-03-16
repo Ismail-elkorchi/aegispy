@@ -20,7 +20,7 @@
 - `pnpm run test:node`
 - `pnpm run test:deno`
 - `pnpm run test:bun`
-- `pnpm run test:browser-subset`
+- `pnpm run test:browser`
 - `pnpm run test:server-hosts`
 - `pnpm run test:host-contracts`
   - prepares the real worker/component runtime surface before running the
