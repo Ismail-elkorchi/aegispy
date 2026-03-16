@@ -73,10 +73,11 @@ describe("protocol framing", () => {
       fc.property(fc.jsonValue(), (value) => {
         const encoded = encodeJsonFrame(value);
         const decoded = decodeFrames(encoded);
+        const expected = JSON.parse(JSON.stringify(value)) as unknown;
 
         expect(decoded.frames).toHaveLength(1);
         expect(decoded.remaining).toHaveLength(0);
-        expect(decodeJsonFrame(decoded.frames[0])).toEqual(value);
+        expect(decodeJsonFrame(decoded.frames[0])).toEqual(expected);
       }),
       { numRuns: 100 },
     );

@@ -1430,9 +1430,7 @@ fn execute_http_get(url: &str, max_bytes: u64, timeout_ms: u64) -> Result<String
         .limit(max_bytes.saturating_add(1))
         .read_to_vec()
         .map_err(|error| match error {
-            ureq::Error::BodyExceedsLimit(_) => {
-                "http_response_bytes_exceeded".to_string()
-            }
+            ureq::Error::BodyExceedsLimit(_) => "http_response_bytes_exceeded".to_string(),
             other => format!("http_read_failed:{other}"),
         })?;
     Ok(String::from_utf8_lossy(&body).to_string())
