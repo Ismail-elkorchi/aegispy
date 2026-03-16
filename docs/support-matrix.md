@@ -39,6 +39,10 @@ Generated workload coverage is grouped into:
 - `policy`
 - `resource-limits`
 
+The compatibility gate currently enforces a 28-workload cross-host corpus plus
+5 pinned package fixtures, with 3 of those fixtures executed through the
+browser real-engine path.
+
 ## Stable Reason Codes
 
 - `supported` for workloads that satisfy the contract
@@ -60,7 +64,8 @@ Generated workload coverage is grouped into:
 - `artifacts/compat/agent-workload-corpus.json`
 - `artifacts/compat/workload-compatibility-matrix.json`
 - `artifacts/compat/package-fixture-lockfiles.json` now mixes
-  `metadata-only` and `browser-executed` package-fixture proof
+  `metadata-only` proof with browser-executed fixture families for `micropip`,
+  `packaging`, and `jinja2` plus `markupsafe`
 - `artifacts/security/replay-attestation.json`
 - `artifacts/security/browser-integrity-fuzz.json`
 - `artifacts/security/native-abi-adversarial.json`
