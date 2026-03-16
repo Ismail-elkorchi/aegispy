@@ -38,6 +38,34 @@ const replayWorkloads: ReplayWorkload[] = [
       'print("-".join(str(int(random.random() * 1000)) for _ in range(3)))',
     ].join("\n"),
   },
+  {
+    workloadId: "math-random-batch",
+    code: [
+      "import math",
+      "import random",
+      "values = [round(random.random() * 9 + 1, 6) for _ in range(4)]",
+      'print(",".join(f"{math.sqrt(value):.6f}" for value in values))',
+    ].join("\n"),
+  },
+  {
+    workloadId: "statistics-random-batch",
+    code: [
+      "import random",
+      "import statistics",
+      "values = [round(random.random() * 100, 3) for _ in range(5)]",
+      'print(f"{statistics.mean(values):.3f}")',
+      'print(f"{statistics.pvariance(values):.3f}")',
+    ].join("\n"),
+  },
+  {
+    workloadId: "hashlib-random-digest",
+    code: [
+      "import hashlib",
+      "import random",
+      'payload = ",".join(f"{random.random():.8f}" for _ in range(4)).encode()',
+      "print(hashlib.sha256(payload).hexdigest())",
+    ].join("\n"),
+  },
 ];
 
 function makeRequest(
@@ -126,8 +154,16 @@ describe("replay attestation", () => {
           hostCapabilityChannel = capabilityChannel(first);
         }
 
-        expect(firstHash).toBe(secondHash);
-        expect(firstHash).not.toBe(thirdHash);
+        if (firstHash !== secondHash) {
+          throw new Error(
+            `replay hash mismatch for ${host}:${workload.workloadId}: ${firstHash} != ${secondHash}`,
+          );
+        }
+        if (firstHash === thirdHash) {
+          throw new Error(
+            `replay hash did not change for ${host}:${workload.workloadId}: ${firstHash}`,
+          );
+        }
 
         workloads.push({
           workloadId: workload.workloadId,

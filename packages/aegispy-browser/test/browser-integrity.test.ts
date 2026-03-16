@@ -11,6 +11,10 @@ import { resolveLockfile } from "../../aegispy-pack/src/index";
 import { writeArtifact } from "./helpers/artifact";
 
 const invariants = ["INV-FEAT-0025", "INV-SECU-0007"];
+const browserIntegrityPackageSeed = 0x5eed3001;
+const browserIntegrityAssetSeed = 0x5eed3002;
+const browserIntegrityPackageIterations = 60;
+const browserIntegrityAssetIterations = 60;
 
 function makeBrowserRequest(code: string) {
   return {
@@ -222,7 +226,10 @@ describe("browser integrity", () => {
           expect(result.ok).toBe(scenario === "clean");
         },
       ),
-      { numRuns: 60 },
+      {
+        numRuns: browserIntegrityPackageIterations,
+        seed: browserIntegrityPackageSeed,
+      },
     );
 
     await fc.assert(
@@ -267,7 +274,10 @@ describe("browser integrity", () => {
           expect(result.ok).toBe(scenario === "clean");
         },
       ),
-      { numRuns: 60 },
+      {
+        numRuns: browserIntegrityAssetIterations,
+        seed: browserIntegrityAssetSeed,
+      },
     );
 
     expect(cleanPackageCases).toBeGreaterThan(0);
@@ -280,8 +290,18 @@ describe("browser integrity", () => {
     writeArtifact("artifacts/security/browser-integrity-fuzz.json", {
       ok: true,
       invariants,
+      seedHex: `${browserIntegrityPackageSeed.toString(16)}${browserIntegrityAssetSeed.toString(16)}`,
+      iterations: packageRuns + assetRuns,
       packageRuns,
       assetRuns,
+      categories: {
+        cleanPackageInputs: cleanPackageCases,
+        tamperedPackageInputs: tamperedPackageCases,
+        missingPackageInputs: missingPackageCases,
+        cleanAssetInputs: cleanAssetCases,
+        tamperedAssetInputs: tamperedAssetCases,
+        missingAssetInputs: missingAssetCases,
+      },
       cleanPackageCases,
       tamperedPackageCases,
       missingPackageCases,

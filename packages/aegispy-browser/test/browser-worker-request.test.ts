@@ -4,6 +4,8 @@ import { normalizeBrowserWorkerRequest } from "../src/runtime/browser-worker-req
 import { writeArtifact } from "./helpers/artifact";
 
 const invariants = ["INV-FEAT-0026", "INV-SECU-0008"];
+const workerInputFuzzSeed = 0x5eed2001;
+const workerInputFuzzIterations = 180;
 
 function validWorkerRequest() {
   return {
@@ -109,7 +111,7 @@ describe("browser worker request", () => {
           }
         },
       ),
-      { numRuns: 180 },
+      { numRuns: workerInputFuzzIterations, seed: workerInputFuzzSeed },
     );
 
     expect(validCases).toBeGreaterThan(0);
@@ -122,7 +124,17 @@ describe("browser worker request", () => {
     writeArtifact("artifacts/security/browser-input-fuzz.json", {
       ok: true,
       invariants,
-      runs: 180,
+      seedHex: workerInputFuzzSeed.toString(16),
+      iterations: workerInputFuzzIterations,
+      runs: workerInputFuzzIterations,
+      categories: {
+        validInputs: validCases,
+        invalidInputs: invalidCases,
+        packageInputs: packageCases,
+        assetBaseUrlInputs: assetBaseUrlCases,
+        invalidPackageInputs: invalidPackageCases,
+        invalidAssetBaseUrlInputs: invalidAssetBaseUrlCases,
+      },
       validCases,
       invalidCases,
       packageCases,

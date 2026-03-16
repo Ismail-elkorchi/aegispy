@@ -13,6 +13,8 @@ import { preflightRuntimeRequest } from "../src/runtime/preflight";
 import { writeArtifact } from "./helpers/artifact";
 
 const invariants = ["INV-FEAT-0027", "INV-SECU-0009"];
+const runtimeEnvelopeFuzzSeed = 0x5eed4001;
+const runtimeEnvelopeFuzzIterations = 180;
 
 function runtimeCapabilities(host: HostKind): RuntimeCapabilities {
   return {
@@ -192,7 +194,7 @@ describe("runtime envelope fuzz", () => {
           }
         },
       ),
-      { numRuns: 180 },
+      { numRuns: runtimeEnvelopeFuzzIterations, seed: runtimeEnvelopeFuzzSeed },
     );
 
     expect(validCases).toBeGreaterThan(0);
@@ -204,7 +206,16 @@ describe("runtime envelope fuzz", () => {
     writeArtifact("artifacts/security/runtime-envelope-fuzz.json", {
       ok: true,
       invariants,
-      runs: 180,
+      seedHex: runtimeEnvelopeFuzzSeed.toString(16),
+      iterations: runtimeEnvelopeFuzzIterations,
+      runs: runtimeEnvelopeFuzzIterations,
+      categories: {
+        validInputs: validCases,
+        invalidInputs: invalidCases,
+        preflightOkInputs: preflightOkCases,
+        preflightDeniedInputs: preflightDeniedCases,
+        browserDeniedInputs: browserDeniedCases,
+      },
       validCases,
       invalidCases,
       preflightOkCases,
