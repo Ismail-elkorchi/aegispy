@@ -58,10 +58,13 @@
   `supportedFailures` and `unsupportedByProfileFailures` must be empty in the
   generated compatibility artifacts.
 - Security proof writes `artifacts/security/replay-attestation.json`,
+  `artifacts/security/adversarial-suite.json`,
   `artifacts/security/browser-input-fuzz.json`,
   `artifacts/security/browser-integrity-fuzz.json`,
   `artifacts/security/runtime-envelope-fuzz.json`, and
   `artifacts/security/protocol-framing-fuzz.json`.
+- The replay artifact records a three-workload cross-host corpus, and the
+  adversarial suite records strict-profile hostile-boundary denials.
 - Contributors can treat those artifacts as generated proof of the public
   runtime and security claims rather than as part of the runtime API itself.
 

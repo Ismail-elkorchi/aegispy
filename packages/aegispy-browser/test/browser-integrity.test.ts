@@ -187,67 +187,107 @@ describe("browser integrity", () => {
   it("keeps lockfile and engine verification stable across fuzzed mutations", async () => {
     let packageRuns = 0;
     let assetRuns = 0;
+    let cleanPackageCases = 0;
+    let tamperedPackageCases = 0;
+    let missingPackageCases = 0;
+    let cleanAssetCases = 0;
+    let tamperedAssetCases = 0;
+    let missingAssetCases = 0;
 
     await fc.assert(
       fc.asyncProperty(
-        fc.boolean(),
-        fc.boolean(),
-        async (mutateHash, omitPackage) => {
+        fc.constantFrom("clean", "tampered", "missing"),
+        async (scenario) => {
           packageRuns += 1;
 
           const lockfile = baseLockfile();
-          if (mutateHash) {
+          if (scenario === "tampered") {
             lockfile.entries[0] = {
               ...lockfile.entries[0],
               sha256: "f".repeat(64),
             };
           }
 
-          const packages = omitPackage ? ["jinja2"] : ["micropip"];
+          const packages = scenario === "missing" ? ["jinja2"] : ["micropip"];
           const result = await selectBrowserPackages(packages, lockfile);
 
-          expect(result.ok).toBe(!(mutateHash || omitPackage));
+          if (scenario === "clean") {
+            cleanPackageCases += 1;
+          } else if (scenario === "tampered") {
+            tamperedPackageCases += 1;
+          } else {
+            missingPackageCases += 1;
+          }
+
+          expect(result.ok).toBe(scenario === "clean");
         },
       ),
-      { numRuns: 40 },
+      { numRuns: 60 },
     );
 
     await fc.assert(
-      fc.asyncProperty(fc.boolean(), async (tamperAsset) => {
-        assetRuns += 1;
+      fc.asyncProperty(
+        fc.constantFrom("clean", "tampered", "missing"),
+        async (scenario) => {
+          assetRuns += 1;
 
-        const manifest: BrowserEngineAssetManifest = {
-          engine: "pyodide",
-          version: "0.test",
-          files: {
-            "pyodide-lock.json": sha256Hex('{"name":"lock"}'),
-            "pyodide.asm.wasm": sha256Hex(new Uint8Array([1, 2, 3, 4])),
-            "python_stdlib.zip": sha256Hex(new Uint8Array([5, 6, 7, 8])),
-          },
-        };
+          const manifest: BrowserEngineAssetManifest = {
+            engine: "pyodide",
+            version: "0.test",
+            files: {
+              "pyodide-lock.json": sha256Hex('{"name":"lock"}'),
+              "pyodide.asm.wasm": sha256Hex(new Uint8Array([1, 2, 3, 4])),
+              "python_stdlib.zip": sha256Hex(new Uint8Array([5, 6, 7, 8])),
+            },
+          };
 
-        const result = await verifyBrowserEngineAssets(
-          "https://cdn.example.test/pyodide",
-          manifest,
-          makeFetchStub({
-            "pyodide-lock.json": '{"name":"lock"}',
-            "pyodide.asm.wasm": tamperAsset
-              ? new Uint8Array([9, 9, 9, 9])
-              : new Uint8Array([1, 2, 3, 4]),
-            "python_stdlib.zip": new Uint8Array([5, 6, 7, 8]),
-          }),
-        );
+          const result = await verifyBrowserEngineAssets(
+            "https://cdn.example.test/pyodide",
+            manifest,
+            makeFetchStub({
+              "pyodide-lock.json": '{"name":"lock"}',
+              "pyodide.asm.wasm":
+                scenario === "tampered"
+                  ? new Uint8Array([9, 9, 9, 9])
+                  : new Uint8Array([1, 2, 3, 4]),
+              ...(scenario === "missing"
+                ? {}
+                : { "python_stdlib.zip": new Uint8Array([5, 6, 7, 8]) }),
+            }),
+          );
 
-        expect(result.ok).toBe(!tamperAsset);
-      }),
-      { numRuns: 40 },
+          if (scenario === "clean") {
+            cleanAssetCases += 1;
+          } else if (scenario === "tampered") {
+            tamperedAssetCases += 1;
+          } else {
+            missingAssetCases += 1;
+          }
+
+          expect(result.ok).toBe(scenario === "clean");
+        },
+      ),
+      { numRuns: 60 },
     );
+
+    expect(cleanPackageCases).toBeGreaterThan(0);
+    expect(tamperedPackageCases).toBeGreaterThan(0);
+    expect(missingPackageCases).toBeGreaterThan(0);
+    expect(cleanAssetCases).toBeGreaterThan(0);
+    expect(tamperedAssetCases).toBeGreaterThan(0);
+    expect(missingAssetCases).toBeGreaterThan(0);
 
     writeArtifact("artifacts/security/browser-integrity-fuzz.json", {
       ok: true,
       invariants,
       packageRuns,
       assetRuns,
+      cleanPackageCases,
+      tamperedPackageCases,
+      missingPackageCases,
+      cleanAssetCases,
+      tamperedAssetCases,
+      missingAssetCases,
     });
   });
 });

@@ -54,7 +54,8 @@ target hardening posture for untrusted coding-agent execution.
 
 4. Determinism and replay
 
-- Broaden replay coverage beyond the current cross-host attestation corpus.
+- Broaden replay coverage beyond the current three-workload cross-host
+  attestation corpus.
 
 5. Supply-chain integrity
 
@@ -63,6 +64,8 @@ target hardening posture for untrusted coding-agent execution.
 6. Adversarial testing
 
 - Keep protocol-framing, runtime-envelope, browser-input, and native-ABI fuzz gates growing with the runtime surface.
+- Keep the adversarial suite growing beyond the current traversal, output
+  abuse, strict env, and strict stdout-envelope cases.
 - Gate releases on sandbox escape regression suites and the required security-claim gate.
 
 ## Claim Publication Rule
