@@ -2,7 +2,6 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { createRuntime } from "../../src/index";
-import { computeReplayHash } from "../../../aegispy-core/src/determinism/index";
 import type { RunRequest } from "@aegispy/core";
 import { writeArtifact } from "../helpers/artifact";
 
@@ -289,30 +288,6 @@ describe("node e2e", () => {
         deterministicResultB.stdoutUtf8,
       ],
       nondeterministicAudit: nondeterministicResult.meta.audit,
-    });
-
-    writeArtifact("artifacts/e2e/replay-attestation.json", {
-      ok: true,
-      invariants: ["INV-FEAT-0024"],
-      entries: [
-        {
-          caseId: "same-seed",
-          hashA: computeReplayHash(deterministicResultA),
-          hashB: computeReplayHash(deterministicResultB),
-          match:
-            computeReplayHash(deterministicResultA) ===
-            computeReplayHash(deterministicResultB),
-        },
-        {
-          caseId: "different-seed",
-          hashA: computeReplayHash(deterministicResultA),
-          hashB: computeReplayHash({
-            ...deterministicResultA,
-            stdoutUtf8: "different",
-          }),
-          match: false,
-        },
-      ],
     });
   }, 600_000);
 

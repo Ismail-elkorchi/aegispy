@@ -1,32 +1,11 @@
-import type { DeterminismConfig } from "@aegispy/core";
+import {
+  normalizeBrowserWorkerRequest,
+  normalizeBrowserWorkerResult,
+  type BrowserWorkerRunRequest,
+  type BrowserWorkerRunResult,
+} from "./browser-worker-request";
 
-export interface BrowserWorkerRunRequest {
-  requestId: string;
-  code: string;
-  stdinUtf8: string;
-  determinism: DeterminismConfig;
-  assetBaseUrl?: string;
-  packages: string[];
-}
-
-interface BrowserWorkerRunResultOk {
-  requestId: string;
-  status: "ok";
-  stdoutUtf8: string;
-  stderrUtf8: string;
-}
-
-interface BrowserWorkerRunResultError {
-  requestId: string;
-  status: "error";
-  stdoutUtf8: string;
-  stderrUtf8: string;
-  errorMessage: string;
-}
-
-export type BrowserWorkerRunResult =
-  | BrowserWorkerRunResultOk
-  | BrowserWorkerRunResultError;
+export type { BrowserWorkerRunRequest, BrowserWorkerRunResult };
 
 interface WorkerPortHandle {
   postMessage(payload: BrowserWorkerRunRequest): void;
@@ -108,6 +87,15 @@ export class BrowserWorkerSupervisor {
 
   private pending = new Map<string, PendingRequest>();
 
+  private rejectPending(message: string): void {
+    const pendingEntries = Array.from(this.pending.values());
+    this.pending.clear();
+    for (const pending of pendingEntries) {
+      clearTimeout(pending.timeoutHandle);
+      pending.reject(new Error(message));
+    }
+  }
+
   public constructor(
     createWorkerPort: WorkerPortFactory = defaultWorkerPortFactory,
   ) {
@@ -122,7 +110,13 @@ export class BrowserWorkerSupervisor {
     const token = ++this.workerToken;
     this.workerPromise = this.createWorkerPort().then((worker) => {
       worker.onMessage((payload) => {
-        this.resolvePending(payload.requestId, payload);
+        const normalized = normalizeBrowserWorkerResult(payload);
+        if (!normalized.ok) {
+          this.workerPromise = null;
+          this.rejectPending("browser worker returned invalid payload");
+          return;
+        }
+        this.resolvePending(normalized.value.requestId, normalized.value);
       });
       worker.onError((error) => {
         if (token !== this.workerToken) {
@@ -130,13 +124,8 @@ export class BrowserWorkerSupervisor {
         }
         const message =
           error instanceof Error ? error.message : "browser worker failure";
-        const pendingEntries = Array.from(this.pending.values());
-        this.pending.clear();
         this.workerPromise = null;
-        for (const pending of pendingEntries) {
-          clearTimeout(pending.timeoutHandle);
-          pending.reject(new Error(message));
-        }
+        this.rejectPending(message);
       });
       return worker;
     });
@@ -148,6 +137,17 @@ export class BrowserWorkerSupervisor {
     request: BrowserWorkerRunRequest,
     wallMs: number,
   ): Promise<BrowserWorkerRunResult> {
+    const normalizedRequest = normalizeBrowserWorkerRequest(request);
+    if (!normalizedRequest.ok) {
+      return {
+        requestId: request.requestId,
+        status: "error",
+        stdoutUtf8: "",
+        stderrUtf8: "invalid browser worker request",
+        errorMessage: normalizedRequest.issues.join(","),
+      };
+    }
+
     const worker = await this.worker();
 
     const resultPromise = new Promise<BrowserWorkerRunResult>(
@@ -177,7 +177,7 @@ export class BrowserWorkerSupervisor {
       },
     );
 
-    worker.postMessage(request);
+    worker.postMessage(normalizedRequest.value);
     return resultPromise;
   }
 

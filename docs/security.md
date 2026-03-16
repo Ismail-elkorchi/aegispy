@@ -28,6 +28,10 @@
 - `provenance.json` records source script and build timestamp.
 - repository verification publishes matching integrity evidence for shipped
   engine artifacts.
+- browser package requests now fail closed unless they match a verified
+  `packageLockfile`.
+- browser runs with `assetBaseUrl` now verify pinned Pyodide asset hashes
+  before guest code runs.
 
 ## Security Evidence
 
@@ -38,6 +42,11 @@
 - `artifacts/security/adversarial-suite.json`
 - `artifacts/security/native-abi-adversarial.json`
 - `artifacts/security/native-abi-fuzz.json`
+- `artifacts/security/replay-attestation.json`
+- `artifacts/security/browser-input-fuzz.json`
+- `artifacts/security/browser-integrity-fuzz.json`
+- `artifacts/security/runtime-envelope-fuzz.json`
+- `artifacts/security/protocol-framing-fuzz.json`
 - `artifacts/security/supply-chain-sbom.json`
 - `artifacts/security/supply-chain-attestation.json`
 - `artifacts/security/provenance-verification.json`
@@ -54,3 +63,7 @@
 - INV-SECU-0005
 - INV-SECU-0006
 - INV-SECU-0007
+- INV-SECU-0008
+- INV-SECU-0009
+- INV-SECU-0010
+- INV-SECU-0011

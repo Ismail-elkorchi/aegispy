@@ -37,6 +37,8 @@
 
 - `bash scripts/release_claims_check` runs the release-grade claim gate and
   writes `artifacts/gates/release-claims.json`.
+- `bash scripts/security_claims_check` runs the security-claim gate and writes
+  `artifacts/gates/security-claims-check.json`.
 
 ## Release Commands
 
@@ -52,6 +54,11 @@
 - Compatibility proof specifically writes `artifacts/compat/agent-workload-corpus.json`,
   `artifacts/compat/workload-compatibility-matrix.json`, and
   `artifacts/compat/package-fixture-lockfiles.json`.
+- Security proof writes `artifacts/security/replay-attestation.json`,
+  `artifacts/security/browser-input-fuzz.json`,
+  `artifacts/security/browser-integrity-fuzz.json`,
+  `artifacts/security/runtime-envelope-fuzz.json`, and
+  `artifacts/security/protocol-framing-fuzz.json`.
 - Contributors can treat those artifacts as generated proof of the public
   runtime and security claims rather than as part of the runtime API itself.
 

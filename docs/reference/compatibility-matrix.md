@@ -56,7 +56,6 @@ That unsupported status is expected and recorded in the generated matrix via
 ## Package Fixture Metadata
 
 `artifacts/compat/package-fixture-lockfiles.json` contains pinned lockfile
-metadata for representative pure-Python package families. Those fixtures are
-currently `metadata-only`; they help keep the planned package-compatibility
-surface explicit without claiming runtime execution support that is not yet in
-the public contract.
+metadata for representative pure-Python package families. The compatibility
+fixtures remain corpus metadata, and `browser-real-engine` package requests now
+fail closed unless they are backed by a verified `packageLockfile`.

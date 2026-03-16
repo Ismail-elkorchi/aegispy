@@ -59,6 +59,8 @@ Generated workload coverage is grouped into:
 - `artifacts/compat/agent-workload-corpus.json`
 - `artifacts/compat/workload-compatibility-matrix.json`
 - `artifacts/compat/package-fixture-lockfiles.json`
+- `artifacts/security/replay-attestation.json`
+- `artifacts/security/browser-integrity-fuzz.json`
 - `artifacts/security/native-abi-adversarial.json`
 - `artifacts/security/native-abi-fuzz.json`
 - `artifacts/security/microvm-execution.json` when a compatible self-hosted

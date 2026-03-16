@@ -4,6 +4,11 @@ import {
   preflightRuntimeRequest,
   withRuntimeBoundaryAudit,
 } from "../../../aegispy-core/src/runtime/preflight";
+import {
+  pyodideEngineAssetManifest,
+  selectBrowserPackages,
+  verifyBrowserEngineAssets,
+} from "./browser-integrity";
 import type {
   AegisPyRuntime,
   CreateRuntimeOptions,
@@ -50,6 +55,18 @@ function timeoutResult(wallMs: number): RunResult {
 }
 
 function engineErrorResult(message: string, startedTsMs: number): RunResult {
+  return engineErrorResultWithDetail(message, startedTsMs, {
+    host: "browser",
+  });
+}
+
+function engineErrorResultWithDetail(
+  message: string,
+  startedTsMs: number,
+  detail: Record<string, unknown>,
+): RunResult {
+  const terminalAuditDetail =
+    typeof detail.reason === "string" ? detail.reason : "engine_error";
   const endedTsMs = Date.now();
   return {
     status: "error",
@@ -65,11 +82,16 @@ function engineErrorResult(message: string, startedTsMs: number): RunResult {
       stdoutBytes: 0,
       stderrBytes: message.length,
       termination: "engine_error",
-      audit: [],
+      audit: [
+        {
+          seq: 1,
+          tsMs: startedTsMs,
+          kind: "engine_error",
+          detailJson: terminalAuditDetail,
+        },
+      ],
     },
-    error: makeAegisPyError("AEG-ENGINE", message, {
-      host: "browser",
-    }),
+    error: makeAegisPyError("AEG-ENGINE", message, detail),
   };
 }
 
@@ -120,6 +142,18 @@ export class BrowserRuntime implements AegisPyRuntime {
 
   private closed = false;
 
+  private integrityPromise: Promise<
+    | {
+        ok: true;
+        packages: string[];
+      }
+    | {
+        ok: false;
+        message: string;
+        detail: Record<string, unknown>;
+      }
+  > | null = null;
+
   public constructor(options: BrowserRuntimeOptions = {}) {
     this.options = {
       engine: options.engine ?? "pyodide",
@@ -143,6 +177,88 @@ export class BrowserRuntime implements AegisPyRuntime {
     };
   }
 
+  private ensureIntegrity(): Promise<
+    | {
+        ok: true;
+        packages: string[];
+      }
+    | {
+        ok: false;
+        message: string;
+        detail: Record<string, unknown>;
+      }
+  > {
+    if (this.integrityPromise !== null) {
+      return this.integrityPromise;
+    }
+
+    this.integrityPromise = selectBrowserPackages(
+      this.options.packages,
+      this.options.packageLockfile,
+    )
+      .then((selection) => {
+        if (!selection.ok) {
+          return {
+            ok: false as const,
+            message: "browser package integrity check failed",
+            detail: {
+              host: "browser",
+              reason: selection.failures[0] ?? "package_lockfile_invalid",
+              failures: selection.failures,
+            },
+          };
+        }
+
+        if (!this.options.assetBaseUrl) {
+          return {
+            ok: true as const,
+            packages: selection.packages,
+          };
+        }
+
+        return verifyBrowserEngineAssets(
+          this.options.assetBaseUrl,
+          pyodideEngineAssetManifest,
+        ).then((assetVerification) => {
+          if (!assetVerification.ok) {
+            return {
+              ok: false as const,
+              message: "browser engine integrity check failed",
+              detail: {
+                host: "browser",
+                assetBaseUrl: this.options.assetBaseUrl,
+                reason:
+                  assetVerification.failures[0] ??
+                  "engine_asset_verification_failed",
+                failures: assetVerification.failures,
+              },
+            };
+          }
+
+          return {
+            ok: true as const,
+            packages: selection.packages,
+          };
+        });
+      })
+      .catch((error) => {
+        return {
+          ok: false as const,
+          message: "browser engine integrity check failed",
+          detail: {
+            host: "browser",
+            reason: "engine_asset_verification_failed",
+            cause:
+              error instanceof Error
+                ? error.message
+                : "browser integrity error",
+          },
+        };
+      });
+
+    return this.integrityPromise;
+  }
+
   public async run(req: RunRequest): Promise<RunResult> {
     const capabilities = this.capabilities();
     const preflight = preflightRuntimeRequest(
@@ -157,14 +273,25 @@ export class BrowserRuntime implements AegisPyRuntime {
       return preflight.result;
     }
 
+    const startedTsMs = Date.now();
+    const integrity = await this.ensureIntegrity();
+    if (!integrity.ok) {
+      return withRuntimeBoundaryAudit(
+        capabilities,
+        engineErrorResultWithDetail(
+          integrity.message,
+          startedTsMs,
+          integrity.detail,
+        ),
+      );
+    }
+
     if (requiresRuntimeBoundaryFallback(preflight.request.code)) {
       return withRuntimeBoundaryAudit(
         capabilities,
         simulateRun(preflight.request),
       );
     }
-
-    const startedTsMs = Date.now();
 
     return this.supervisor
       .run(
@@ -174,7 +301,7 @@ export class BrowserRuntime implements AegisPyRuntime {
           stdinUtf8: req.stdinUtf8,
           determinism: req.determinism,
           assetBaseUrl: this.options.assetBaseUrl,
-          packages: this.options.packages,
+          packages: integrity.packages,
         },
         preflight.request.limits.time.wallMs,
       )
