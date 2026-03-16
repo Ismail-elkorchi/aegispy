@@ -31,19 +31,38 @@ function readEventPayload() {
 }
 
 async function githubGetJson(repoFullName, path, failures) {
+  let options = {};
+  if (
+    failures &&
+    typeof failures === "object" &&
+    !Array.isArray(failures) &&
+    "failures" in failures
+  ) {
+    options = failures;
+    failures = options.failures;
+  }
+
+  const recordFailures = options.recordFailures ?? true;
+
   if (typeof fetch !== "function") {
-    failures.push({ error: "fetch_unavailable_for_github_audit" });
+    if (recordFailures) {
+      failures.push({ error: "fetch_unavailable_for_github_audit" });
+    }
     return null;
   }
 
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
   if (!token) {
-    failures.push({ error: "missing_github_token_for_push_audit" });
+    if (recordFailures) {
+      failures.push({ error: "missing_github_token_for_push_audit" });
+    }
     return null;
   }
 
   if (!repoFullName) {
-    failures.push({ error: "missing_github_repository_for_push_audit" });
+    if (recordFailures) {
+      failures.push({ error: "missing_github_repository_for_push_audit" });
+    }
     return null;
   }
 
@@ -59,16 +78,22 @@ async function githubGetJson(repoFullName, path, failures) {
   );
 
   if (!response.ok) {
-    failures.push({
-      error: "github_push_audit_request_failed",
-      path,
-      status: response.status,
-      status_text: response.statusText,
-    });
+    if (recordFailures) {
+      failures.push({
+        error: "github_push_audit_request_failed",
+        path,
+        status: response.status,
+        status_text: response.statusText,
+      });
+    }
     return null;
   }
 
   return response.json();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getCurrentBranch() {
@@ -118,6 +143,28 @@ function listLocalCommitMessages() {
   const res = runGit(["log", "--format=%H%x1f%s%x1f%b%x1e", "-n", "20"]);
   if (!res.ok) return [];
   return parseCommitMessages(res.stdout);
+}
+
+function readCommitMessage(sha) {
+  if (!sha) return "";
+  const res = runGit(["show", "-s", "--format=%s%n%b", sha]);
+  if (!res.ok) return "";
+  return res.stdout.trim();
+}
+
+function extractPullNumberFromCommitMessage(message) {
+  if (!message) return null;
+  const mergeCommitMatch = message.match(/^Merge pull request #(\d+)\b/m);
+  if (mergeCommitMatch) {
+    return Number.parseInt(mergeCommitMatch[1], 10);
+  }
+
+  const squashMergeMatch = message.match(/\(#(\d+)\)\s*$/m);
+  if (squashMergeMatch) {
+    return Number.parseInt(squashMergeMatch[1], 10);
+  }
+
+  return null;
 }
 
 function validateBranch(headRef, failures) {
@@ -224,34 +271,83 @@ async function auditPushToMain(event, failures) {
     return [];
   }
 
-  const pulls = await githubGetJson(
-    repoFullName,
-    `/commits/${sha}/pulls?per_page=10`,
-    failures,
-  );
-  if (!Array.isArray(pulls)) {
-    failures.push({
-      error: "invalid_commit_pulls_response_for_main_audit",
-      sha,
-    });
-    return [];
+  const normalizeMergedMainPulls = (pulls) =>
+    pulls
+      .filter(
+        (pull) =>
+          pull &&
+          pull.base?.ref === "main" &&
+          typeof pull.merged_at === "string" &&
+          pull.merged_at.length > 0,
+      )
+      .map((pull) => ({
+        number: pull.number,
+        title: pull.title,
+        merged_at: pull.merged_at,
+        head_ref: pull.head?.ref || "",
+        merge_commit_sha: pull.merge_commit_sha || "",
+      }));
+
+  let mergedMainPulls = [];
+  const retryDelaysMs = [0, 3000, 7000, 15000];
+  for (let idx = 0; idx < retryDelaysMs.length; idx += 1) {
+    if (retryDelaysMs[idx] > 0) {
+      await sleep(retryDelaysMs[idx]);
+    }
+
+    const pulls = await githubGetJson(
+      repoFullName,
+      `/commits/${sha}/pulls?per_page=10`,
+      {
+        failures,
+        recordFailures: idx === retryDelaysMs.length - 1,
+      },
+    );
+    if (!Array.isArray(pulls)) {
+      if (idx === retryDelaysMs.length - 1) {
+        failures.push({
+          error: "invalid_commit_pulls_response_for_main_audit",
+          sha,
+        });
+      }
+      continue;
+    }
+
+    mergedMainPulls = normalizeMergedMainPulls(pulls);
+    if (mergedMainPulls.length > 0) {
+      break;
+    }
   }
 
-  const mergedMainPulls = pulls
-    .filter(
-      (pull) =>
-        pull &&
-        pull.base?.ref === "main" &&
-        typeof pull.merged_at === "string" &&
-        pull.merged_at.length > 0,
-    )
-    .map((pull) => ({
-      number: pull.number,
-      title: pull.title,
-      merged_at: pull.merged_at,
-      head_ref: pull.head?.ref || "",
-      merge_commit_sha: pull.merge_commit_sha || "",
-    }));
+  if (mergedMainPulls.length === 0) {
+    const fallbackPullNumber = extractPullNumberFromCommitMessage(
+      readCommitMessage(sha),
+    );
+    if (fallbackPullNumber !== null) {
+      const fallbackPull = await githubGetJson(
+        repoFullName,
+        `/pulls/${fallbackPullNumber}`,
+        failures,
+      );
+      if (
+        fallbackPull &&
+        fallbackPull.base?.ref === "main" &&
+        typeof fallbackPull.merged_at === "string" &&
+        fallbackPull.merged_at.length > 0 &&
+        fallbackPull.merge_commit_sha === sha
+      ) {
+        mergedMainPulls = normalizeMergedMainPulls([fallbackPull]);
+      } else if (fallbackPull) {
+        failures.push({
+          error: "fallback_pull_mismatch_for_main_audit",
+          sha,
+          pull_number: fallbackPullNumber,
+          base_ref: fallbackPull.base?.ref || "",
+          merge_commit_sha: fallbackPull.merge_commit_sha || "",
+        });
+      }
+    }
+  }
 
   if (mergedMainPulls.length === 0) {
     failures.push({

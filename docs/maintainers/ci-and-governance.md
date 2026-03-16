@@ -39,6 +39,8 @@
 - contributor-facing verification commands live in `docs/gates.md`
 - `pr-policy` audits pull request metadata and also verifies that each `main`
   push resolves back to a merged pull request
+- branch protection keeps pull requests and required status checks mandatory,
+  while still allowing a solo maintainer to self-merge a green pull request
 - repository-admin automation is intentionally maintained outside the product
   repo
 
