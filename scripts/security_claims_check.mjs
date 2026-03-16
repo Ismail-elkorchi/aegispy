@@ -59,6 +59,12 @@ const runtimeEnvelopeFuzzPath = path.join(
   "security",
   "runtime-envelope-fuzz.json",
 );
+const adversarialSuitePath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "adversarial-suite.json",
+);
 const protocolFramingFuzzPath = path.join(
   repoRoot,
   "artifacts",
@@ -285,27 +291,39 @@ function main() {
       failures.push({ error: "replay_attestation_host_coverage_invalid" });
     } else {
       for (const hostDoc of doc.hosts) {
-        if (!Array.isArray(hostDoc.cases)) {
-          failures.push({ error: "replay_attestation_cases_invalid" });
+        const expectedChannel =
+          hostDoc.host === "browser" ? "worker-timeout" : "component-wit";
+        if (hostDoc.capabilityChannel !== expectedChannel) {
+          failures.push({
+            error: "replay_attestation_channel_invalid",
+            host: hostDoc.host,
+          });
+        }
+        if (!Array.isArray(hostDoc.workloads) || hostDoc.workloads.length < 3) {
+          failures.push({ error: "replay_attestation_workloads_invalid" });
           continue;
         }
-        const sameSeed = hostDoc.cases.find(
-          (entry) => entry.caseId === "same-seed",
-        );
-        const differentSeed = hostDoc.cases.find(
-          (entry) => entry.caseId === "different-seed",
-        );
-        if (sameSeed?.match !== true) {
-          failures.push({
-            error: "replay_attestation_same_seed_mismatch",
-            host: hostDoc.host,
-          });
-        }
-        if (differentSeed?.match !== false) {
-          failures.push({
-            error: "replay_attestation_different_seed_mismatch",
-            host: hostDoc.host,
-          });
+        for (const workload of hostDoc.workloads) {
+          const sameSeed = workload?.cases?.find(
+            (entry) => entry.caseId === "same-seed",
+          );
+          const differentSeed = workload?.cases?.find(
+            (entry) => entry.caseId === "different-seed",
+          );
+          if (sameSeed?.match !== true) {
+            failures.push({
+              error: "replay_attestation_same_seed_mismatch",
+              host: hostDoc.host,
+              workloadId: workload?.workloadId ?? null,
+            });
+          }
+          if (differentSeed?.match !== false) {
+            failures.push({
+              error: "replay_attestation_different_seed_mismatch",
+              host: hostDoc.host,
+              workloadId: workload?.workloadId ?? null,
+            });
+          }
         }
       }
     }
@@ -319,11 +337,39 @@ function main() {
   } else {
     const doc = readJson(browserInputFuzzPath);
     if (doc.ok !== true) failures.push({ error: "browser_input_fuzz_not_ok" });
+    if (typeof doc.runs !== "number" || doc.runs < 180) {
+      failures.push({ error: "browser_input_fuzz_runs_missing" });
+    }
     if (typeof doc.validCases !== "number" || doc.validCases <= 0) {
       failures.push({ error: "browser_input_fuzz_valid_cases_missing" });
     }
     if (typeof doc.invalidCases !== "number" || doc.invalidCases <= 0) {
       failures.push({ error: "browser_input_fuzz_invalid_cases_missing" });
+    }
+    if (typeof doc.packageCases !== "number" || doc.packageCases <= 0) {
+      failures.push({ error: "browser_input_fuzz_package_cases_missing" });
+    }
+    if (
+      typeof doc.assetBaseUrlCases !== "number" ||
+      doc.assetBaseUrlCases <= 0
+    ) {
+      failures.push({ error: "browser_input_fuzz_asset_cases_missing" });
+    }
+    if (
+      typeof doc.invalidPackageCases !== "number" ||
+      doc.invalidPackageCases <= 0
+    ) {
+      failures.push({
+        error: "browser_input_fuzz_invalid_package_cases_missing",
+      });
+    }
+    if (
+      typeof doc.invalidAssetBaseUrlCases !== "number" ||
+      doc.invalidAssetBaseUrlCases <= 0
+    ) {
+      failures.push({
+        error: "browser_input_fuzz_invalid_asset_cases_missing",
+      });
     }
   }
 
@@ -336,11 +382,26 @@ function main() {
     const doc = readJson(browserIntegrityFuzzPath);
     if (doc.ok !== true)
       failures.push({ error: "browser_integrity_fuzz_not_ok" });
-    if (typeof doc.packageRuns !== "number" || doc.packageRuns <= 0) {
+    if (typeof doc.packageRuns !== "number" || doc.packageRuns < 60) {
       failures.push({ error: "browser_integrity_fuzz_package_runs_missing" });
     }
-    if (typeof doc.assetRuns !== "number" || doc.assetRuns <= 0) {
+    if (typeof doc.assetRuns !== "number" || doc.assetRuns < 60) {
       failures.push({ error: "browser_integrity_fuzz_asset_runs_missing" });
+    }
+    for (const field of [
+      "cleanPackageCases",
+      "tamperedPackageCases",
+      "missingPackageCases",
+      "cleanAssetCases",
+      "tamperedAssetCases",
+      "missingAssetCases",
+    ]) {
+      if (typeof doc[field] !== "number" || doc[field] <= 0) {
+        failures.push({
+          error: "browser_integrity_fuzz_case_coverage_missing",
+          field,
+        });
+      }
     }
   }
 
@@ -353,11 +414,72 @@ function main() {
     const doc = readJson(runtimeEnvelopeFuzzPath);
     if (doc.ok !== true)
       failures.push({ error: "runtime_envelope_fuzz_not_ok" });
+    if (typeof doc.runs !== "number" || doc.runs < 180) {
+      failures.push({ error: "runtime_envelope_fuzz_runs_missing" });
+    }
     if (typeof doc.validCases !== "number" || doc.validCases <= 0) {
       failures.push({ error: "runtime_envelope_fuzz_valid_cases_missing" });
     }
     if (typeof doc.invalidCases !== "number" || doc.invalidCases <= 0) {
       failures.push({ error: "runtime_envelope_fuzz_invalid_cases_missing" });
+    }
+    if (typeof doc.preflightOkCases !== "number" || doc.preflightOkCases <= 0) {
+      failures.push({ error: "runtime_envelope_fuzz_preflight_ok_missing" });
+    }
+    if (
+      typeof doc.preflightDeniedCases !== "number" ||
+      doc.preflightDeniedCases <= 0
+    ) {
+      failures.push({
+        error: "runtime_envelope_fuzz_preflight_denied_missing",
+      });
+    }
+    if (
+      typeof doc.browserDeniedCases !== "number" ||
+      doc.browserDeniedCases <= 0
+    ) {
+      failures.push({ error: "runtime_envelope_fuzz_browser_denied_missing" });
+    }
+  }
+
+  if (!fs.existsSync(adversarialSuitePath)) {
+    failures.push({
+      error: "missing_adversarial_suite_artifact",
+      path: "artifacts/security/adversarial-suite.json",
+    });
+  } else {
+    const doc = readJson(adversarialSuitePath);
+    if (doc.ok !== true) failures.push({ error: "adversarial_suite_not_ok" });
+    if (!Array.isArray(doc.cases) || doc.cases.length < 4) {
+      failures.push({ error: "adversarial_suite_case_count_invalid" });
+    } else {
+      for (const [caseId, termination] of [
+        ["fs-traversal", "policy_denied"],
+        ["output-abuse", "output_limit"],
+        ["env-strict-profile", "policy_denied"],
+        ["stdout-strict-envelope", "policy_denied"],
+      ]) {
+        const entry = doc.cases.find((item) => item.caseId === caseId);
+        if (!entry) {
+          failures.push({
+            error: "adversarial_suite_case_missing",
+            caseId,
+          });
+          continue;
+        }
+        if (entry.status !== "error") {
+          failures.push({
+            error: "adversarial_suite_status_invalid",
+            caseId,
+          });
+        }
+        if (entry.termination !== termination) {
+          failures.push({
+            error: "adversarial_suite_termination_invalid",
+            caseId,
+          });
+        }
+      }
     }
   }
 
@@ -370,8 +492,17 @@ function main() {
     const doc = readJson(protocolFramingFuzzPath);
     if (doc.ok !== true)
       failures.push({ error: "protocol_framing_fuzz_not_ok" });
-    if (typeof doc.runs !== "number" || doc.runs <= 0) {
+    if (typeof doc.runs !== "number" || doc.runs < 240) {
       failures.push({ error: "protocol_framing_fuzz_runs_missing" });
+    }
+    if (typeof doc.parsedJsonCases !== "number" || doc.parsedJsonCases <= 0) {
+      failures.push({ error: "protocol_framing_fuzz_json_ok_missing" });
+    }
+    if (
+      typeof doc.jsonParseFailures !== "number" ||
+      doc.jsonParseFailures <= 0
+    ) {
+      failures.push({ error: "protocol_framing_fuzz_json_failures_missing" });
     }
   }
 
@@ -442,6 +573,7 @@ function main() {
       "artifacts/security/runtime-policy-denials.json",
       "artifacts/security/isolation-profile.json",
       "artifacts/security/isolation-limit-denials.json",
+      "artifacts/security/adversarial-suite.json",
       "artifacts/security/native-abi-adversarial.json",
       "artifacts/security/native-abi-fuzz.json",
       "artifacts/security/replay-attestation.json",

@@ -292,6 +292,11 @@ describe("node e2e", () => {
   }, 600_000);
 
   it("runs adversarial checks", async () => {
+    const originalEnvValue = process.env.AEGISPY_RUNTIME_ENV_VALUE;
+    const originalStdoutMax = process.env.AEGISPY_ISOLATION_MAX_STDOUT_BYTES;
+    process.env.AEGISPY_RUNTIME_ENV_VALUE = "blocked-by-strict-profile";
+    process.env.AEGISPY_ISOLATION_MAX_STDOUT_BYTES = "128";
+
     const runtime = await createRuntime({ host: "node" });
 
     const traversalReq = baseRequest(
@@ -307,10 +312,37 @@ describe("node e2e", () => {
     const abuseReq = baseRequest("#aegispy:stdout=7000");
     abuseReq.limits.bytes.stdoutBytes = 64;
 
+    const envReq = baseRequest(
+      'print(aegispy.env_get("AEGISPY_RUNTIME_ENV_VALUE"))',
+    );
+    envReq.permissions.env = {
+      allowKeys: ["AEGISPY_RUNTIME_ENV_VALUE"],
+    };
+
+    const strictStdoutReq = baseRequest("#aegispy:stdout=512");
+    strictStdoutReq.limits.bytes.stdoutBytes = 512;
+
     const traversalResult = await runtime.run(traversalReq);
     const abuseResult = await runtime.run(abuseReq);
+    const envResult = await runtime.run(envReq);
+    const strictStdoutResult = await runtime.run(strictStdoutReq);
 
     await runtime.close();
+    if (originalEnvValue === undefined) {
+      delete process.env.AEGISPY_RUNTIME_ENV_VALUE;
+    } else {
+      process.env.AEGISPY_RUNTIME_ENV_VALUE = originalEnvValue;
+    }
+    if (originalStdoutMax === undefined) {
+      delete process.env.AEGISPY_ISOLATION_MAX_STDOUT_BYTES;
+    } else {
+      process.env.AEGISPY_ISOLATION_MAX_STDOUT_BYTES = originalStdoutMax;
+    }
+
+    expect(traversalResult.status).toBe("error");
+    expect(abuseResult.status).toBe("error");
+    expect(envResult.status).toBe("error");
+    expect(strictStdoutResult.status).toBe("error");
 
     writeArtifact("artifacts/security/adversarial-suite.json", {
       ok: true,
@@ -325,6 +357,16 @@ describe("node e2e", () => {
           caseId: "output-abuse",
           termination: abuseResult.meta.termination,
           status: abuseResult.status,
+        },
+        {
+          caseId: "env-strict-profile",
+          termination: envResult.meta.termination,
+          status: envResult.status,
+        },
+        {
+          caseId: "stdout-strict-envelope",
+          termination: strictStdoutResult.meta.termination,
+          status: strictStdoutResult.status,
         },
       ],
     });

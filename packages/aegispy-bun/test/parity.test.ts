@@ -421,6 +421,13 @@ function makeRequest(host: HostKind, code: string): RunRequest {
   };
 }
 
+function makePackageExecutionRequest(host: HostKind, code: string): RunRequest {
+  const request = makeRequest(host, code);
+  request.limits.time.wallMs = 10_000;
+  request.limits.time.cpuMs = 10_000;
+  return request;
+}
+
 function collectCompatibilityFailures(
   caseResults: CorpusCaseResult[],
 ): CompatibilityFailures {
@@ -487,7 +494,7 @@ async function summarizePackageFixture(
   });
 
   return runtime
-    .run(makeRequest(executionPlan.host, executionPlan.code))
+    .run(makePackageExecutionRequest(executionPlan.host, executionPlan.code))
     .then((result) => {
       const ok =
         result.status === "ok" &&

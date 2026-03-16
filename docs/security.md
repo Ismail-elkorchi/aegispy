@@ -44,6 +44,13 @@
 - Seccomp state is recorded in those artifacts.
 - High-risk tenant isolation is not published as valid.
 
+## Replay And Adversarial Proof
+
+- Replay attestation now spans three deterministic workload shapes across
+  `node`, `deno`, `bun`, and `browser`.
+- The adversarial suite records filesystem traversal denial, output abuse,
+  strict-profile environment denial, and strict stdout-envelope denial.
+
 ## Security Evidence
 
 - `artifacts/tests/engine-hash-verify.json`

@@ -83,14 +83,17 @@ describe("protocol framing", () => {
     );
   });
 
-  it("keeps frame decoding stable across fuzzed malformed payloads", () => {
-    let runs = 0;
+  it("keeps frame decoding stable across fuzzed malformed payloads", async () => {
+    let frameRuns = 0;
+    let jsonRuns = 0;
     let decodedFrames = 0;
     let trailingBytes = 0;
+    let parsedJsonCases = 0;
+    let jsonParseFailures = 0;
 
     fc.assert(
       fc.property(fc.uint8Array({ maxLength: 256 }), (payload) => {
-        runs += 1;
+        frameRuns += 1;
         const decoded = decodeFrames(Buffer.from(payload));
         decodedFrames += decoded.frames.length;
         trailingBytes += decoded.remaining.length;
@@ -101,12 +104,48 @@ describe("protocol framing", () => {
       { numRuns: 120 },
     );
 
+    await fc.assert(
+      fc.asyncProperty(
+        fc.oneof(
+          fc
+            .jsonValue()
+            .map((value) => Buffer.from(JSON.stringify(value), "utf8")),
+          fc
+            .uint8Array({ minLength: 1, maxLength: 128 })
+            .map((value) => Buffer.from(value)),
+        ),
+        async (payload) => {
+          jsonRuns += 1;
+          const decoded = decodeFrames(encodeFrame(payload));
+          expect(decoded.frames).toHaveLength(1);
+          expect(decoded.remaining).toHaveLength(0);
+          const parseResult = await Promise.resolve()
+            .then(() => decodeJsonFrame(decoded.frames[0]))
+            .then(
+              () => ({ ok: true }),
+              () => ({ ok: false }),
+            );
+          if (parseResult.ok) {
+            parsedJsonCases += 1;
+          } else {
+            jsonParseFailures += 1;
+          }
+        },
+      ),
+      { numRuns: 120 },
+    );
+
+    expect(parsedJsonCases).toBeGreaterThan(0);
+    expect(jsonParseFailures).toBeGreaterThan(0);
+
     writeArtifact("artifacts/security/protocol-framing-fuzz.json", {
       ok: true,
       invariants: ["INV-ARCH-0003", "INV-SECU-0011"],
-      runs,
+      runs: frameRuns + jsonRuns,
       decodedFrames,
       trailingBytes,
+      parsedJsonCases,
+      jsonParseFailures,
     });
   });
 });

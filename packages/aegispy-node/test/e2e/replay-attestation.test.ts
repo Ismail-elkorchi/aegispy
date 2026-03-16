@@ -9,10 +9,44 @@ import { writeArtifact } from "../helpers/artifact";
 
 const invariants = ["INV-FEAT-0024", "INV-SECU-0010"];
 
-function makeRequest(host: HostKind, seedHex: string): RunRequest {
+interface ReplayWorkload {
+  workloadId: string;
+  code: string;
+}
+
+const replayWorkloads: ReplayWorkload[] = [
+  {
+    workloadId: "time-random-basic",
+    code: "import random\nimport time\nprint(time.time())\nprint(random.random())",
+  },
+  {
+    workloadId: "json-random-hash",
+    code: [
+      "import json",
+      "import random",
+      "import time",
+      'print(json.dumps({"rnd": random.random(), "ts": time.time()}, sort_keys=True, separators=(",", ":")))',
+    ].join("\n"),
+  },
+  {
+    workloadId: "text-random-sequence",
+    code: [
+      "import random",
+      "import time",
+      "print(time.time())",
+      'print("-".join(str(int(random.random() * 1000)) for _ in range(3)))',
+    ].join("\n"),
+  },
+];
+
+function makeRequest(
+  host: HostKind,
+  seedHex: string,
+  workload: ReplayWorkload,
+): RunRequest {
   return {
     host,
-    code: "import random\nimport time\nprint(time.time())\nprint(random.random())",
+    code: workload.code,
     argv: ["python"],
     stdinUtf8: "",
     permissions: {
@@ -60,44 +94,65 @@ const runtimeFactories = {
 } as const;
 
 describe("replay attestation", () => {
-  it("records stable replay hashes across node, deno, bun, and browser", async () => {
+  it("records stable replay hashes across a broader host workload corpus", async () => {
     const hosts = [];
 
     for (const host of ["node", "deno", "bun", "browser"] as const) {
       const runtime = await runtimeFactories[host]();
-      const first = await runtime.run(makeRequest(host, "abcdef01"));
-      const second = await runtime.run(makeRequest(host, "abcdef01"));
-      const third = await runtime.run(makeRequest(host, "1234abcd"));
+      const workloads = [];
+      let hostCapabilityChannel: string | null = null;
+
+      for (const workload of replayWorkloads) {
+        const first = await runtime.run(
+          makeRequest(host, "abcdef01", workload),
+        );
+        const second = await runtime.run(
+          makeRequest(host, "abcdef01", workload),
+        );
+        const third = await runtime.run(
+          makeRequest(host, "1234abcd", workload),
+        );
+
+        expect(first.status).toBe("ok");
+        expect(second.status).toBe("ok");
+        expect(third.status).toBe("ok");
+
+        const firstHash = computeReplayHash(first);
+        const secondHash = computeReplayHash(second);
+        const thirdHash = computeReplayHash(third);
+
+        if (hostCapabilityChannel === null) {
+          hostCapabilityChannel = capabilityChannel(first);
+        }
+
+        expect(firstHash).toBe(secondHash);
+        expect(firstHash).not.toBe(thirdHash);
+
+        workloads.push({
+          workloadId: workload.workloadId,
+          cases: [
+            {
+              caseId: "same-seed",
+              hashA: firstHash,
+              hashB: secondHash,
+              match: firstHash === secondHash,
+            },
+            {
+              caseId: "different-seed",
+              hashA: firstHash,
+              hashB: thirdHash,
+              match: firstHash === thirdHash,
+            },
+          ],
+        });
+      }
+
       await runtime.close();
-
-      expect(first.status).toBe("ok");
-      expect(second.status).toBe("ok");
-      expect(third.status).toBe("ok");
-
-      const firstHash = computeReplayHash(first);
-      const secondHash = computeReplayHash(second);
-      const thirdHash = computeReplayHash(third);
-
-      expect(firstHash).toBe(secondHash);
-      expect(firstHash).not.toBe(thirdHash);
 
       hosts.push({
         host,
-        capabilityChannel: capabilityChannel(first),
-        cases: [
-          {
-            caseId: "same-seed",
-            hashA: firstHash,
-            hashB: secondHash,
-            match: firstHash === secondHash,
-          },
-          {
-            caseId: "different-seed",
-            hashA: firstHash,
-            hashB: thirdHash,
-            match: firstHash === thirdHash,
-          },
-        ],
+        capabilityChannel: hostCapabilityChannel,
+        workloads,
       });
     }
 
