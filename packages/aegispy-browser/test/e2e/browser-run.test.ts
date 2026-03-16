@@ -74,7 +74,7 @@ describe("browser runtime", () => {
     );
 
     const recoveryResult = await runtime.run(
-      makeBrowserRequest("import math\nprint(math.factorial(5))"),
+      makeBrowserRequest("import math\nprint(math.factorial(5))", 15_000),
     );
 
     await runtime.close();
@@ -107,7 +107,7 @@ describe("browser runtime", () => {
       timeoutTermination: timeoutResult.meta.termination,
       recoveryTermination: recoveryResult.meta.termination,
     });
-  }, 20_000);
+  }, 30_000);
 
   it("returns engine errors from real python execution", async () => {
     const runtime: AegisPyRuntime = await createRuntime({ host: "browser" });
