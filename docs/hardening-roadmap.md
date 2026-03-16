@@ -24,7 +24,9 @@ A real hardened Python engine suitable for hostile agent workloads.
 1. Compatibility corpus and package metadata
 
 - Broaden the generated workload-compatibility matrix across all public hosts.
-- Keep pure-Python package fixture metadata pinned through verified lockfiles.
+- Keep pure-Python package fixtures pinned through verified lockfiles and mix
+  metadata-backed and browser-executed proof where the runtime can verify the
+  package safely.
 - Keep browser package requests bound to verified lockfile entries.
 - Exit criteria: workload families and reason codes are generated under
   `artifacts/compat/` and enforced by the compatibility gate.

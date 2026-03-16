@@ -226,8 +226,12 @@ function main() {
     if (!Array.isArray(doc.fixtures) || doc.fixtures.length === 0) {
       failures.push({ error: "package_fixture_lockfiles_missing_entries" });
     } else {
+      let executionBackedFixtureCount = 0;
       for (const fixture of doc.fixtures) {
-        if (fixture?.coverageBasis !== "metadata-only") {
+        if (
+          fixture?.coverageBasis !== "metadata-only" &&
+          fixture?.coverageBasis !== "browser-executed"
+        ) {
           failures.push({
             error: "package_fixture_coverage_basis_invalid",
             fixtureId: fixture?.fixtureId ?? null,
@@ -239,6 +243,33 @@ function main() {
             fixtureId: fixture?.fixtureId ?? null,
           });
         }
+        if (fixture?.coverageBasis === "browser-executed") {
+          executionBackedFixtureCount += 1;
+          if (fixture?.execution?.host !== "browser") {
+            failures.push({
+              error: "package_fixture_execution_host_invalid",
+              fixtureId: fixture?.fixtureId ?? null,
+            });
+          }
+          if (!Array.isArray(fixture?.execution?.packages)) {
+            failures.push({
+              error: "package_fixture_execution_packages_missing",
+              fixtureId: fixture?.fixtureId ?? null,
+            });
+          }
+          if (fixture?.execution?.ok !== true) {
+            failures.push({
+              error: "package_fixture_execution_failed",
+              fixtureId: fixture?.fixtureId ?? null,
+              reasonCode: fixture?.execution?.reasonCode ?? null,
+            });
+          }
+        }
+      }
+      if (executionBackedFixtureCount === 0) {
+        failures.push({
+          error: "package_fixture_execution_backed_missing",
+        });
       }
     }
   }
