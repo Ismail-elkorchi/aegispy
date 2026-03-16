@@ -30,6 +30,47 @@ function readEventPayload() {
   return JSON.parse(fs.readFileSync(eventPath, "utf8"));
 }
 
+async function githubGetJson(repoFullName, path, failures) {
+  if (typeof fetch !== "function") {
+    failures.push({ error: "fetch_unavailable_for_github_audit" });
+    return null;
+  }
+
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+  if (!token) {
+    failures.push({ error: "missing_github_token_for_push_audit" });
+    return null;
+  }
+
+  if (!repoFullName) {
+    failures.push({ error: "missing_github_repository_for_push_audit" });
+    return null;
+  }
+
+  const response = await fetch(
+    `https://api.github.com/repos/${repoFullName}${path}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "aegispy-pr-policy-check",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    failures.push({
+      error: "github_push_audit_request_failed",
+      path,
+      status: response.status,
+      status_text: response.statusText,
+    });
+    return null;
+  }
+
+  return response.json();
+}
+
 function getCurrentBranch() {
   const res = runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
   if (!res.ok) return "";
@@ -173,7 +214,56 @@ function validateCommitMessage(commit, failures, index) {
   }
 }
 
-function main() {
+async function auditPushToMain(event, failures) {
+  const repoFullName =
+    process.env.GITHUB_REPOSITORY || event.repository?.full_name || "";
+  const sha = process.env.GITHUB_SHA || event.after || "";
+
+  if (!sha) {
+    failures.push({ error: "missing_push_sha_for_main_audit" });
+    return [];
+  }
+
+  const pulls = await githubGetJson(
+    repoFullName,
+    `/commits/${sha}/pulls?per_page=10`,
+    failures,
+  );
+  if (!Array.isArray(pulls)) {
+    failures.push({
+      error: "invalid_commit_pulls_response_for_main_audit",
+      sha,
+    });
+    return [];
+  }
+
+  const mergedMainPulls = pulls
+    .filter(
+      (pull) =>
+        pull &&
+        pull.base?.ref === "main" &&
+        typeof pull.merged_at === "string" &&
+        pull.merged_at.length > 0,
+    )
+    .map((pull) => ({
+      number: pull.number,
+      title: pull.title,
+      merged_at: pull.merged_at,
+      head_ref: pull.head?.ref || "",
+      merge_commit_sha: pull.merge_commit_sha || "",
+    }));
+
+  if (mergedMainPulls.length === 0) {
+    failures.push({
+      error: "main_push_commit_not_linked_to_merged_pr",
+      sha,
+    });
+  }
+
+  return mergedMainPulls;
+}
+
+async function main() {
   const failures = [];
   const eventName = process.env.GITHUB_EVENT_NAME || "";
   const event = readEventPayload();
@@ -188,6 +278,7 @@ function main() {
   const isPushToMain = eventName === "push" && refName === "main";
   const isDependabotPr =
     isPullRequestEvent && event.pull_request?.user?.login === "dependabot[bot]";
+  let mainPushPulls = [];
 
   const headRef =
     process.env.GITHUB_HEAD_REF ||
@@ -233,6 +324,8 @@ function main() {
         );
       }
     }
+  } else if (isPushToMain) {
+    mainPushPulls = await auditPushToMain(event, failures);
   } else if (!isMergeGroupEvent && !isPushToMain) {
     validateBranch(headRef, failures);
     const commits = listLocalCommitMessages();
@@ -260,7 +353,9 @@ function main() {
         event: eventName || "local",
         branch: headRef,
         merge_group_bypass: isMergeGroupEvent,
-        push_main_bypass: isPushToMain,
+        push_main_bypass: false,
+        push_main_audited: isPushToMain,
+        push_main_pull_requests: mainPushPulls,
         dependabot_bypass: isDependabotPr,
       },
       null,

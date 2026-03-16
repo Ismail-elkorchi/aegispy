@@ -25,6 +25,7 @@
 - [ ] `!` commits include `BREAKING CHANGE:`.
 - [ ] scripts/check passes.
 - [ ] CI required checks pass.
+- [ ] This PR is intended to merge through required CI and CodeQL without branch-protection bypass.
 - [ ] Evidence pointers are listed for activated invariants.
 - [ ] Simulated role reviews are complete.
 
