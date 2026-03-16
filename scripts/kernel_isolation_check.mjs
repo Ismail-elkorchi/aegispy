@@ -36,6 +36,15 @@ function isPositiveNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isBlockedProbe(probe) {
+  return (
+    probe?.blocked === true &&
+    isPositiveNumber(probe?.errnoCode) &&
+    typeof probe?.errnoName === "string" &&
+    probe.errnoName.length > 0
+  );
+}
+
 function main() {
   const failures = [];
 
@@ -72,6 +81,12 @@ function main() {
     }
     if (doc.noNewPrivs !== true) {
       failures.push({ error: "kernel_isolation_no_new_privs_not_enforced" });
+    }
+    if (doc.seccompMode === "0") {
+      failures.push({ error: "kernel_isolation_seccomp_inactive" });
+    }
+    if (!isPositiveNumber(Number(doc.seccompFilters))) {
+      failures.push({ error: "kernel_isolation_seccomp_filters_missing" });
     }
     if (typeof doc.cgroupPath !== "string" || doc.cgroupPath.length === 0) {
       failures.push({ error: "kernel_isolation_cgroup_missing" });
@@ -130,6 +145,36 @@ function main() {
     }
     if (typeof controlStatus?.seccomp?.active !== "boolean") {
       failures.push({ error: "kernel_isolation_seccomp_state_missing" });
+    }
+    if (controlStatus?.seccomp?.active !== true) {
+      failures.push({ error: "kernel_isolation_seccomp_not_active" });
+    }
+    if (!isPositiveNumber(Number(controlStatus?.seccomp?.filters))) {
+      failures.push({
+        error: "kernel_isolation_control_seccomp_filters_invalid",
+      });
+    }
+    const rlimits = doc.rlimits ?? {};
+    if (!isPositiveNumber(rlimits?.cpuSeconds?.soft)) {
+      failures.push({ error: "kernel_isolation_rlimit_cpu_soft_missing" });
+    }
+    if (!isPositiveNumber(rlimits?.cpuSeconds?.hard)) {
+      failures.push({ error: "kernel_isolation_rlimit_cpu_hard_missing" });
+    }
+    if (!isPositiveNumber(rlimits?.addressSpaceBytes?.soft)) {
+      failures.push({ error: "kernel_isolation_rlimit_as_soft_missing" });
+    }
+    if (!isPositiveNumber(rlimits?.addressSpaceBytes?.hard)) {
+      failures.push({ error: "kernel_isolation_rlimit_as_hard_missing" });
+    }
+    const controlProbes = doc.controlProbes ?? {};
+    for (const probeName of ["unshare", "setns", "mount", "ptrace"]) {
+      if (!isBlockedProbe(controlProbes?.[probeName])) {
+        failures.push({
+          error: "kernel_isolation_probe_missing",
+          probe: probeName,
+        });
+      }
     }
   }
 

@@ -69,6 +69,34 @@ struct KernelIsolationEnvelope {
     no_new_privs: bool,
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Default)]
+struct LinuxKernelLimitStatus {
+    cpu_soft_secs: Option<u64>,
+    cpu_hard_secs: Option<u64>,
+    address_space_soft_bytes: Option<u64>,
+    address_space_hard_bytes: Option<u64>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Default)]
+struct LinuxKernelStatus {
+    no_new_privs: bool,
+    seccomp_mode: Option<u64>,
+    seccomp_filters: Option<u64>,
+    cgroup_path: Option<String>,
+    namespaces: BTreeMap<String, String>,
+    rlimits: LinuxKernelLimitStatus,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug)]
+struct LinuxKernelControlProbe {
+    blocked: bool,
+    errno_code: Option<i32>,
+    errno_name: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WorkerExecutorMode {
     Wasi,
@@ -189,6 +217,39 @@ fn parse_proc_status_u64(key: &str) -> Option<u64> {
         .and_then(|raw| raw.trim().parse::<u64>().ok())
 }
 
+#[cfg(target_os = "linux")]
+const KERNEL_PROBE_ERRNO: u32 = libc::EUCLEAN as u32;
+
+#[cfg(target_os = "linux")]
+const PR_SET_NO_NEW_PRIVS: i32 = 38;
+
+#[cfg(target_os = "linux")]
+const PR_SET_SECCOMP: i32 = 22;
+
+#[cfg(target_os = "linux")]
+const SECCOMP_MODE_FILTER: usize = 2;
+
+#[cfg(target_os = "linux")]
+const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+
+#[cfg(target_os = "linux")]
+const SECCOMP_RET_ERRNO: u32 = 0x0005_0000;
+
+#[cfg(target_os = "linux")]
+const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+
+#[cfg(target_os = "linux")]
+const SECCOMP_DATA_NR_OFFSET: u32 = 0;
+
+#[cfg(target_os = "linux")]
+const SECCOMP_DATA_ARCH_OFFSET: u32 = 4;
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const SECCOMP_AUDIT_ARCH: u32 = 0xc000_003e;
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const SECCOMP_AUDIT_ARCH: u32 = 0xc000_00b7;
+
 fn read_linux_cgroup_path() -> Option<String> {
     let cgroup = fs::read_to_string("/proc/self/cgroup").ok()?;
     for line in cgroup.lines() {
@@ -218,13 +279,330 @@ fn encode_kernel_detail_value(value: &str) -> String {
     value.replace(';', "%3B").replace('=', "%3D")
 }
 
+#[cfg(target_os = "linux")]
+fn normalize_rlimit_value(value: libc::rlim_t) -> Option<u64> {
+    if value == libc::RLIM_INFINITY {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_rlimits() -> Result<LinuxKernelLimitStatus, String> {
+    let mut cpu_limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let mut address_space_limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+
+    let cpu_rc = unsafe { libc::getrlimit(libc::RLIMIT_CPU, &mut cpu_limit) };
+    if cpu_rc != 0 {
+        return Err(format!(
+            "failed to read RLIMIT_CPU: {}",
+            io::Error::last_os_error()
+        ));
+    }
+
+    let as_rc = unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut address_space_limit) };
+    if as_rc != 0 {
+        return Err(format!(
+            "failed to read RLIMIT_AS: {}",
+            io::Error::last_os_error()
+        ));
+    }
+
+    Ok(LinuxKernelLimitStatus {
+        cpu_soft_secs: normalize_rlimit_value(cpu_limit.rlim_cur),
+        cpu_hard_secs: normalize_rlimit_value(cpu_limit.rlim_max),
+        address_space_soft_bytes: normalize_rlimit_value(address_space_limit.rlim_cur),
+        address_space_hard_bytes: normalize_rlimit_value(address_space_limit.rlim_max),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn collect_linux_kernel_status() -> Result<LinuxKernelStatus, String> {
+    Ok(LinuxKernelStatus {
+        no_new_privs: parse_proc_status_u64("NoNewPrivs").unwrap_or(0) == 1,
+        seccomp_mode: parse_proc_status_u64("Seccomp"),
+        seccomp_filters: parse_proc_status_u64("Seccomp_filters"),
+        cgroup_path: read_linux_cgroup_path(),
+        namespaces: read_linux_namespace_ids(),
+        rlimits: read_linux_rlimits()?,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn worker_cpu_rlimit_seconds(profile: &IsolationProfile) -> u64 {
+    const CPU_LIMIT_FLOOR_SECONDS: u64 = 600;
+    ((profile.max_cpu_ms.saturating_add(999)) / 1000)
+        .max(1)
+        .saturating_add(5)
+        .max(CPU_LIMIT_FLOOR_SECONDS)
+}
+
+#[cfg(target_os = "linux")]
+fn worker_address_space_rlimit_bytes(profile: &IsolationProfile) -> u64 {
+    const ADDRESS_SPACE_FLOOR_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+    profile.max_memory_bytes.max(ADDRESS_SPACE_FLOOR_BYTES)
+}
+
+#[cfg(target_os = "linux")]
+fn enforce_linux_rlimit(
+    resource: libc::__rlimit_resource_t,
+    soft: u64,
+    hard: u64,
+) -> Result<(), String> {
+    let limits = libc::rlimit {
+        rlim_cur: soft as libc::rlim_t,
+        rlim_max: hard as libc::rlim_t,
+    };
+    let rc = unsafe { libc::setrlimit(resource, &limits) };
+    if rc != 0 {
+        return Err(format!(
+            "failed to set resource limit {resource}: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_bpf_stmt(code: u16, k: u32) -> libc::sock_filter {
+    libc::sock_filter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
+    libc::sock_filter { code, jt, jf, k }
+}
+
+#[cfg(target_os = "linux")]
+fn install_linux_strict_seccomp_filter() -> Result<(), String> {
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return Err("strict profile seccomp filter unsupported on this architecture".to_string());
+    }
+
+    let load_abs_word = (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16;
+    let jump_eq = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
+    let return_k = (libc::BPF_RET | libc::BPF_K) as u16;
+    let deny_errno = SECCOMP_RET_ERRNO | KERNEL_PROBE_ERRNO;
+
+    let mut filter = vec![
+        linux_bpf_stmt(load_abs_word, SECCOMP_DATA_ARCH_OFFSET),
+        linux_bpf_jump(jump_eq, SECCOMP_AUDIT_ARCH, 1, 0),
+        linux_bpf_stmt(return_k, SECCOMP_RET_KILL_PROCESS),
+        linux_bpf_stmt(load_abs_word, SECCOMP_DATA_NR_OFFSET),
+    ];
+
+    for syscall_number in [
+        libc::SYS_unshare as u32,
+        libc::SYS_setns as u32,
+        libc::SYS_mount as u32,
+        libc::SYS_ptrace as u32,
+    ] {
+        filter.push(linux_bpf_jump(jump_eq, syscall_number, 0, 1));
+        filter.push(linux_bpf_stmt(return_k, deny_errno));
+    }
+    filter.push(linux_bpf_stmt(return_k, SECCOMP_RET_ALLOW));
+
+    let program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+
+    let rc = unsafe {
+        prctl(
+            PR_SET_SECCOMP,
+            SECCOMP_MODE_FILTER,
+            (&program as *const libc::sock_fprog) as usize,
+            0,
+            0,
+        )
+    };
+    if rc != 0 {
+        return Err(format!(
+            "failed to install seccomp filter: {}",
+            io::Error::last_os_error()
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn probe_errno_name(errno_code: i32) -> String {
+    match errno_code {
+        libc::EUCLEAN => "EUCLEAN".to_string(),
+        libc::EPERM => "EPERM".to_string(),
+        libc::EINVAL => "EINVAL".to_string(),
+        libc::ESRCH => "ESRCH".to_string(),
+        libc::EBADF => "EBADF".to_string(),
+        _ => format!("ERRNO_{errno_code}"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn evaluate_probe_result(rc: libc::c_long) -> LinuxKernelControlProbe {
+    if rc >= 0 {
+        return LinuxKernelControlProbe {
+            blocked: false,
+            errno_code: None,
+            errno_name: "OK".to_string(),
+        };
+    }
+
+    let errno_code = io::Error::last_os_error().raw_os_error();
+    let blocked = errno_code == Some(KERNEL_PROBE_ERRNO as i32);
+    LinuxKernelControlProbe {
+        blocked,
+        errno_code,
+        errno_name: errno_code
+            .map(probe_errno_name)
+            .unwrap_or_else(|| "UNKNOWN".to_string()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_linux_kernel_controls() -> BTreeMap<String, LinuxKernelControlProbe> {
+    let mut probes = BTreeMap::new();
+    probes.insert(
+        "unshare".to_string(),
+        evaluate_probe_result(unsafe {
+            libc::syscall(
+                libc::SYS_unshare as libc::c_long,
+                libc::CLONE_NEWNS as libc::c_long,
+            )
+        }),
+    );
+    probes.insert(
+        "setns".to_string(),
+        evaluate_probe_result(unsafe { libc::syscall(libc::SYS_setns as libc::c_long, -1, 0) }),
+    );
+    probes.insert(
+        "mount".to_string(),
+        evaluate_probe_result(unsafe {
+            libc::syscall(
+                libc::SYS_mount as libc::c_long,
+                std::ptr::null::<libc::c_char>(),
+                std::ptr::null::<libc::c_char>(),
+                std::ptr::null::<libc::c_char>(),
+                0 as libc::c_ulong,
+                std::ptr::null::<libc::c_void>(),
+            )
+        }),
+    );
+    probes.insert(
+        "ptrace".to_string(),
+        evaluate_probe_result(unsafe {
+            libc::syscall(
+                libc::SYS_ptrace as libc::c_long,
+                libc::PTRACE_PEEKDATA as libc::c_long,
+                -1,
+                std::ptr::null::<libc::c_void>(),
+                0,
+            )
+        }),
+    );
+    probes
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_kernel_status(
+    profile: &IsolationProfile,
+    status: &LinuxKernelStatus,
+) -> Result<(), String> {
+    if profile.name == "strict" && !status.no_new_privs {
+        return Err("strict profile requires no_new_privs=1".to_string());
+    }
+
+    if profile.name == "strict" {
+        let seccomp_mode = status.seccomp_mode.unwrap_or(0);
+        let seccomp_filters = status.seccomp_filters.unwrap_or(0);
+        if seccomp_mode == 0 {
+            return Err("strict profile requires active seccomp".to_string());
+        }
+        if seccomp_filters == 0 {
+            return Err("strict profile requires seccomp filter evidence".to_string());
+        }
+        for required in ["pid", "mnt", "net", "uts", "ipc", "cgroup"] {
+            if !status.namespaces.contains_key(required) {
+                return Err(format!(
+                    "strict profile missing namespace evidence: {required}"
+                ));
+            }
+        }
+        if status.cgroup_path.is_none() {
+            return Err("strict profile missing cgroup evidence".to_string());
+        }
+        if status.rlimits.cpu_soft_secs.unwrap_or(0) == 0
+            || status.rlimits.cpu_hard_secs.unwrap_or(0) == 0
+        {
+            return Err("strict profile missing RLIMIT_CPU evidence".to_string());
+        }
+        if status.rlimits.address_space_soft_bytes.unwrap_or(0) == 0
+            || status.rlimits.address_space_hard_bytes.unwrap_or(0) == 0
+        {
+            return Err("strict profile missing RLIMIT_AS evidence".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_kernel_probes(
+    probes: &BTreeMap<String, LinuxKernelControlProbe>,
+) -> Result<(), String> {
+    for required in ["unshare", "setns", "mount", "ptrace"] {
+        let Some(probe) = probes.get(required) else {
+            return Err(format!(
+                "strict profile missing kernel control probe: {required}"
+            ));
+        };
+        if !probe.blocked || probe.errno_code != Some(KERNEL_PROBE_ERRNO as i32) {
+            return Err(format!(
+                "strict profile kernel control probe not blocked: {required}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn apply_linux_kernel_controls(profile: &IsolationProfile) -> Result<(), String> {
+    enforce_linux_no_new_privs()?;
+    if profile.name != "strict" {
+        return Ok(());
+    }
+
+    let cpu_limit_secs = worker_cpu_rlimit_seconds(profile);
+    let address_space_limit_bytes = worker_address_space_rlimit_bytes(profile);
+    enforce_linux_rlimit(libc::RLIMIT_CPU, cpu_limit_secs, cpu_limit_secs)?;
+    enforce_linux_rlimit(
+        libc::RLIMIT_AS,
+        address_space_limit_bytes,
+        address_space_limit_bytes,
+    )?;
+    install_linux_strict_seccomp_filter()?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn build_kernel_isolation_detail(
     profile: &IsolationProfile,
-    no_new_privs: bool,
-    seccomp_mode: Option<u64>,
-    seccomp_filters: Option<u64>,
-    cgroup_path: Option<&str>,
-    namespaces: &BTreeMap<String, String>,
+    before: &LinuxKernelStatus,
+    after: &LinuxKernelStatus,
+    probes: &BTreeMap<String, LinuxKernelControlProbe>,
 ) -> String {
     let mut parts = Vec::<String>::new();
     parts.push("supported=1".to_string());
@@ -236,27 +614,99 @@ fn build_kernel_isolation_detail(
         "profile={}",
         encode_kernel_detail_value(&profile.name)
     ));
-    parts.push(format!("no_new_privs={}", if no_new_privs { 1 } else { 0 }));
+    parts.push(format!(
+        "no_new_privs={}",
+        if after.no_new_privs { 1 } else { 0 }
+    ));
+    parts.push(format!(
+        "no_new_privs_before={}",
+        if before.no_new_privs { 1 } else { 0 }
+    ));
     parts.push(format!(
         "seccomp={}",
-        seccomp_mode
+        after
+            .seccomp_mode
             .map(|value| value.to_string())
             .unwrap_or_else(|| "unknown".to_string())
     ));
     parts.push(format!(
         "seccomp_filters={}",
-        seccomp_filters
+        after
+            .seccomp_filters
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!(
+        "seccomp_before={}",
+        before
+            .seccomp_mode
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!(
+        "seccomp_filters_before={}",
+        before
+            .seccomp_filters
             .map(|value| value.to_string())
             .unwrap_or_else(|| "unknown".to_string())
     ));
     parts.push(format!(
         "cgroup_path={}",
-        encode_kernel_detail_value(cgroup_path.unwrap_or("missing"))
+        encode_kernel_detail_value(after.cgroup_path.as_deref().unwrap_or("missing"))
     ));
-    for (name, value) in namespaces {
+    parts.push(format!(
+        "rlimit_cpu_soft_secs={}",
+        after
+            .rlimits
+            .cpu_soft_secs
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!(
+        "rlimit_cpu_hard_secs={}",
+        after
+            .rlimits
+            .cpu_hard_secs
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!(
+        "rlimit_as_soft_bytes={}",
+        after
+            .rlimits
+            .address_space_soft_bytes
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!(
+        "rlimit_as_hard_bytes={}",
+        after
+            .rlimits
+            .address_space_hard_bytes
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    for (name, value) in &after.namespaces {
         parts.push(format!(
             "ns_{name}={}",
             encode_kernel_detail_value(value.as_str())
+        ));
+    }
+    for (name, probe) in probes {
+        parts.push(format!(
+            "probe_{name}_blocked={}",
+            if probe.blocked { 1 } else { 0 }
+        ));
+        parts.push(format!(
+            "probe_{name}_errno={}",
+            probe
+                .errno_code
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ));
+        parts.push(format!(
+            "probe_{name}_errno_name={}",
+            encode_kernel_detail_value(probe.errno_name.as_str())
         ));
     }
     parts.join(";")
@@ -269,7 +719,6 @@ unsafe extern "C" {
 
 #[cfg(target_os = "linux")]
 fn enforce_linux_no_new_privs() -> Result<(), String> {
-    const PR_SET_NO_NEW_PRIVS: i32 = 38;
     let rc = unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
     if rc != 0 {
         return Err(format!(
@@ -285,41 +734,22 @@ fn load_kernel_isolation_envelope(
 ) -> Result<KernelIsolationEnvelope, String> {
     #[cfg(target_os = "linux")]
     {
-        enforce_linux_no_new_privs()?;
-        let no_new_privs = parse_proc_status_u64("NoNewPrivs").unwrap_or(0) == 1;
-        if profile.name == "strict" && !no_new_privs {
-            return Err("strict profile requires no_new_privs=1".to_string());
-        }
+        let before = collect_linux_kernel_status()?;
+        apply_linux_kernel_controls(profile)?;
+        let after = collect_linux_kernel_status()?;
+        validate_linux_kernel_status(profile, &after)?;
+        let probes = if profile.name == "strict" {
+            let probes = probe_linux_kernel_controls();
+            validate_linux_kernel_probes(&probes)?;
+            probes
+        } else {
+            BTreeMap::new()
+        };
 
-        let seccomp_mode = parse_proc_status_u64("Seccomp");
-        let seccomp_filters = parse_proc_status_u64("Seccomp_filters");
-        let namespaces = read_linux_namespace_ids();
-        if profile.name == "strict" {
-            for required in ["pid", "mnt", "net", "uts", "ipc", "cgroup"] {
-                if !namespaces.contains_key(required) {
-                    return Err(format!(
-                        "strict profile missing namespace evidence: {required}"
-                    ));
-                }
-            }
-        }
-
-        let cgroup_path = read_linux_cgroup_path();
-        if profile.name == "strict" && cgroup_path.is_none() {
-            return Err("strict profile missing cgroup evidence".to_string());
-        }
-
-        let detail = build_kernel_isolation_detail(
-            profile,
-            no_new_privs,
-            seccomp_mode,
-            seccomp_filters,
-            cgroup_path.as_deref(),
-            &namespaces,
-        );
+        let detail = build_kernel_isolation_detail(profile, &before, &after, &probes);
         Ok(KernelIsolationEnvelope {
             detail,
-            no_new_privs,
+            no_new_privs: after.no_new_privs,
         })
     }
 

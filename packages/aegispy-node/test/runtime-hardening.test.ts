@@ -42,6 +42,18 @@ interface IsolationProfileView {
   denyEnvCapability?: boolean;
 }
 
+interface KernelControlProbeView {
+  blocked: boolean;
+  errnoCode: number | null;
+  errnoName: string | null;
+}
+
+function parsePositiveInt(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 function runtimeView(runtime: AegisPyRuntime): {
   transportKind?: string;
   isolationProfile?: unknown;
@@ -284,7 +296,49 @@ describe("runtime hardening", () => {
     expect(kernelIsolation.ns_pid).toBeTruthy();
     expect(kernelIsolation.ns_mnt).toBeTruthy();
     expect(kernelIsolation.cgroup_path).toBeTruthy();
+    expect(kernelIsolation.seccomp).not.toBe("0");
+    expect(parsePositiveInt(kernelIsolation.seccomp_filters)).toBeGreaterThan(
+      0,
+    );
+    expect(
+      parsePositiveInt(kernelIsolation.rlimit_cpu_soft_secs),
+    ).toBeGreaterThan(0);
+    expect(
+      parsePositiveInt(kernelIsolation.rlimit_as_soft_bytes),
+    ).toBeGreaterThan(0);
     expect(profile?.name).toBe("strict");
+
+    const controlProbes: Record<string, KernelControlProbeView> = {
+      unshare: {
+        blocked: kernelIsolation.probe_unshare_blocked === "1",
+        errnoCode: parsePositiveInt(kernelIsolation.probe_unshare_errno),
+        errnoName: kernelIsolation.probe_unshare_errno_name ?? null,
+      },
+      setns: {
+        blocked: kernelIsolation.probe_setns_blocked === "1",
+        errnoCode: parsePositiveInt(kernelIsolation.probe_setns_errno),
+        errnoName: kernelIsolation.probe_setns_errno_name ?? null,
+      },
+      mount: {
+        blocked: kernelIsolation.probe_mount_blocked === "1",
+        errnoCode: parsePositiveInt(kernelIsolation.probe_mount_errno),
+        errnoName: kernelIsolation.probe_mount_errno_name ?? null,
+      },
+      ptrace: {
+        blocked: kernelIsolation.probe_ptrace_blocked === "1",
+        errnoCode: parsePositiveInt(kernelIsolation.probe_ptrace_errno),
+        errnoName: kernelIsolation.probe_ptrace_errno_name ?? null,
+      },
+    };
+
+    for (const [probeName, probe] of Object.entries(controlProbes)) {
+      expect(probe.blocked).toBe(true);
+      expect(probe.errnoCode).toBeGreaterThan(0);
+      expect(probe.errnoName).toBe("EUCLEAN");
+      if (!probe.blocked) {
+        throw new Error(`expected ${probeName} seccomp probe to be blocked`);
+      }
+    }
 
     const controlStatus = {
       noNewPrivs: kernelIsolation.no_new_privs === "1",
@@ -303,6 +357,17 @@ describe("runtime hardening", () => {
         active:
           kernelIsolation.seccomp !== undefined &&
           kernelIsolation.seccomp !== "0",
+      },
+    };
+
+    const rlimits = {
+      cpuSeconds: {
+        soft: parsePositiveInt(kernelIsolation.rlimit_cpu_soft_secs),
+        hard: parsePositiveInt(kernelIsolation.rlimit_cpu_hard_secs),
+      },
+      addressSpaceBytes: {
+        soft: parsePositiveInt(kernelIsolation.rlimit_as_soft_bytes),
+        hard: parsePositiveInt(kernelIsolation.rlimit_as_hard_bytes),
       },
     };
 
@@ -347,6 +412,8 @@ describe("runtime hardening", () => {
       profile: profile,
       limitEnvelope,
       controlStatus,
+      rlimits,
+      controlProbes,
       deniedByProfile: isolationResult.stderrUtf8,
       termination: isolationResult.meta.termination,
     });
@@ -368,6 +435,8 @@ describe("runtime hardening", () => {
       noNewPrivs: kernelIsolation.no_new_privs === "1",
       seccompMode: kernelIsolation.seccomp ?? "unknown",
       seccompFilters: kernelIsolation.seccomp_filters ?? "unknown",
+      rlimits,
+      controlProbes,
       cgroupPath: kernelIsolation.cgroup_path ?? null,
       namespaces: {
         pid: kernelIsolation.ns_pid ?? null,

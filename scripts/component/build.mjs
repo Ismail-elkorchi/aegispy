@@ -39,6 +39,19 @@ const wasmToolsRelease = {
   },
 };
 
+const wasmtimeRelease = {
+  version: "42.0.1",
+  tag: "v42.0.1",
+  linuxX64: {
+    fileName: "wasmtime-v42.0.1-x86_64-linux.tar.xz",
+    sha256: "dd5253f3cb521bb094f9951c3d2c45c746b31e5723b07ce56f162ec9bab44d59",
+    unpackDir: "wasmtime-v42.0.1-x86_64-linux",
+    binaryRelPath: "wasmtime",
+  },
+};
+
+const expectedWasmtimeCliPrefix = "wasmtime 42.0.";
+
 const toolsDir = path.join(repoRoot, ".tools", "component");
 const downloadDir = path.join(toolsDir, "downloads");
 
@@ -80,6 +93,18 @@ function runCaptureOrThrow(command, args, opts = {}) {
     );
   }
   return result.stdout;
+}
+
+function commandExists(command) {
+  const result = spawnSync(
+    "bash",
+    ["-lc", `command -v ${JSON.stringify(command)}`],
+    {
+      cwd: repoRoot,
+      stdio: "ignore",
+    },
+  );
+  return (result.status ?? 1) === 0;
 }
 
 function ensureWasiCoreWasm() {
@@ -188,6 +213,98 @@ function ensureWasmTools() {
   };
 }
 
+function resolveBundledWasmtime() {
+  const platformKey = `${process.platform}:${process.arch}`;
+  if (platformKey !== "linux:x64") {
+    return null;
+  }
+  return wasmtimeRelease.linuxX64;
+}
+
+function ensureWasmtime() {
+  if (process.env.AEGISPY_WASMTIME_BIN) {
+    const binPath = path.resolve(process.env.AEGISPY_WASMTIME_BIN);
+    if (!fs.existsSync(binPath)) {
+      throw new Error(`missing wasmtime override: ${binPath}`);
+    }
+    const version = runCaptureOrThrow(binPath, ["--version"]).trim();
+    if (!version.startsWith(expectedWasmtimeCliPrefix)) {
+      throw new Error(
+        `unsupported wasmtime override version: ${version} (expected ${expectedWasmtimeCliPrefix}*)`,
+      );
+    }
+    return {
+      available: true,
+      binPath,
+      source: "env:AEGISPY_WASMTIME_BIN",
+      archiveSha256: null,
+      expectedArchiveSha256: null,
+      version,
+    };
+  }
+
+  if (commandExists("wasmtime")) {
+    const version = runCaptureOrThrow("wasmtime", ["--version"]).trim();
+    if (version.startsWith(expectedWasmtimeCliPrefix)) {
+      return {
+        available: true,
+        binPath: "wasmtime",
+        source: "system:wasmtime",
+        archiveSha256: null,
+        expectedArchiveSha256: null,
+        version,
+      };
+    }
+  }
+
+  const bundle = resolveBundledWasmtime();
+  if (!bundle) {
+    return {
+      available: false,
+      reason: "wasmtime_cli_unavailable_for_platform",
+    };
+  }
+
+  ensureDir(downloadDir);
+
+  const archivePath = path.join(downloadDir, bundle.fileName);
+  const unpackRoot = path.join(toolsDir, bundle.unpackDir);
+  const binPath = path.join(unpackRoot, bundle.binaryRelPath);
+
+  if (!fs.existsSync(archivePath)) {
+    const assetUrl = `https://github.com/bytecodealliance/wasmtime/releases/download/${wasmtimeRelease.tag}/${bundle.fileName}`;
+    runOrThrow("curl", ["-L", "-sSf", assetUrl, "-o", archivePath]);
+  }
+
+  const archiveSha256 = sha256File(archivePath);
+  if (archiveSha256 !== bundle.sha256) {
+    fs.rmSync(archivePath, { force: true });
+    throw new Error("wasmtime archive hash mismatch");
+  }
+
+  if (!fs.existsSync(binPath)) {
+    ensureDir(toolsDir);
+    runOrThrow("tar", ["-xJf", archivePath, "-C", toolsDir]);
+    if (!fs.existsSync(binPath)) {
+      throw new Error(`failed to extract wasmtime binary: ${binPath}`);
+    }
+  }
+
+  const version = runCaptureOrThrow(binPath, ["--version"]).trim();
+  if (!version.startsWith(expectedWasmtimeCliPrefix)) {
+    throw new Error(`unsupported bundled wasmtime version: ${version}`);
+  }
+
+  return {
+    available: true,
+    binPath,
+    source: `github:${wasmtimeRelease.tag}/${bundle.fileName}`,
+    archiveSha256,
+    expectedArchiveSha256: bundle.sha256,
+    version,
+  };
+}
+
 function assertWasmMagic(filePath) {
   const header = fs.readFileSync(filePath).subarray(0, 4);
   const magic = header.toString("hex");
@@ -207,6 +324,37 @@ function parseWorldSummary(witText) {
       exports.push(line.slice("export ".length).replace(/;$/, ""));
   }
   return { imports, exports };
+}
+
+function ensureCompiledComponent(componentPath) {
+  const wasmtime = ensureWasmtime();
+  if (!wasmtime.available) {
+    return {
+      available: false,
+      path: path.relative(repoRoot, compiledComponentPath),
+      reason: wasmtime.reason,
+    };
+  }
+
+  runOrThrow(wasmtime.binPath, [
+    "compile",
+    componentPath,
+    "-o",
+    compiledComponentPath,
+  ]);
+
+  return {
+    available: true,
+    path: path.relative(repoRoot, compiledComponentPath),
+    sha256: sha256File(compiledComponentPath),
+    bytes: fs.statSync(compiledComponentPath).size,
+    compiler: {
+      source: wasmtime.source,
+      version: wasmtime.version,
+      archiveSha256: wasmtime.archiveSha256,
+      expectedArchiveSha256: wasmtime.expectedArchiveSha256,
+    },
+  };
 }
 
 function buildHostImportWrapperComponentWat() {
@@ -299,6 +447,7 @@ function main() {
   const witSha256 = sha256Buffer(witSource);
   const sourceWasmSha256 = sha256File(wasiCoreWasmPath);
   const componentSha256 = sha256File(wasmPath);
+  const compiledComponent = ensureCompiledComponent(wasmPath);
   const worldSummary = parseWorldSummary(witText);
   const nativeHostImportPath = "aegispy:runtime/capability";
   const nativeHostImportDetected = worldSummary.imports.some((entry) =>
@@ -310,6 +459,7 @@ function main() {
     artifact: "artifacts/component/aegispy.component.wasm",
     sha256: componentSha256,
     bytes: fs.statSync(wasmPath).size,
+    compiledComponent,
     sourceCoreWasm: path.relative(repoRoot, wasiCoreWasmPath),
     sourceCoreWasmSha256: sourceWasmSha256,
     sourceWit: "wit/aegispy.wit",
@@ -339,7 +489,6 @@ function main() {
   };
 
   fs.writeFileSync(buildPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  fs.rmSync(compiledComponentPath, { force: true });
   console.log(JSON.stringify(manifest, null, 2));
 }
 

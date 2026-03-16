@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RunRequest, RunResult } from "@aegispy/core";
@@ -45,6 +45,11 @@ const defaultComponentBinary = path.join(
   "component",
   "aegispy.component.wasm",
 );
+const workerBuildInputs = [
+  path.join(repoRoot, "Cargo.lock"),
+  path.join(repoRoot, "rust", "aegispy-worker", "Cargo.toml"),
+  path.join(repoRoot, "rust", "aegispy-worker", "src", "main.rs"),
+];
 
 interface PendingRequest {
   resolve: (result: RunResult) => void;
@@ -95,7 +100,12 @@ export class RustWorkerTransport implements WorkerTransport {
   private ensureWorkerBinary(env: NodeJS.ProcessEnv): void {
     if (this.options.command !== defaultWorkerBinary) return;
     const forceRebuild = env.AEGISPY_FORCE_WORKER_REBUILD === "1";
-    if (!forceRebuild && existsSync(defaultWorkerBinary)) return;
+    if (
+      !forceRebuild &&
+      existsSync(defaultWorkerBinary) &&
+      !this.isWorkerBinaryStale()
+    )
+      return;
 
     const build = spawnSync("cargo", ["build", "-q", "-p", "aegispy_worker"], {
       cwd: repoRoot,
@@ -106,6 +116,18 @@ export class RustWorkerTransport implements WorkerTransport {
       const message = build.stderr.trim() || build.stdout.trim();
       throw new Error(`failed to build worker binary: ${message}`);
     }
+  }
+
+  private isWorkerBinaryStale(): boolean {
+    if (!existsSync(defaultWorkerBinary)) return true;
+    const binaryMtimeMs = statSync(defaultWorkerBinary).mtimeMs;
+    for (const inputPath of workerBuildInputs) {
+      if (!existsSync(inputPath)) return true;
+      if (statSync(inputPath).mtimeMs > binaryMtimeMs) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private ensureComponentArtifact(env: NodeJS.ProcessEnv): void {

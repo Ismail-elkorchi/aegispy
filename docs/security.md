@@ -39,9 +39,11 @@
 
 ## Kernel Isolation Evidence
 
-- The strict server profile records no-new-privs, namespace, cgroup, and
-  limit-envelope evidence in generated artifacts.
-- Seccomp state is recorded in those artifacts.
+- The strict server profile enforces no-new-privs, active seccomp filtering,
+  namespace evidence, cgroup evidence, and process-level CPU/address-space
+  ceilings in generated artifacts.
+- The strict Linux evidence now records blocked `unshare`, `setns`, `mount`,
+  and `ptrace` probes alongside the limit envelope.
 - High-risk tenant isolation is not published as valid.
 
 ## Replay And Adversarial Proof
