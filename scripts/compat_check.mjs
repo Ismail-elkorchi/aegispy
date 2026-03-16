@@ -36,6 +36,9 @@ const packageFixturesPath = path.join(
   "package-fixture-lockfiles.json",
 );
 const outPath = path.join(repoRoot, "artifacts", "gates", "compat-check.json");
+const requiredCompatibilityWorkloadCount = 28;
+const requiredPackageFixtureCount = 5;
+const requiredBrowserExecutedFixtureCount = 3;
 
 function ensureDir(p) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -151,6 +154,13 @@ function main() {
     if (!Array.isArray(doc.workloads) || doc.workloads.length === 0) {
       failures.push({ error: "workload_compatibility_workloads_missing" });
     } else {
+      if (doc.workloads.length < requiredCompatibilityWorkloadCount) {
+        failures.push({
+          error: "workload_compatibility_workload_count_below_floor",
+          required: requiredCompatibilityWorkloadCount,
+          actual: doc.workloads.length,
+        });
+      }
       for (const workload of doc.workloads) {
         if (
           typeof workload?.workloadId !== "string" ||
@@ -226,6 +236,13 @@ function main() {
     if (!Array.isArray(doc.fixtures) || doc.fixtures.length === 0) {
       failures.push({ error: "package_fixture_lockfiles_missing_entries" });
     } else {
+      if (doc.fixtures.length < requiredPackageFixtureCount) {
+        failures.push({
+          error: "package_fixture_count_below_floor",
+          required: requiredPackageFixtureCount,
+          actual: doc.fixtures.length,
+        });
+      }
       let executionBackedFixtureCount = 0;
       for (const fixture of doc.fixtures) {
         if (
@@ -266,9 +283,11 @@ function main() {
           }
         }
       }
-      if (executionBackedFixtureCount === 0) {
+      if (executionBackedFixtureCount < requiredBrowserExecutedFixtureCount) {
         failures.push({
-          error: "package_fixture_execution_backed_missing",
+          error: "package_fixture_execution_backed_below_floor",
+          required: requiredBrowserExecutedFixtureCount,
+          actual: executionBackedFixtureCount,
         });
       }
     }

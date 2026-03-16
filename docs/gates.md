@@ -57,6 +57,8 @@
 - The compatibility gate treats support claims as host-specific proof:
   `supportedFailures` and `unsupportedByProfileFailures` must be empty in the
   generated compatibility artifacts.
+- The compatibility gate also enforces a floor of 28 workloads, 5 pinned
+  package fixtures, and 3 browser-executed package fixtures.
 - Security proof writes `artifacts/security/replay-attestation.json`,
   `artifacts/security/adversarial-suite.json`,
   `artifacts/security/browser-input-fuzz.json`,

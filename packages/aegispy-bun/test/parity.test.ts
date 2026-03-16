@@ -10,6 +10,9 @@ import { writeArtifact } from "./helpers/artifact";
 const originalEnv = { ...process.env };
 const corpusEnvValue = "agent-corpus-env-ok";
 const allHosts = ["node", "deno", "bun", "browser"] as const;
+const minimumCorpusCaseCount = 28;
+const minimumPackageFixtureCount = 5;
+const minimumBrowserExecutedFixtureCount = 3;
 
 type CorpusHost = (typeof allHosts)[number];
 
@@ -297,6 +300,37 @@ const packageFixtures: PackageFixture[] = [
       packages: ["micropip"],
       code: ["import micropip", "print(micropip.__name__)"].join("\n"),
       expectedStdout: "micropip",
+    },
+  ),
+  makeBrowserExecutedPackageFixture(
+    "browser-packaging-version",
+    "Verified browser package proof for packaging version parsing.",
+    [{ name: "packaging", version: "24.1", kind: "pure_python" }],
+    {
+      host: "browser",
+      packages: ["packaging"],
+      code: [
+        "from packaging.version import Version",
+        'print(Version("2.3.4").public)',
+      ].join("\n"),
+      expectedStdout: "2.3.4",
+    },
+  ),
+  makeBrowserExecutedPackageFixture(
+    "browser-jinja2-render",
+    "Verified browser package proof for template rendering with jinja2 and markupsafe.",
+    [
+      { name: "jinja2", version: "3.1.4", kind: "pure_python" },
+      { name: "markupsafe", version: "2.1.5", kind: "pure_python" },
+    ],
+    {
+      host: "browser",
+      packages: ["jinja2", "markupsafe"],
+      code: [
+        "from jinja2 import Template",
+        'print(Template("hello {{ name|upper }}").render(name="aegispy"))',
+      ].join("\n"),
+      expectedStdout: "hello AEGISPY",
     },
   ),
 ];
@@ -716,6 +750,67 @@ const corpusCases: CorpusCase[] = [
     },
   },
   {
+    caseId: "csv-roundtrip",
+    family: "data-stdlib",
+    description: "stdlib csv writer and reader roundtrip workload",
+    code: [
+      "import csv",
+      "import io",
+      "buffer = io.StringIO()",
+      "writer = csv.writer(buffer)",
+      'writer.writerow(["name", "value"])',
+      'writer.writerow(["alpha", "7"])',
+      'writer.writerow(["beta", "9"])',
+      "buffer.seek(0)",
+      "rows = list(csv.DictReader(buffer))",
+      'print(rows[0]["name"] + ":" + rows[1]["value"])',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("alpha:9");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("alpha:9");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "configparser-merge",
+    family: "data-stdlib",
+    description: "stdlib configparser merge workload",
+    code: [
+      "import configparser",
+      "config = configparser.ConfigParser()",
+      'config.read_string("[service]\\nname = aegispy\\ntimeout = 2\\n")',
+      'config.read_string("[service]\\ntimeout = 5\\nmode = strict\\n")',
+      "print(':'.join([config['service']['name'], config['service']['timeout'], config['service']['mode']]))",
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("aegispy:5:strict");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("aegispy:5:strict");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
     caseId: "collections-counter",
     family: "data-stdlib",
     description: "stdlib collections counting workload",
@@ -762,6 +857,40 @@ const corpusCases: CorpusCase[] = [
     },
   },
   {
+    caseId: "html-parser-extract",
+    family: "text-stdlib",
+    description: "stdlib html parser extraction workload",
+    code: [
+      "from html.parser import HTMLParser",
+      "class LinkParser(HTMLParser):",
+      "    def __init__(self):",
+      "        super().__init__()",
+      "        self.links = []",
+      "    def handle_starttag(self, tag, attrs):",
+      '        if tag == "a":',
+      "            attr_map = dict(attrs)",
+      '            self.links.append(attr_map.get("href", ""))',
+      "parser = LinkParser()",
+      'parser.feed(\'<nav><a href="/docs">Docs</a><a href="/api">API</a></nav>\')',
+      'print("|".join(parser.links))',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("/docs|/api");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("/docs|/api");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
     caseId: "textwrap-shlex",
     family: "text-stdlib",
     description: "stdlib text wrapping and shell tokenization workload",
@@ -788,6 +917,33 @@ const corpusCases: CorpusCase[] = [
         result.status === "ok" &&
         result.stdoutUtf8.includes("cmd|--name|agent corpus") &&
         result.stdoutUtf8.includes("alpha beta|gamma|delta");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "template-substitute",
+    family: "text-stdlib",
+    description: "stdlib string template substitution workload",
+    code: [
+      "from string import Template",
+      'template = Template("$name:$mode:$count")',
+      'print(template.substitute(name="aegispy", mode="strict", count=3))',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("aegispy:strict:3");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("aegispy:strict:3");
       return supportedCheck(pass, "stdout_missing");
     },
   },
@@ -836,6 +992,133 @@ const corpusCases: CorpusCase[] = [
     },
     validateBrowser(result) {
       const pass = result.status === "ok" && result.stdoutUtf8.includes("0.50");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "decimal-quantize",
+    family: "numeric-stdlib",
+    description: "stdlib decimal quantize workload",
+    code: [
+      "from decimal import Decimal, ROUND_HALF_UP",
+      'value = Decimal("3.14159").quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)',
+      "print(value)",
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("3.14");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("3.14");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "fractions-normalize",
+    family: "numeric-stdlib",
+    description: "stdlib fractions normalization workload",
+    code: [
+      "from fractions import Fraction",
+      "value = Fraction(18, 24)",
+      'print(f"{value.numerator}/{value.denominator}")',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("3/4");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("3/4");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "pathlib-normalize",
+    family: "core-stdlib",
+    description: "stdlib pathlib join and part-normalization workload",
+    code: [
+      "from pathlib import PurePosixPath",
+      'path = PurePosixPath("/", "sandbox", "logs", "output.txt")',
+      'print(path.as_posix() + ":" + path.name)',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("/sandbox/logs/output.txt:output.txt");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("/sandbox/logs/output.txt:output.txt");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "uuid-format",
+    family: "core-stdlib",
+    description: "stdlib uuid formatting workload",
+    code: [
+      "import uuid",
+      'value = uuid.UUID("12345678-1234-5678-1234-567812345678")',
+      'print(value.hex + ":" + str(value.version))',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.trim() === "12345678123456781234567812345678:None";
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" &&
+        result.stdoutUtf8.trim() === "12345678123456781234567812345678:None";
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "itertools-groupby-shape",
+    family: "data-stdlib",
+    description: "stdlib itertools groupby data-shaping workload",
+    code: [
+      "from itertools import groupby",
+      "pairs = []",
+      'for key, group in groupby("aaabcccc", key=lambda value: value):',
+      '    pairs.append(f"{key}{len(list(group))}")',
+      'print(",".join(pairs))',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("a3,b1,c4");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("a3,b1,c4");
       return supportedCheck(pass, "stdout_missing");
     },
   },
@@ -1107,7 +1390,7 @@ afterEach(() => {
 
 describe("bun adapter parity", () => {
   it("keeps the compatibility corpus breadth above the current floor", () => {
-    expect(corpusCases.length).toBeGreaterThanOrEqual(18);
+    expect(corpusCases.length).toBeGreaterThanOrEqual(minimumCorpusCaseCount);
   });
 
   it("fails the corpus when a supported host workload fails", () => {
@@ -1623,11 +1906,14 @@ describe("bun adapter parity", () => {
       packageFixtures.map((fixture) => summarizePackageFixture(fixture)),
     );
     const packageFixturesOk = arePackageFixturesOk(fixtureSummary);
+    expect(fixtureSummary.length).toBeGreaterThanOrEqual(
+      minimumPackageFixtureCount,
+    );
     expect(
-      fixtureSummary.some(
+      fixtureSummary.filter(
         (fixture) => fixture.coverageBasis === "browser-executed",
-      ),
-    ).toBe(true);
+      ).length,
+    ).toBeGreaterThanOrEqual(minimumBrowserExecutedFixtureCount);
     expect(packageFixturesOk).toBe(true);
 
     const compatibilityFailures = collectCompatibilityFailures(caseResults);

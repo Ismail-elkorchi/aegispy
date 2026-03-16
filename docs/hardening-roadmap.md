@@ -30,6 +30,8 @@ A real hardened Python engine suitable for hostile agent workloads.
 1. Compatibility corpus and package metadata
 
 - Broaden the generated workload-compatibility matrix across all public hosts.
+- The current gate now enforces a 28-workload cross-host matrix plus 5 pinned
+  package fixtures, including 3 browser-executed fixture families.
 - Keep pure-Python package fixtures pinned through verified lockfiles and mix
   metadata-backed and browser-executed proof where the runtime can verify the
   package safely.

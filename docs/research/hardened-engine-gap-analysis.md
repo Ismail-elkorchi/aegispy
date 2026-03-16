@@ -14,6 +14,8 @@ target hardening posture for untrusted coding-agent execution.
 - The worker defaults to the WASI executor and the `component-wit` capability channel.
 - Real-execution, capability-binding, and profile-conformance evidence artifacts are present.
 - The browser profile now uses an experimental real-engine worker path with explicit capability limits.
+- The compatibility corpus now proves 28 host-specific workloads and 5 pinned
+  package fixtures, including 3 browser-executed browser-package fixtures.
 - The strict server profile now enforces no-new-privs, active seccomp
   filtering, namespace and cgroup evidence, and process-level CPU/address-space
   ceilings in generated artifacts.
@@ -38,10 +40,12 @@ target hardening posture for untrusted coding-agent execution.
 
 1. Compatibility corpus breadth
 
-- Broaden the generated workload matrix and reason-code coverage across all hosts.
+- Broaden the generated workload matrix and reason-code coverage beyond the
+  current 28-workload cross-host corpus.
 - Keep pure-Python package fixture proof explicit and pinned as part of the
-  public package-loading contract, including browser-executed coverage where
-  the runtime can verify the package safely.
+  public package-loading contract, including browser-executed coverage beyond
+  the current 5-fixture / 3 browser-executed baseline where the runtime can
+  verify the package safely.
 
 2. Enforced isolation profile
 
