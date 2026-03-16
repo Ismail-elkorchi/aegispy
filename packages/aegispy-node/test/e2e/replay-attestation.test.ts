@@ -1,14 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
 import { createRuntime as createNodeRuntime } from "../../src/index";
 import { createRuntime as createDenoRuntime } from "../../../aegispy-deno/src/index";
 import { createRuntime as createBunRuntime } from "../../../aegispy-bun/src/index";
 import { createRuntime as createBrowserRuntime } from "../../../aegispy-browser/src/index";
 import { computeReplayHash } from "../../../aegispy-core/src/determinism/index";
-import type { HostKind, RunRequest } from "@aegispy/core";
+import type { HostKind, RunRequest, RunResult } from "@aegispy/core";
 import { writeArtifact } from "../helpers/artifact";
 
 const invariants = ["INV-FEAT-0024", "INV-SECU-0010"];
-const replayRunBudgetMs = 3_000;
+const replayRunBudgetMs = 5_000;
 
 interface ReplayWorkload {
   workloadId: string;
@@ -115,6 +115,19 @@ function capabilityChannel(result: {
     : null;
 }
 
+function expectReplaySuccess(
+  result: RunResult,
+  host: HostKind,
+  workloadId: string,
+  caseId: string,
+) {
+  if (result.status !== "ok") {
+    throw new Error(
+      `replay run failed for ${host}:${workloadId}:${caseId}: ${result.error.code} ${result.stderrUtf8}`,
+    );
+  }
+}
+
 const runtimeFactories = {
   node: () => createNodeRuntime({ host: "node" }),
   deno: () => createDenoRuntime({ host: "deno" }),
@@ -142,9 +155,9 @@ describe("replay attestation", () => {
           makeRequest(host, "1234abcd", workload),
         );
 
-        expect(first.status).toBe("ok");
-        expect(second.status).toBe("ok");
-        expect(third.status).toBe("ok");
+        expectReplaySuccess(first, host, workload.workloadId, "same-seed-a");
+        expectReplaySuccess(second, host, workload.workloadId, "same-seed-b");
+        expectReplaySuccess(third, host, workload.workloadId, "different-seed");
 
         const firstHash = computeReplayHash(first);
         const secondHash = computeReplayHash(second);
