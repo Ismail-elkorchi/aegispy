@@ -15,7 +15,8 @@
 - `windows-smoke`
   - portable smoke on Windows
 - `runtime-latest`
-  - non-blocking latest-Node canary for the portable and host-contract surface
+  - non-blocking latest Node, Deno, and Bun canary for the portable and
+    host-contract surface
 
 ## Runtime Policy
 
@@ -34,6 +35,7 @@
 - review ownership lives in `.github/CODEOWNERS`
 - PR scaffolding lives in `.github/pull_request_template.md`
 - issue intake lives in `.github/ISSUE_TEMPLATE/`
+- release note categorization lives in `.github/release.yml`
 - contributor-facing verification commands live in `docs/gates.md`
 - repository-admin automation is intentionally maintained outside the product
   repo
@@ -41,5 +43,5 @@
 ## Scope
 
 This document covers the current CI and GitHub governance surface for the
-repository. Release automation belongs in release-specific documentation when
-that public surface exists.
+repository. Release automation is documented separately in
+`docs/maintainers/release.md`.

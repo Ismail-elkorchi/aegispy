@@ -26,5 +26,5 @@ documented `browser-subset` profile for browser use.
 
 Contributor-facing material is intentionally kept off the consumer path.
 See `CONTRIBUTING.md`, `docs/maintainers/ci-and-governance.md`,
-`docs/maintainers/security-controls.md`, `docs/gates.md`, and
-`docs/runbook.md`.
+`docs/maintainers/security-controls.md`, `docs/maintainers/release.md`,
+`docs/gates.md`, and `docs/runbook.md`.

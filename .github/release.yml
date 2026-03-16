@@ -1,0 +1,25 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - chore
+      - internal
+      - github_actions
+  categories:
+    - title: Features
+      labels:
+        - feature
+        - enhancement
+    - title: Fixes
+      labels:
+        - fix
+        - bug
+        - bugfix
+    - title: Security
+      labels:
+        - security
+    - title: Maintenance
+      labels:
+        - maintenance
+        - refactor
+        - docs

@@ -31,6 +31,12 @@
 - `bash scripts/release_claims_check` runs the release-grade claim gate and
   writes `artifacts/gates/release-claims.json`.
 
+## Release Commands
+
+- `pnpm run release:gate -- v0.0.0`
+- `pnpm run release:audit`
+- `pnpm run release:claims`
+
 ## Evidence Output
 
 - Verification writes generated evidence under `artifacts/gates/`,

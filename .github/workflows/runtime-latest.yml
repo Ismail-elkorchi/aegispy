@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  latest-node-smoke:
-    name: latest-node-smoke
+  latest-runtime-smoke:
+    name: latest-runtime-smoke
     runs-on: ubuntu-latest
     timeout-minutes: 45
     continue-on-error: true
@@ -39,6 +39,16 @@ jobs:
           node-version: current
           cache: pnpm
 
+      - name: Setup Deno
+        uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: latest
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3 # v2.1.2
+        with:
+          bun-version: latest
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -46,6 +56,12 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - name: Record Runtime Versions
+        run: |
+          node --version
+          deno --version
+          bun --version
 
       - name: Portable check
         run: pnpm run check:portable
