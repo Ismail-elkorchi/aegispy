@@ -68,25 +68,147 @@ function resolveLauncherArgs(env: NodeJS.ProcessEnv): {
     return { args: [], reason: null };
   }
 
-  try {
-    const parsed = JSON.parse(raw);
-    if (
-      !Array.isArray(parsed) ||
-      !parsed.every((value) => typeof value === "string")
-    ) {
-      return {
-        args: [],
-        reason:
-          "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected a JSON string array",
-      };
-    }
-    return { args: parsed, reason: null };
-  } catch {
+  const parsed = parseJsonStringArray(raw);
+  if (!parsed.ok) {
     return {
       args: [],
-      reason: "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected valid JSON",
+      reason: parsed.reason,
     };
   }
+
+  return { args: parsed.value, reason: null };
+}
+
+function parseJsonStringArray(
+  raw: string,
+): { ok: true; value: string[] } | { ok: false; reason: string } {
+  let index = 0;
+  const value: string[] = [];
+
+  const fail = (reason: string): { ok: false; reason: string } => ({
+    ok: false,
+    reason,
+  });
+
+  const skipWhitespace = (): void => {
+    while (index < raw.length && /\s/.test(raw[index]!)) {
+      index += 1;
+    }
+  };
+
+  const readHexDigits = (): string | null => {
+    const chunk = raw.slice(index, index + 4);
+    if (!/^[0-9a-fA-F]{4}$/.test(chunk)) return null;
+    index += 4;
+    return chunk;
+  };
+
+  const readString = (): string | null => {
+    if (raw[index] !== '"') return null;
+    index += 1;
+    let out = "";
+
+    while (index < raw.length) {
+      const ch = raw[index]!;
+      index += 1;
+
+      if (ch === '"') return out;
+      if (ch !== "\\") {
+        out += ch;
+        continue;
+      }
+
+      if (index >= raw.length) return null;
+      const escape = raw[index]!;
+      index += 1;
+
+      if (escape === '"' || escape === "\\" || escape === "/") {
+        out += escape;
+        continue;
+      }
+      if (escape === "b") {
+        out += "\b";
+        continue;
+      }
+      if (escape === "f") {
+        out += "\f";
+        continue;
+      }
+      if (escape === "n") {
+        out += "\n";
+        continue;
+      }
+      if (escape === "r") {
+        out += "\r";
+        continue;
+      }
+      if (escape === "t") {
+        out += "\t";
+        continue;
+      }
+      if (escape === "u") {
+        const hex = readHexDigits();
+        if (hex === null) return null;
+        out += String.fromCodePoint(Number.parseInt(hex, 16));
+        continue;
+      }
+      return null;
+    }
+
+    return null;
+  };
+
+  skipWhitespace();
+  if (raw[index] !== "[") {
+    return fail(
+      "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected a JSON string array",
+    );
+  }
+  index += 1;
+  skipWhitespace();
+
+  if (raw[index] === "]") {
+    index += 1;
+    skipWhitespace();
+    return index === raw.length
+      ? { ok: true, value }
+      : fail(
+          "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected a JSON string array",
+        );
+  }
+
+  while (index < raw.length) {
+    const item = readString();
+    if (item === null) {
+      return fail(
+        "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected a JSON string array",
+      );
+    }
+    value.push(item);
+    skipWhitespace();
+
+    if (raw[index] === ",") {
+      index += 1;
+      skipWhitespace();
+      continue;
+    }
+    if (raw[index] === "]") {
+      index += 1;
+      skipWhitespace();
+      return index === raw.length
+        ? { ok: true, value }
+        : fail(
+            "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected a JSON string array",
+          );
+    }
+    return fail(
+      "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected a JSON string array",
+    );
+  }
+
+  return fail(
+    "invalid AEGISPY_MICROVM_LAUNCHER_ARGS_JSON, expected a JSON string array",
+  );
 }
 
 export function resolveWorkerExecutionMode(

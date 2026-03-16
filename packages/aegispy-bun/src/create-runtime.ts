@@ -153,13 +153,13 @@ export class BunRuntime implements AegisPyRuntime {
       return engineErrorResult("host mismatch");
     }
 
-    try {
-      return await this.transport.run(req);
-    } catch (error: unknown) {
-      return engineErrorResult(
-        error instanceof Error ? error.message : "unknown transport error",
+    return Promise.resolve(req)
+      .then((request) => this.transport.run(request))
+      .catch((error: unknown) =>
+        engineErrorResult(
+          error instanceof Error ? error.message : "unknown transport error",
+        ),
       );
-    }
   }
 
   public async close(): Promise<void> {
