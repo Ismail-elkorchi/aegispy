@@ -1,5 +1,6 @@
 {
   "name": "aegispy",
+  "version": "0.0.0",
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "scripts": {
@@ -25,6 +26,8 @@
     "engine:build": "node scripts/engine/build-all.mjs",
     "engine:verify": "node scripts/engine/verify.mjs",
     "selftest": "node scripts/selftest.mjs",
+    "release:gate": "node scripts/release-gate.mjs",
+    "release:audit": "node scripts/release-audit.mjs",
     "release:claims": "bash scripts/release_claims_check"
   },
   "devDependencies": {

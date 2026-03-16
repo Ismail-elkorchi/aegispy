@@ -19,6 +19,13 @@
 7. Run `bash scripts/release_claims_check`.
 8. Run `bash scripts/profile_conformance_check` when validating profile-scoped claims independently.
 
+## Release
+
+- Update `CHANGELOG.md` before tagging a release.
+- Run `pnpm run release:gate -- v0.0.0` with the target tag.
+- Run `pnpm run release:audit`.
+- GitHub release automation lives in `.github/workflows/release.yml`.
+
 ## Component Build
 
 - Run `pnpm component:build`.
@@ -42,7 +49,7 @@
   `bun`, and `browser-subset`.
 - `linux-check` runs the full Linux truth lane and provenance verification.
 - `macos-smoke` and `windows-smoke` run the portable smoke surface.
-- `runtime-latest` is a non-blocking latest-Node canary.
+- `runtime-latest` is a non-blocking latest Node, Deno, and Bun canary.
 
 ## Error Taxonomy
 

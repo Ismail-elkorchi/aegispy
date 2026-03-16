@@ -1,0 +1,116 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing v-prefixed tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  github-release:
+    name: github-release
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag_name, 'v')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref }}
+
+      - name: Fetch tags
+        run: git fetch --force --tags
+
+      - name: Load Runtime Policy
+        id: runtime-policy
+        shell: bash
+        run: |
+          node -e "const fs=require('node:fs');const p=JSON.parse(fs.readFileSync('tools/runtime-versions.json','utf8'));fs.appendFileSync(process.env.GITHUB_OUTPUT,'node_pinned='+p.node.pinned+'\\n');fs.appendFileSync(process.env.GITHUB_OUTPUT,'rust_toolchain='+p.rust.toolchain+'\\n');"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ steps.runtime-policy.outputs.node_pinned }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.runtime-policy.outputs.rust_toolchain }}
+
+      - name: Resolve Release Tag
+        id: release-tag
+        shell: bash
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag_name="${{ inputs.tag_name }}"
+          else
+            tag_name="${GITHUB_REF_NAME}"
+          fi
+          if [[ "$tag_name" != v* ]]; then
+            echo "expected v-prefixed tag, got: ${tag_name}" >&2
+            exit 1
+          fi
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Release Gate
+        run: pnpm run release:gate -- "${{ steps.release-tag.outputs.tag_name }}"
+
+      - name: Quality Gates
+        run: pnpm run check && pnpm run release:claims
+
+      - name: Fail on tracked-file churn
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain=v1)" ]]; then
+            echo "Tracked files changed during release run:"
+            git status --porcelain=v1
+            exit 1
+          fi
+
+      - name: Build release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ steps.release-tag.outputs.tag_name }}
+        run: |
+          node ./scripts/changelog-section.mjs "${TAG_NAME}" > release-notes.md
+          printf '\n\n' >> release-notes.md
+          node ./scripts/release-audit.mjs --print-pr-section --tag "${TAG_NAME}" >> release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ steps.release-tag.outputs.tag_name }}
+        run: |
+          if gh release view "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${TAG_NAME} already exists; skipping create."
+          else
+            gh release create "${TAG_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${TAG_NAME#v}" \
+              --notes-file release-notes.md
+          fi
