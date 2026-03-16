@@ -37,6 +37,8 @@
 - issue intake lives in `.github/ISSUE_TEMPLATE/`
 - release note categorization lives in `.github/release.yml`
 - contributor-facing verification commands live in `docs/gates.md`
+- `pr-policy` audits pull request metadata and also verifies that each `main`
+  push resolves back to a merged pull request
 - repository-admin automation is intentionally maintained outside the product
   repo
 

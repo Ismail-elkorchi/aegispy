@@ -39,6 +39,8 @@ jobs:
           package-manager-cache: false
 
       - name: PR Policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash scripts/pr_policy_check
 
       - name: Banned Token Scan
