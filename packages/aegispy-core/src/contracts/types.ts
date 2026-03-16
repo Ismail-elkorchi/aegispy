@@ -78,7 +78,10 @@ export interface AuditEvent {
     | "determinism_time"
     | "determinism_rng"
     | "policy_denied"
-    | "runtime_channel";
+    | "runtime_channel"
+    | "runtime_binding"
+    | "engine_error"
+    | "kernel_isolation";
   detailJson: string;
 }
 

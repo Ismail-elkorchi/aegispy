@@ -27,6 +27,7 @@ Properties:
 - experimental worker-backed real Python execution
 - no filesystem, HTTP, or environment capabilities
 - stable unsupported-host semantics for browser-unavailable capabilities
+- runtime-boundary audit entries before terminal deny events
 
 ## Evidence
 

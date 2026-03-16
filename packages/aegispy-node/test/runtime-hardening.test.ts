@@ -75,6 +75,12 @@ function auditDetail(result: RunResult, kind: string): string | null {
   return event?.detailJson ?? null;
 }
 
+function auditKinds(result: RunResult): string[] {
+  return (result.meta.audit as Array<{ kind: string }>).map(
+    (entry) => entry.kind,
+  );
+}
+
 function parseKernelIsolationDetail(detail: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of detail.split(";")) {
@@ -185,6 +191,16 @@ describe("runtime hardening", () => {
     expect(fsResult.error.code).toBe("AEG-POLICY-DENIED");
     expect(httpResult.error.code).toBe("AEG-POLICY-DENIED");
     expect(isolationResult.error.code).toBe("AEG-POLICY-DENIED");
+    expect(auditKinds(fsResult).slice(0, 2)).toEqual([
+      "runtime_channel",
+      "runtime_binding",
+    ]);
+    expect(auditKinds(httpResult).slice(0, 2)).toEqual([
+      "runtime_channel",
+      "runtime_binding",
+    ]);
+    expect(auditKinds(fsResult)).toContain("policy_denied");
+    expect(auditKinds(httpResult)).toContain("policy_denied");
     expect(isolationResult.stderrUtf8).toContain("isolation_");
     expect(capabilityChannel(fsResult)).toBe("component-wit");
     expect(capabilityChannel(httpResult)).toBe("component-wit");

@@ -170,5 +170,19 @@ describe("browser runtime", () => {
       throw new Error("expected browser subset rejection");
     }
     expect(result.error.code).toBe("AEG-UNSUPPORTED-HOST");
+    expect(result.meta.termination).toBe("policy_denied");
+    expect(result.meta.audit.map((entry) => entry.kind)).toEqual([
+      "runtime_channel",
+      "runtime_binding",
+      "policy_denied",
+    ]);
+    expect(result.meta.audit[0]?.detailJson).toBe(
+      "capability_channel:worker-timeout",
+    );
+    expect(JSON.parse(result.meta.audit[2]?.detailJson ?? "{}")).toMatchObject({
+      reason: "host_profile_capability_unsupported",
+      unsupportedCapabilities: ["fs"],
+      profile: "browser-real-engine",
+    });
   });
 });
