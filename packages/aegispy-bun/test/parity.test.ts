@@ -388,10 +388,6 @@ const corpusCases: CorpusCase[] = [
       http: null,
       env: null,
     },
-    configureRequest(request) {
-      request.limits.time.wallMs = 15_000;
-      request.limits.time.cpuMs = 15_000;
-    },
     validateServer(result) {
       const digest = result.stdoutUtf8.trim();
       const pass = result.status === "ok" && /^[0-9a-f]{64}$/u.test(digest);
@@ -904,6 +900,45 @@ describe("bun adapter parity", () => {
     expect(capabilities.hardened).toBe(false);
     expect(result.status).toBe("ok");
     expect(capabilityChannel(result)).toBe(null);
+  }, 600_000);
+
+  it("keeps stdlib json and hashlib supported on server hosts", async () => {
+    process.env = {
+      ...originalEnv,
+      AEGISPY_NODE_TRANSPORT: "process",
+      AEGISPY_DENO_TRANSPORT: "process",
+      AEGISPY_BUN_TRANSPORT: "process",
+      AEGISPY_ISOLATION_PROFILE: "compat",
+    };
+
+    const nodeRuntime = await createNodeRuntime({ host: "node" });
+    const denoRuntime = await createDenoRuntime({ host: "deno" });
+    const bunRuntime = await createRuntime({ host: "bun" });
+
+    const requestCode = [
+      "import json",
+      "import hashlib",
+      'payload = json.dumps({"answer": 42, "tags": ["a", "b"]}, sort_keys=True)',
+      "print(hashlib.sha256(payload.encode()).hexdigest())",
+    ].join("\n");
+
+    const request = (host: "node" | "deno" | "bun"): RunRequest => {
+      return makeRequest(host, requestCode);
+    };
+
+    const nodeResult = await nodeRuntime.run(request("node"));
+    const denoResult = await denoRuntime.run(request("deno"));
+    const bunResult = await bunRuntime.run(request("bun"));
+
+    await nodeRuntime.close();
+    await denoRuntime.close();
+    await bunRuntime.close();
+
+    for (const result of [nodeResult, denoResult, bunResult]) {
+      expect(result.status).toBe("ok");
+      expect(result.stdoutUtf8.trim()).toMatch(/^[0-9a-f]{64}$/u);
+      expect(capabilityChannel(result)).toBe("component-wit");
+    }
   }, 600_000);
 
   it("writes cross-host parity contract and workload compatibility corpus", async () => {
