@@ -16,6 +16,10 @@ Compatibility claims are host-specific. Any workload marked as `supported` for
 artifacts. Unsupported-by-profile cases are only valid when the artifact
 records the expected rejection reason for that host.
 
+The compatibility gate currently requires 28 generated workloads in the
+cross-host matrix, 5 pinned package fixtures, and 3 `browser-executed`
+package fixtures.
+
 ## Workload Families
 
 | Family            | Meaning                                                                  |
@@ -70,3 +74,9 @@ proof for representative pure-Python package families. That artifact now mixes
 `metadata-only` fixtures with `browser-executed` fixtures when the
 `browser-real-engine` runtime can import the package through a verified
 `packageLockfile`.
+
+The current browser-executed fixture families cover:
+
+- bundled `micropip`
+- `packaging`
+- `jinja2` with `markupsafe`
