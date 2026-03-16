@@ -8,6 +8,7 @@ import type { HostKind, RunRequest } from "@aegispy/core";
 import { writeArtifact } from "../helpers/artifact";
 
 const invariants = ["INV-FEAT-0024", "INV-SECU-0010"];
+const replayRunBudgetMs = 3_000;
 
 interface ReplayWorkload {
   workloadId: string;
@@ -56,8 +57,8 @@ function makeRequest(
     },
     limits: {
       time: {
-        wallMs: 3_000,
-        cpuMs: 3_000,
+        wallMs: replayRunBudgetMs,
+        cpuMs: replayRunBudgetMs,
       },
       bytes: {
         memoryBytes: 16 * 1024 * 1024,
