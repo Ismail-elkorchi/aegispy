@@ -1417,19 +1417,24 @@ fn resolve_fs_binding_path(
 
 fn execute_http_get(url: &str, max_bytes: u64, timeout_ms: u64) -> Result<String, String> {
     let timeout = Duration::from_millis(timeout_ms.max(1));
-    let response = ureq::get(url)
-        .timeout(timeout)
+    let mut response = ureq::get(url)
+        .config()
+        .timeout_global(Some(timeout))
+        .timeout_recv_body(Some(timeout))
+        .build()
         .call()
         .map_err(|error| format!("http_get_failed:{error}"))?;
-    let reader = response.into_reader();
-    let mut limited = reader.take(max_bytes.saturating_add(1));
-    let mut body = Vec::new();
-    limited
-        .read_to_end(&mut body)
-        .map_err(|error| format!("http_read_failed:{error}"))?;
-    if (body.len() as u64) > max_bytes {
-        return Err("http_response_bytes_exceeded".to_string());
-    }
+    let body = response
+        .body_mut()
+        .with_config()
+        .limit(max_bytes.saturating_add(1))
+        .read_to_vec()
+        .map_err(|error| match error {
+            ureq::Error::BodyExceedsLimit(_) => {
+                "http_response_bytes_exceeded".to_string()
+            }
+            other => format!("http_read_failed:{other}"),
+        })?;
     Ok(String::from_utf8_lossy(&body).to_string())
 }
 
