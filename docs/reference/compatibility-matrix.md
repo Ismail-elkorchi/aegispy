@@ -11,6 +11,11 @@ The compatibility surface is generated from automated host runs and written to:
 Those artifacts are the canonical source for workload-family coverage, host
 profiles, and stable reason codes.
 
+Compatibility claims are host-specific. Any workload marked as `supported` for
+`node`, `deno`, `bun`, or `browser` must pass on that host in the generated
+artifacts. Unsupported-by-profile cases are only valid when the artifact
+records the expected rejection reason for that host.
+
 ## Workload Families
 
 | Family            | Meaning                                                                  |
@@ -52,6 +57,10 @@ and capability-limited:
 
 That unsupported status is expected and recorded in the generated matrix via
 `unsupported_browser_capability`.
+
+The generated corpus also records `supportedFailures` and
+`unsupportedByProfileFailures`. Both lists must stay empty for the compatibility
+gate to remain green.
 
 ## Package Fixture Metadata
 

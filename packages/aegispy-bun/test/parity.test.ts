@@ -9,9 +9,7 @@ import { writeArtifact } from "./helpers/artifact";
 
 const originalEnv = { ...process.env };
 const corpusEnvValue = "agent-corpus-env-ok";
-const serverPassRateMin = 0.8;
 const allHosts = ["node", "deno", "bun", "browser"] as const;
-const serverHosts = ["node", "deno", "bun"] as const;
 
 type CorpusHost = (typeof allHosts)[number];
 
@@ -55,6 +53,25 @@ interface CaseOutcome {
   expectation: CompatibilityExpectation;
   exceptionTag: string | null;
   reasonCode: string;
+}
+
+interface CompatibilityFailure {
+  caseId: string;
+  host: CorpusHost;
+  reasonCode: string;
+}
+
+interface CompatibilityFailures {
+  supported: CompatibilityFailure[];
+  unsupportedByProfile: CompatibilityFailure[];
+}
+
+interface CorpusCaseResult {
+  caseId: string;
+  family: WorkloadFamily;
+  description: string;
+  tags: string[];
+  results: Record<CorpusHost, CaseOutcome>;
 }
 
 interface PackageFixture {
@@ -320,6 +337,45 @@ function makeRequest(host: HostKind, code: string): RunRequest {
       rngSeedHex: "0a0b0c0d",
     },
   };
+}
+
+function collectCompatibilityFailures(
+  caseResults: CorpusCaseResult[],
+): CompatibilityFailures {
+  const supported: CompatibilityFailure[] = [];
+  const unsupportedByProfile: CompatibilityFailure[] = [];
+
+  for (const entry of caseResults) {
+    for (const host of allHosts) {
+      const result = entry.results[host];
+      if (result.pass) continue;
+
+      const failure = {
+        caseId: entry.caseId,
+        host,
+        reasonCode: result.reasonCode,
+      };
+
+      if (result.expectation === "supported") {
+        supported.push(failure);
+      } else {
+        unsupportedByProfile.push(failure);
+      }
+    }
+  }
+
+  return { supported, unsupportedByProfile };
+}
+
+function isCompatibilityCorpusOk(
+  failures: CompatibilityFailures,
+  packageFixturesOk: boolean,
+): boolean {
+  return (
+    packageFixturesOk &&
+    failures.supported.length === 0 &&
+    failures.unsupportedByProfile.length === 0
+  );
 }
 
 const corpusCases: CorpusCase[] = [
@@ -695,6 +751,69 @@ afterEach(() => {
 });
 
 describe("bun adapter parity", () => {
+  it("fails the corpus when a supported host workload fails", () => {
+    const failures = collectCompatibilityFailures([
+      {
+        caseId: "synthetic-supported-failure",
+        family: "data-stdlib",
+        description: "synthetic supported host failure",
+        tags: [],
+        results: {
+          node: {
+            status: "error",
+            termination: "policy_denied",
+            errorCode: "AEG-POLICY-DENIED",
+            capabilityChannel: "component-wit",
+            pass: false,
+            expectation: "supported",
+            exceptionTag: null,
+            reasonCode: "stdlib_digest_missing",
+          },
+          deno: {
+            status: "ok",
+            termination: "ok",
+            errorCode: null,
+            capabilityChannel: "component-wit",
+            pass: true,
+            expectation: "supported",
+            exceptionTag: null,
+            reasonCode: "supported",
+          },
+          bun: {
+            status: "ok",
+            termination: "ok",
+            errorCode: null,
+            capabilityChannel: "component-wit",
+            pass: true,
+            expectation: "supported",
+            exceptionTag: null,
+            reasonCode: "supported",
+          },
+          browser: {
+            status: "error",
+            termination: "policy_denied",
+            errorCode: "AEG-UNSUPPORTED-HOST",
+            capabilityChannel: "worker-timeout",
+            pass: true,
+            expectation: "unsupported-by-profile",
+            exceptionTag: "browser-capability-limited",
+            reasonCode: "unsupported_browser_capability",
+          },
+        },
+      },
+    ]);
+
+    expect(failures.supported).toEqual([
+      {
+        caseId: "synthetic-supported-failure",
+        host: "node",
+        reasonCode: "stdlib_digest_missing",
+      },
+    ]);
+    expect(failures.unsupportedByProfile).toEqual([]);
+    expect(isCompatibilityCorpusOk(failures, true)).toBe(false);
+  });
+
   it("defaults to process transport and matches node contract shape", async () => {
     process.env = { ...originalEnv };
     delete process.env.AEGISPY_BUN_TRANSPORT;
@@ -981,13 +1100,7 @@ describe("bun adapter parity", () => {
       browser: 0,
     };
 
-    const caseResults: Array<{
-      caseId: string;
-      family: WorkloadFamily;
-      description: string;
-      tags: string[];
-      results: Record<CorpusHost, CaseOutcome>;
-    }> = [];
+    const caseResults: CorpusCaseResult[] = [];
 
     const closeRuntimes = async () => {
       await nodeRuntime.close();
@@ -1096,11 +1209,6 @@ describe("bun adapter parity", () => {
       },
     };
 
-    for (const host of serverHosts) {
-      expect(hostSummary[host].passRate).toBeGreaterThanOrEqual(
-        serverPassRateMin,
-      );
-    }
     expect(hostSummary.browser.profile).toBe("browser-real-engine");
 
     const fixtureSummary = packageFixtures.map((fixture) => ({
@@ -1116,12 +1224,14 @@ describe("bun adapter parity", () => {
     );
     expect(packageFixturesOk).toBe(true);
 
-    const corpusOk =
-      hostSummary.node.passRate >= serverPassRateMin &&
-      hostSummary.deno.passRate >= serverPassRateMin &&
-      hostSummary.bun.passRate >= serverPassRateMin &&
-      hostSummary.browser.passRate >= serverPassRateMin &&
-      packageFixturesOk;
+    const compatibilityFailures = collectCompatibilityFailures(caseResults);
+    expect(compatibilityFailures.supported).toEqual([]);
+    expect(compatibilityFailures.unsupportedByProfile).toEqual([]);
+
+    const corpusOk = isCompatibilityCorpusOk(
+      compatibilityFailures,
+      packageFixturesOk,
+    );
 
     const parityCase = caseResults.find(
       (entry) => entry.caseId === "simple-print",
@@ -1149,15 +1259,14 @@ describe("bun adapter parity", () => {
       ok: corpusOk,
       invariants: ["INV-FEAT-0017", "INV-FEAT-0018", "INV-FEAT-0025"],
       generatedAt: new Date().toISOString(),
-      thresholds: {
-        serverPassRateMin,
-      },
       hosts: hostSummary,
       families: Object.keys(workloadFamilies),
       reasonCodes: Object.keys(compatibilityReasonCodes),
       packageFixturesArtifact:
         "artifacts/compat/package-fixture-lockfiles.json",
       allowedBrowserExceptionTags: ["browser-capability-limited"],
+      supportedFailures: compatibilityFailures.supported,
+      unsupportedByProfileFailures: compatibilityFailures.unsupportedByProfile,
       cases: caseResults,
     });
 
@@ -1165,9 +1274,6 @@ describe("bun adapter parity", () => {
       ok: corpusOk,
       invariants: ["INV-FEAT-0017", "INV-FEAT-0018", "INV-FEAT-0025"],
       generatedAt: new Date().toISOString(),
-      thresholds: {
-        serverPassRateMin,
-      },
       profiles: {
         node: capabilities.node.profile,
         deno: capabilities.deno.profile,
@@ -1178,6 +1284,8 @@ describe("bun adapter parity", () => {
       reasonCodes: compatibilityReasonCodes,
       packageFixtures: fixtureSummary,
       hosts: hostSummary,
+      supportedFailures: compatibilityFailures.supported,
+      unsupportedByProfileFailures: compatibilityFailures.unsupportedByProfile,
       workloads: caseResults.map((entry) => ({
         workloadId: entry.caseId,
         family: entry.family,
@@ -1362,12 +1470,14 @@ describe("bun adapter parity", () => {
       corpus: {
         artifact: "artifacts/compat/agent-workload-corpus.json",
         matrixArtifact: "artifacts/compat/workload-compatibility-matrix.json",
-        serverPassRateMin,
         serverPassRates: {
           node: hostSummary.node.passRate,
           deno: hostSummary.deno.passRate,
           bun: hostSummary.bun.passRate,
         },
+        supportedFailures: compatibilityFailures.supported,
+        unsupportedByProfileFailures:
+          compatibilityFailures.unsupportedByProfile,
         browserExceptionTags,
       },
     });
