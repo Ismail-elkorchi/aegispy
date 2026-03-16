@@ -14,6 +14,10 @@ target hardening posture for untrusted coding-agent execution.
 - The worker defaults to the WASI executor and the `component-wit` capability channel.
 - Real-execution, capability-binding, and profile-conformance evidence artifacts are present.
 - The browser profile now uses an experimental real-engine worker path with explicit capability limits.
+- The strict server profile now records no-new-privs, namespace, cgroup, and
+  limit-envelope denial evidence in generated artifacts.
+- Seccomp state is recorded in the server isolation artifacts, and high-risk
+  tenant isolation remains unpublished.
 
 ## External Security Baseline
 
@@ -39,7 +43,8 @@ target hardening posture for untrusted coding-agent execution.
 
 2. Enforced isolation profile
 
-- Deepen worker execution enforcement for seccomp, namespace, cgroup, and rlimit controls.
+- Extend seccomp depth beyond the current no-new-privs, namespace, cgroup, and
+  limit-envelope evidence.
 - Extend the new opt-in microVM launcher mode into a stronger execution profile
   for hostile multi-tenant workloads.
 

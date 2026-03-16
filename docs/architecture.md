@@ -19,7 +19,9 @@
    process transport can be switched to an experimental `microvm` launcher
    mode with `AEGISPY_WORKER_EXECUTION_MODE=microvm`.
 4. The WASI worker imports the shipped runtime `aegispy` module from WASI Python and serves guest capability calls through runtime request/response dispatch to the host ABI on the fixed `component-wit` channel.
-5. The server-hardened path enforces runtime-bound capability policy plus limits for wall time, memory marker, and output bytes.
+5. The server-hardened path enforces runtime-bound capability policy plus the
+   strict-profile limit envelope for wall, CPU, memory, stdout, stderr, and
+   environment access.
 6. The browser real-engine path uses the same request/response contract, runs a
    worker-backed Python engine, and keeps filesystem, HTTP, and environment
    access denied at the runtime boundary.
@@ -51,6 +53,10 @@
 - `artifacts/tests/node-adapter.json`
 - `artifacts/e2e/node-run.json`
 - `artifacts/e2e/browser-run.json`
+- `artifacts/security/runtime-policy-denials.json`
+- `artifacts/security/isolation-profile.json`
+- `artifacts/security/isolation-limit-denials.json`
+- `artifacts/security/kernel-isolation-runtime.json`
 - `artifacts/security/replay-attestation.json`
 - `artifacts/security/protocol-framing-fuzz.json`
 - `artifacts/security/browser-input-fuzz.json`

@@ -23,6 +23,12 @@ const nativeAbiAdversarialPath = path.join(
   "security",
   "native-abi-adversarial.json",
 );
+const isolationLimitDenialsPath = path.join(
+  repoRoot,
+  "artifacts",
+  "security",
+  "isolation-limit-denials.json",
+);
 const nativeAbiFuzzPath = path.join(
   repoRoot,
   "artifacts",
@@ -86,6 +92,10 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function isPositiveNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function main() {
   const failures = [];
   if (!fs.existsSync(runtimeDenialsPath)) {
@@ -100,8 +110,13 @@ function main() {
       failures.push({ error: "missing_fs_denial_proof_runtime" });
     if (doc.httpDenied !== true)
       failures.push({ error: "missing_http_denial_proof_runtime" });
+    if (doc.envDenied !== true)
+      failures.push({ error: "missing_env_denial_proof_runtime" });
     if (doc.isolationDenied !== true)
       failures.push({ error: "missing_isolation_denial_proof_runtime" });
+    if (doc?.limitReasons?.wall !== "isolation_wall_limit_exceeded") {
+      failures.push({ error: "missing_wall_limit_reason_runtime" });
+    }
     if (doc.transport !== "process")
       failures.push({ error: "runtime_denials_not_process_transport" });
     if (doc.capabilityChannel !== "component-wit")
@@ -126,6 +141,93 @@ function main() {
       failures.push({ error: "isolation_profile_not_component_wit_channel" });
     if (profileName !== "strict")
       failures.push({ error: "isolation_profile_not_strict" });
+    if (doc?.limitEnvelope?.denyEnvCapability !== true) {
+      failures.push({ error: "isolation_profile_env_guard_missing" });
+    }
+    for (const field of [
+      "wallMs",
+      "cpuMs",
+      "memoryBytes",
+      "stdoutBytes",
+      "stderrBytes",
+    ]) {
+      if (!isPositiveNumber(doc?.limitEnvelope?.[field])) {
+        failures.push({
+          error: "isolation_profile_limit_invalid",
+          field,
+        });
+      }
+    }
+    const controlStatus = doc?.controlStatus ?? {};
+    if (controlStatus.noNewPrivs !== true) {
+      failures.push({ error: "isolation_profile_no_new_privs_missing" });
+    }
+    if (controlStatus.cgroup !== true) {
+      failures.push({ error: "isolation_profile_cgroup_missing" });
+    }
+    for (const field of ["pid", "mnt", "net", "uts", "ipc", "cgroup"]) {
+      if (controlStatus?.namespaces?.[field] !== true) {
+        failures.push({
+          error: "isolation_profile_namespace_missing",
+          field,
+        });
+      }
+    }
+    if (typeof controlStatus?.seccomp?.mode !== "string") {
+      failures.push({ error: "isolation_profile_seccomp_mode_missing" });
+    }
+    if (typeof controlStatus?.seccomp?.filters !== "string") {
+      failures.push({ error: "isolation_profile_seccomp_filters_missing" });
+    }
+    if (typeof controlStatus?.seccomp?.active !== "boolean") {
+      failures.push({ error: "isolation_profile_seccomp_state_missing" });
+    }
+  }
+
+  if (!fs.existsSync(isolationLimitDenialsPath)) {
+    failures.push({
+      error: "missing_isolation_limit_denials_artifact",
+      path: "artifacts/security/isolation-limit-denials.json",
+    });
+  } else {
+    const doc = readJson(isolationLimitDenialsPath);
+    if (doc.ok !== true) {
+      failures.push({ error: "isolation_limit_denials_not_ok" });
+    }
+    if (doc.transport !== "process") {
+      failures.push({ error: "isolation_limit_denials_not_process_transport" });
+    }
+    if (doc.executionMode !== "process") {
+      failures.push({ error: "isolation_limit_denials_not_process_mode" });
+    }
+    if (doc?.executionBackend?.available !== true) {
+      failures.push({ error: "isolation_limit_denials_backend_unavailable" });
+    }
+    if (doc.conformanceProfile !== "server-hardened") {
+      failures.push({
+        error: "isolation_limit_denials_not_server_hardened",
+      });
+    }
+    for (const [field, reason] of [
+      ["cpu", "isolation_cpu_limit_exceeded"],
+      ["memory", "isolation_memory_limit_exceeded"],
+      ["stdout", "isolation_stdout_limit_exceeded"],
+      ["stderr", "isolation_stderr_limit_exceeded"],
+    ]) {
+      if (doc?.cases?.[field]?.denied !== true) {
+        failures.push({
+          error: "isolation_limit_denial_missing",
+          field,
+        });
+      }
+      if (doc?.cases?.[field]?.reason !== reason) {
+        failures.push({
+          error: "isolation_limit_reason_invalid",
+          field,
+          reason: doc?.cases?.[field]?.reason ?? null,
+        });
+      }
+    }
   }
 
   if (!fs.existsSync(nativeAbiAdversarialPath)) {
@@ -284,8 +386,43 @@ function main() {
       failures.push({ error: "kernel_isolation_runtime_not_ok" });
     if (doc.supported !== true)
       failures.push({ error: "kernel_isolation_runtime_not_supported" });
+    if (doc.transport !== "process")
+      failures.push({
+        error: "kernel_isolation_runtime_not_process_transport",
+      });
+    if (doc.executionMode !== "process")
+      failures.push({ error: "kernel_isolation_runtime_not_process_mode" });
+    if (doc?.executionBackend?.available !== true)
+      failures.push({ error: "kernel_isolation_runtime_backend_unavailable" });
     if (doc.noNewPrivs !== true)
       failures.push({ error: "kernel_isolation_runtime_no_new_privs_missing" });
+    if (doc?.limitEnvelope?.denyEnvCapability !== true)
+      failures.push({ error: "kernel_isolation_runtime_env_guard_missing" });
+    for (const field of [
+      "wallMs",
+      "cpuMs",
+      "memoryBytes",
+      "stdoutBytes",
+      "stderrBytes",
+    ]) {
+      if (!isPositiveNumber(doc?.limitEnvelope?.[field])) {
+        failures.push({
+          error: "kernel_isolation_runtime_limit_invalid",
+          field,
+        });
+      }
+    }
+    const controlStatus = doc?.controlStatus ?? {};
+    if (controlStatus.noNewPrivs !== true) {
+      failures.push({
+        error: "kernel_isolation_runtime_control_no_new_privs_missing",
+      });
+    }
+    if (controlStatus.cgroup !== true) {
+      failures.push({
+        error: "kernel_isolation_runtime_control_cgroup_missing",
+      });
+    }
   }
 
   if (!fs.existsSync(kernelIsolationGatePath)) {
@@ -304,6 +441,7 @@ function main() {
     checked: [
       "artifacts/security/runtime-policy-denials.json",
       "artifacts/security/isolation-profile.json",
+      "artifacts/security/isolation-limit-denials.json",
       "artifacts/security/native-abi-adversarial.json",
       "artifacts/security/native-abi-fuzz.json",
       "artifacts/security/replay-attestation.json",

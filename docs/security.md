@@ -9,6 +9,10 @@
 ## Denial Outcomes
 
 - Policy denial returns `AEG-POLICY-DENIED` with `termination=policy_denied`.
+- The strict server profile denies environment access even when the request
+  grants a key.
+- The strict server limit envelope denies wall, CPU, memory, stdout, and
+  stderr overages with specific `isolation_*` reason text.
 - Browser-unavailable capability requests return `AEG-UNSUPPORTED-HOST` with
   `termination=policy_denied`.
 - Wall time overflow returns `AEG-TIMEOUT`.
@@ -33,11 +37,19 @@
 - browser runs with `assetBaseUrl` now verify pinned Pyodide asset hashes
   before guest code runs.
 
+## Kernel Isolation Evidence
+
+- The strict server profile records no-new-privs, namespace, cgroup, and
+  limit-envelope evidence in generated artifacts.
+- Seccomp state is recorded in those artifacts.
+- High-risk tenant isolation is not published as valid.
+
 ## Security Evidence
 
 - `artifacts/tests/engine-hash-verify.json`
 - `artifacts/security/runtime-policy-denials.json`
 - `artifacts/security/isolation-profile.json`
+- `artifacts/security/isolation-limit-denials.json`
 - `artifacts/tests/real-engine-default.json`
 - `artifacts/security/adversarial-suite.json`
 - `artifacts/security/native-abi-adversarial.json`

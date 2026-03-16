@@ -12,6 +12,10 @@ The browser profile now uses an experimental real-engine worker runtime with
 explicit `fs=false`, `http=false`, and `env=false` capability limits. Browser
 package requests now require verified lockfile entries, and custom
 `assetBaseUrl` runs verify pinned Pyodide asset hashes before execution.
+The strict process profile now records no-new-privs, namespace, cgroup, and
+limit-envelope evidence for wall, CPU, memory, stdout, stderr, and
+environment denials. Seccomp state is recorded, and high-risk tenant isolation
+remains unpublished.
 Deeper hardening work remains open for compatibility breadth, isolation depth,
 release-attestation enforcement, and high-risk tenant isolation.
 
@@ -34,6 +38,8 @@ A real hardened Python engine suitable for hostile agent workloads.
 2. Isolation hardening for server hosts
 
 - Deepen seccomp, namespace, cgroup v2, rlimit, and no-new-privs enforcement.
+- Keep the current strict-profile evidence contract stable in generated
+  artifacts and required gates.
 - Keep the experimental microVM launcher path self-hosted-ready and extend it
   into a stronger isolation profile for high-risk tenants.
 - Exit criteria: adversarial escape suite blocked by enforced profile.
