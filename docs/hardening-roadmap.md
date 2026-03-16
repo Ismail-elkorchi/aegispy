@@ -6,8 +6,9 @@ AegisPy now ships a real server-side execution path for `node`, `deno`, and
 `bun` using process transport, a Rust worker, WASI Python, and the
 `component-wit` capability channel.
 
-The browser profile still uses a simulated subset execution path, and deeper
-hardening work remains open for isolation depth, package compatibility breadth,
+The browser profile now uses an experimental real-engine worker runtime with
+explicit `fs=false`, `http=false`, and `env=false` capability limits. Deeper
+hardening work remains open for compatibility breadth, isolation depth,
 release-attestation enforcement, and high-risk tenant isolation.
 
 ## Target
@@ -16,10 +17,12 @@ A real hardened Python engine suitable for hostile agent workloads.
 
 ## Required Engineering Tracks
 
-1. Browser real-engine execution
+1. Compatibility corpus and package metadata
 
-- Replace the browser simulated subset with a real browser Python engine path.
-- Exit criteria: browser runtime tests execute against a real browser engine artifact.
+- Broaden the generated workload-compatibility matrix across all public hosts.
+- Keep pure-Python package fixture metadata pinned through verified lockfiles.
+- Exit criteria: workload families and reason codes are generated under
+  `artifacts/compat/` and enforced by the compatibility gate.
 
 2. Isolation hardening for server hosts
 

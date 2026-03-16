@@ -42,6 +42,9 @@
 - Verification writes generated evidence under `artifacts/gates/`,
   `artifacts/security/`, `artifacts/compat/`, `artifacts/e2e/`, and
   `artifacts/tests/`.
+- Compatibility proof specifically writes `artifacts/compat/agent-workload-corpus.json`,
+  `artifacts/compat/workload-compatibility-matrix.json`, and
+  `artifacts/compat/package-fixture-lockfiles.json`.
 - Contributors can treat those artifacts as generated proof of the public
   runtime and security claims rather than as part of the runtime API itself.
 

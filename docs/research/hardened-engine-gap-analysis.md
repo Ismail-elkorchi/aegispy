@@ -12,7 +12,7 @@ target hardening posture for untrusted coding-agent execution.
 - `node`, `deno`, and `bun` default to process transport backed by the Rust worker.
 - The worker defaults to the WASI executor and the `component-wit` capability channel.
 - Real-execution, capability-binding, and profile-conformance evidence artifacts are present.
-- The browser profile remains a simulated subset rather than a real browser Python engine.
+- The browser profile now uses an experimental real-engine worker path with explicit capability limits.
 
 ## External Security Baseline
 
@@ -29,9 +29,10 @@ target hardening posture for untrusted coding-agent execution.
 
 ## Remaining Public Gaps
 
-1. Browser real-engine execution
+1. Compatibility corpus breadth
 
-- Replace the browser simulated subset with a real browser Python engine path.
+- Broaden the generated workload matrix and reason-code coverage across all hosts.
+- Keep pure-Python package fixture metadata explicit and pinned until runtime package loading becomes part of the public contract.
 
 2. Enforced isolation profile
 

@@ -3,6 +3,7 @@ import { createRuntime, type AegisPyRuntime } from "../src/index";
 import { createRuntime as createNodeRuntime } from "../../aegispy-node/src/index";
 import { createRuntime as createDenoRuntime } from "../../aegispy-deno/src/index";
 import { createRuntime as createBrowserRuntime } from "../../aegispy-browser/src/index";
+import { resolveLockfile, verifyLockfile } from "../../aegispy-pack/src/index";
 import type { HostKind, RunRequest, RunResult } from "@aegispy/core";
 import { writeArtifact } from "./helpers/artifact";
 
@@ -14,14 +15,28 @@ const serverHosts = ["node", "deno", "bun"] as const;
 
 type CorpusHost = (typeof allHosts)[number];
 
+type CompatibilityExpectation = "supported" | "unsupported-by-profile";
+type WorkloadFamily =
+  | "core-stdlib"
+  | "text-stdlib"
+  | "data-stdlib"
+  | "numeric-stdlib"
+  | "capability-fs"
+  | "capability-http"
+  | "capability-env"
+  | "policy"
+  | "resource-limits";
+
 interface CaseCheck {
   pass: boolean;
+  expectation: CompatibilityExpectation;
   exceptionTag: string | null;
-  reason: string | null;
+  reasonCode: string;
 }
 
 interface CorpusCase {
   caseId: string;
+  family: WorkloadFamily;
   description: string;
   code: string;
   permissions: RunRequest["permissions"];
@@ -37,8 +52,184 @@ interface CaseOutcome {
   errorCode: string | null;
   capabilityChannel: string | null;
   pass: boolean;
+  expectation: CompatibilityExpectation;
   exceptionTag: string | null;
-  reason: string | null;
+  reasonCode: string;
+}
+
+interface PackageFixture {
+  fixtureId: string;
+  coverageBasis: "metadata-only";
+  description: string;
+  lockfile: ReturnType<typeof resolveLockfile>;
+  verification: ReturnType<typeof verifyLockfile>;
+}
+
+const workloadFamilies: Record<WorkloadFamily, { description: string }> = {
+  "core-stdlib": {
+    description:
+      "Basic deterministic Python execution without host capabilities.",
+  },
+  "text-stdlib": {
+    description: "Pure-stdlib text and Unicode processing workloads.",
+  },
+  "data-stdlib": {
+    description: "Pure-stdlib JSON, hashing, and structured data workloads.",
+  },
+  "numeric-stdlib": {
+    description: "Pure-stdlib numeric and exact-arithmetic workloads.",
+  },
+  "capability-fs": {
+    description:
+      "Filesystem workloads that require explicit capability grants.",
+  },
+  "capability-http": {
+    description:
+      "HTTP capability-grant workloads without live network dependence.",
+  },
+  "capability-env": {
+    description:
+      "Environment-read workloads that require explicit capability grants.",
+  },
+  policy: {
+    description: "Denied-by-default capability and traversal policy workloads.",
+  },
+  "resource-limits": {
+    description: "Workloads that must terminate through resource enforcement.",
+  },
+};
+
+const compatibilityReasonCodes = {
+  supported: {
+    expectation: "supported",
+    description: "The host satisfied the workload contract as expected.",
+  },
+  stdout_missing: {
+    expectation: "supported",
+    description:
+      "The host completed the workload but the expected stdout was missing.",
+  },
+  deterministic_lines_missing: {
+    expectation: "supported",
+    description:
+      "The host did not emit the deterministic time and RNG lines required by the workload.",
+  },
+  stdlib_digest_missing: {
+    expectation: "supported",
+    description: "The host did not emit the expected stdlib digest output.",
+  },
+  browser_engine_timeout: {
+    expectation: "supported",
+    description:
+      "The browser real-engine path timed out before completing the workload.",
+  },
+  browser_engine_error: {
+    expectation: "supported",
+    description:
+      "The browser real-engine path returned an engine error for the workload.",
+  },
+  env_value_missing: {
+    expectation: "supported",
+    description: "The host did not return the expected environment value.",
+  },
+  unsupported_browser_capability: {
+    expectation: "unsupported-by-profile",
+    description:
+      "The browser profile correctly rejected a workload that requires an unsupported capability.",
+  },
+  unsupported_browser_capability_missing: {
+    expectation: "unsupported-by-profile",
+    description:
+      "The browser profile failed to reject an unsupported-capability workload with the expected error.",
+  },
+  policy_denied_expected: {
+    expectation: "supported",
+    description:
+      "The runtime correctly denied the workload through policy enforcement.",
+  },
+  policy_denied_missing: {
+    expectation: "supported",
+    description:
+      "The runtime failed to deny the workload through policy enforcement.",
+  },
+  output_limit_expected: {
+    expectation: "supported",
+    description:
+      "The runtime correctly enforced the configured output limit for the workload.",
+  },
+  output_limit_missing: {
+    expectation: "supported",
+    description:
+      "The runtime failed to enforce the configured output limit for the workload.",
+  },
+  capability_channel_not_component_wit: {
+    expectation: "supported",
+    description:
+      "A server host did not report the required component-wit capability channel.",
+  },
+} as const;
+
+function makePackageFixture(
+  fixtureId: string,
+  description: string,
+  dependencies: Array<{
+    name: string;
+    version: string;
+    kind: "pure_python";
+  }>,
+): PackageFixture {
+  const lockfile = resolveLockfile({
+    dependencies,
+    generatedAt: "2026-03-16T00:00:00.000Z",
+  });
+  return {
+    fixtureId,
+    coverageBasis: "metadata-only",
+    description,
+    lockfile,
+    verification: verifyLockfile(lockfile),
+  };
+}
+
+const packageFixtures: PackageFixture[] = [
+  makePackageFixture(
+    "pure-python-text-tooling",
+    "Pinned metadata fixture for template and text-processing libraries.",
+    [
+      { name: "jinja2", version: "3.1.4", kind: "pure_python" },
+      { name: "markupsafe", version: "2.1.5", kind: "pure_python" },
+    ],
+  ),
+  makePackageFixture(
+    "pure-python-data-tooling",
+    "Pinned metadata fixture for configuration and data-shaping libraries.",
+    [
+      { name: "pyyaml", version: "6.0.2", kind: "pure_python" },
+      { name: "attrs", version: "24.2.0", kind: "pure_python" },
+    ],
+  ),
+];
+
+function supportedCheck(pass: boolean, failureReasonCode: string): CaseCheck {
+  return {
+    pass,
+    expectation: "supported",
+    exceptionTag: null,
+    reasonCode: pass ? "supported" : failureReasonCode,
+  };
+}
+
+function unsupportedBrowserCapabilityCheck(result: RunResult): CaseCheck {
+  const pass =
+    result.status === "error" && errorCode(result) === "AEG-UNSUPPORTED-HOST";
+  return {
+    pass,
+    expectation: "unsupported-by-profile",
+    exceptionTag: pass ? "browser-capability-limited" : null,
+    reasonCode: pass
+      ? "unsupported_browser_capability"
+      : "unsupported_browser_capability_missing",
+  };
 }
 
 function runtimeView(runtime: AegisPyRuntime): {
@@ -116,6 +307,7 @@ function makeRequest(host: HostKind, code: string): RunRequest {
 const corpusCases: CorpusCase[] = [
   {
     caseId: "simple-print",
+    family: "core-stdlib",
     description: "basic print execution",
     code: 'print("agent-corpus-print")',
     permissions: {
@@ -127,25 +319,18 @@ const corpusCases: CorpusCase[] = [
       const pass =
         result.status === "ok" &&
         result.stdoutUtf8.includes("agent-corpus-print");
-      return {
-        pass,
-        exceptionTag: null,
-        reason: pass ? null : "missing_print_output",
-      };
+      return supportedCheck(pass, "stdout_missing");
     },
     validateBrowser(result) {
       const pass =
         result.status === "ok" &&
         result.stdoutUtf8.includes("agent-corpus-print");
-      return {
-        pass,
-        exceptionTag: null,
-        reason: pass ? null : "missing_print_output",
-      };
+      return supportedCheck(pass, "stdout_missing");
     },
   },
   {
     caseId: "deterministic-time-rng",
+    family: "core-stdlib",
     description: "deterministic time and rng signals",
     code: "print(time.time())\nprint(random.random())",
     permissions: {
@@ -159,11 +344,7 @@ const corpusCases: CorpusCase[] = [
         .split(/\r?\n/u)
         .filter((line) => line.length > 0);
       const pass = result.status === "ok" && lines.length >= 2;
-      return {
-        pass,
-        exceptionTag: null,
-        reason: pass ? null : "deterministic_lines_missing",
-      };
+      return supportedCheck(pass, "deterministic_lines_missing");
     },
     validateBrowser(result) {
       const lines = result.stdoutUtf8
@@ -171,15 +352,12 @@ const corpusCases: CorpusCase[] = [
         .split(/\r?\n/u)
         .filter((line) => line.length > 0);
       const pass = result.status === "ok" && lines.length >= 2;
-      return {
-        pass,
-        exceptionTag: null,
-        reason: pass ? null : "deterministic_lines_missing",
-      };
+      return supportedCheck(pass, "deterministic_lines_missing");
     },
   },
   {
     caseId: "stdlib-json-hash",
+    family: "data-stdlib",
     description: "stdlib json/hashlib workload",
     code: [
       "import json",
@@ -192,36 +370,87 @@ const corpusCases: CorpusCase[] = [
       http: null,
       env: null,
     },
+    configureRequest(request) {
+      request.limits.time.wallMs = 15_000;
+      request.limits.time.cpuMs = 15_000;
+    },
     validateServer(result) {
       const digest = result.stdoutUtf8.trim();
       const pass = result.status === "ok" && /^[0-9a-f]{64}$/u.test(digest);
-      return {
-        pass,
-        exceptionTag: null,
-        reason: pass ? null : "stdlib_digest_missing",
-      };
+      return supportedCheck(pass, "stdlib_digest_missing");
     },
     validateBrowser(result) {
       if (result.status !== "ok") {
         return {
           pass: false,
+          expectation: "supported",
           exceptionTag: null,
-          reason: "browser_stdlib_run_failed",
+          reasonCode:
+            result.meta.termination === "timeout"
+              ? "browser_engine_timeout"
+              : "browser_engine_error",
         };
       }
       const digest = result.stdoutUtf8.trim();
       if (/^[0-9a-f]{64}$/u.test(digest)) {
-        return { pass: true, exceptionTag: null, reason: null };
+        return supportedCheck(true, "stdlib_digest_missing");
       }
-      return {
-        pass: false,
-        exceptionTag: null,
-        reason: "browser_stdlib_digest_missing",
-      };
+      return supportedCheck(false, "stdlib_digest_missing");
+    },
+  },
+  {
+    caseId: "text-regex-unicode",
+    family: "text-stdlib",
+    description: "stdlib text normalization and regex workload",
+    code: [
+      "import re",
+      "import unicodedata",
+      'value = unicodedata.normalize("NFKD", "cafe\\u0301")',
+      'print(re.sub(r"[^a-z]", "", value.lower()))',
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("cafe");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass = result.status === "ok" && result.stdoutUtf8.includes("cafe");
+      return supportedCheck(pass, "stdout_missing");
+    },
+  },
+  {
+    caseId: "numeric-decimal-fractions",
+    family: "numeric-stdlib",
+    description: "stdlib exact-arithmetic workload",
+    code: [
+      "from decimal import Decimal",
+      "from fractions import Fraction",
+      'value = Decimal("0.125") + Decimal(Fraction(1, 8).numerator) / Decimal(Fraction(1, 8).denominator)',
+      "print(value)",
+    ].join("\n"),
+    permissions: {
+      fs: null,
+      http: null,
+      env: null,
+    },
+    validateServer(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("0.250");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      const pass =
+        result.status === "ok" && result.stdoutUtf8.includes("0.250");
+      return supportedCheck(pass, "stdout_missing");
     },
   },
   {
     caseId: "filesystem-roundtrip",
+    family: "capability-fs",
     description: "filesystem capability roundtrip",
     code: [
       'path = "/sandbox/write/agent-corpus.txt"',
@@ -241,25 +470,40 @@ const corpusCases: CorpusCase[] = [
     validateServer(result) {
       const pass =
         result.status === "ok" && result.stdoutUtf8.includes("agent-corpus-fs");
-      return {
-        pass,
-        exceptionTag: null,
-        reason: pass ? null : "filesystem_roundtrip_failed",
-      };
+      return supportedCheck(pass, "stdout_missing");
     },
     validateBrowser(result) {
+      return unsupportedBrowserCapabilityCheck(result);
+    },
+  },
+  {
+    caseId: "http-capability-granted",
+    family: "capability-http",
+    description: "http capability grant without live network access",
+    code: 'print("http-capability-ready")',
+    permissions: {
+      fs: null,
+      http: {
+        allowOrigins: ["https://example.test"],
+        denyOrigins: [],
+        maxRequests: 4,
+        maxBytes: 4096,
+      },
+      env: null,
+    },
+    validateServer(result) {
       const pass =
-        result.status === "error" &&
-        errorCode(result) === "AEG-UNSUPPORTED-HOST";
-      return {
-        pass,
-        exceptionTag: "browser-capability-limited",
-        reason: pass ? null : "browser_capability_rejection_missing",
-      };
+        result.status === "ok" &&
+        result.stdoutUtf8.includes("http-capability-ready");
+      return supportedCheck(pass, "stdout_missing");
+    },
+    validateBrowser(result) {
+      return unsupportedBrowserCapabilityCheck(result);
     },
   },
   {
     caseId: "env-read",
+    family: "capability-env",
     description: "environment capability read",
     code: 'print(aegispy.env_get("AEGISPY_CORPUS_ENV"))',
     permissions: {
@@ -272,25 +516,15 @@ const corpusCases: CorpusCase[] = [
     validateServer(result) {
       const pass =
         result.status === "ok" && result.stdoutUtf8.includes(corpusEnvValue);
-      return {
-        pass,
-        exceptionTag: null,
-        reason: pass ? null : "env_read_failed",
-      };
+      return supportedCheck(pass, "env_value_missing");
     },
     validateBrowser(result) {
-      const pass =
-        result.status === "error" &&
-        errorCode(result) === "AEG-UNSUPPORTED-HOST";
-      return {
-        pass,
-        exceptionTag: "browser-capability-limited",
-        reason: pass ? null : "browser_capability_rejection_missing",
-      };
+      return unsupportedBrowserCapabilityCheck(result);
     },
   },
   {
     caseId: "http-policy-deny",
+    family: "policy",
     description: "deny-by-default http capability",
     code: 'aegispy.http_get("http://blocked.invalid/corpus")',
     tags: ["adversarial"],
@@ -303,21 +537,24 @@ const corpusCases: CorpusCase[] = [
       const pass = isPolicyDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "http_policy_denial_missing",
+        reasonCode: pass ? "policy_denied_expected" : "policy_denied_missing",
       };
     },
     validateBrowser(result) {
       const pass = isPolicyDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "http_policy_denial_missing",
+        reasonCode: pass ? "policy_denied_expected" : "policy_denied_missing",
       };
     },
   },
   {
     caseId: "fs-default-deny",
+    family: "policy",
     description: "deny-by-default filesystem capability",
     code: 'aegispy.fs_read("/sandbox/read/corpus.txt")',
     tags: ["adversarial"],
@@ -330,21 +567,24 @@ const corpusCases: CorpusCase[] = [
       const pass = isPolicyDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "fs_default_denial_missing",
+        reasonCode: pass ? "policy_denied_expected" : "policy_denied_missing",
       };
     },
     validateBrowser(result) {
       const pass = isPolicyDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "fs_default_denial_missing",
+        reasonCode: pass ? "policy_denied_expected" : "policy_denied_missing",
       };
     },
   },
   {
     caseId: "fs-traversal-deny",
+    family: "policy",
     description: "deny filesystem traversal payload",
     code: 'aegispy.fs_write("/sandbox/write/../escape.txt", "x")',
     tags: ["adversarial"],
@@ -362,23 +602,18 @@ const corpusCases: CorpusCase[] = [
       const pass = isPolicyDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "fs_traversal_denial_missing",
+        reasonCode: pass ? "policy_denied_expected" : "policy_denied_missing",
       };
     },
     validateBrowser(result) {
-      const pass =
-        result.status === "error" &&
-        errorCode(result) === "AEG-UNSUPPORTED-HOST";
-      return {
-        pass,
-        exceptionTag: "browser-capability-limited",
-        reason: pass ? null : "browser_capability_rejection_missing",
-      };
+      return unsupportedBrowserCapabilityCheck(result);
     },
   },
   {
     caseId: "env-default-deny",
+    family: "policy",
     description: "deny-by-default environment capability",
     code: 'aegispy.env_get("AEGISPY_CORPUS_ENV")',
     tags: ["adversarial"],
@@ -391,21 +626,24 @@ const corpusCases: CorpusCase[] = [
       const pass = isPolicyDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "env_default_denial_missing",
+        reasonCode: pass ? "policy_denied_expected" : "policy_denied_missing",
       };
     },
     validateBrowser(result) {
       const pass = isPolicyDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "env_default_denial_missing",
+        reasonCode: pass ? "policy_denied_expected" : "policy_denied_missing",
       };
     },
   },
   {
     caseId: "output-abuse",
+    family: "resource-limits",
     description: "deny abusive stdout payload",
     code: "#aegispy:stdout=7000",
     tags: ["adversarial"],
@@ -421,16 +659,18 @@ const corpusCases: CorpusCase[] = [
       const pass = isOutputLimitDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "output_limit_denial_missing",
+        reasonCode: pass ? "output_limit_expected" : "output_limit_missing",
       };
     },
     validateBrowser(result) {
       const pass = isOutputLimitDenied(result);
       return {
         pass,
+        expectation: "supported",
         exceptionTag: null,
-        reason: pass ? null : "output_limit_denial_missing",
+        reasonCode: pass ? "output_limit_expected" : "output_limit_missing",
       };
     },
   },
@@ -584,6 +824,7 @@ describe("bun adapter parity", () => {
 
     const caseResults: Array<{
       caseId: string;
+      family: WorkloadFamily;
       description: string;
       tags: string[];
       results: Record<CorpusHost, CaseOutcome>;
@@ -618,12 +859,10 @@ describe("bun adapter parity", () => {
               : corpusCase.validateServer(result);
 
           let pass = check.pass;
-          let reason = check.reason;
+          let reasonCode = check.reasonCode;
           if (host !== "browser" && channel !== "component-wit") {
             pass = false;
-            reason = reason
-              ? `${reason}; capability_channel_not_component_wit`
-              : "capability_channel_not_component_wit";
+            reasonCode = "capability_channel_not_component_wit";
           }
 
           totals[host] += 1;
@@ -635,13 +874,15 @@ describe("bun adapter parity", () => {
             errorCode: errorCode(result),
             capabilityChannel: channel,
             pass,
+            expectation: check.expectation,
             exceptionTag: check.exceptionTag,
-            reason,
+            reasonCode,
           };
         }
 
         caseResults.push({
           caseId: corpusCase.caseId,
+          family: corpusCase.family,
           description: corpusCase.description,
           tags: corpusCase.tags ?? [],
           results: resultsByHost,
@@ -703,11 +944,25 @@ describe("bun adapter parity", () => {
     }
     expect(hostSummary.browser.profile).toBe("browser-real-engine");
 
+    const fixtureSummary = packageFixtures.map((fixture) => ({
+      fixtureId: fixture.fixtureId,
+      coverageBasis: fixture.coverageBasis,
+      description: fixture.description,
+      dependencyCount: fixture.lockfile.entries.length,
+      lockfile: fixture.lockfile,
+      verification: fixture.verification,
+    }));
+    const packageFixturesOk = fixtureSummary.every(
+      (fixture) => fixture.verification.ok,
+    );
+    expect(packageFixturesOk).toBe(true);
+
     const corpusOk =
       hostSummary.node.passRate >= serverPassRateMin &&
       hostSummary.deno.passRate >= serverPassRateMin &&
       hostSummary.bun.passRate >= serverPassRateMin &&
-      hostSummary.browser.passRate >= serverPassRateMin;
+      hostSummary.browser.passRate >= serverPassRateMin &&
+      packageFixturesOk;
 
     const parityCase = caseResults.find(
       (entry) => entry.caseId === "simple-print",
@@ -715,6 +970,13 @@ describe("bun adapter parity", () => {
     if (!parityCase) {
       throw new Error("missing_simple_print_case_result");
     }
+
+    writeArtifact("artifacts/compat/package-fixture-lockfiles.json", {
+      ok: packageFixturesOk,
+      invariants: ["INV-FEAT-0016", "INV-FEAT-0023", "INV-FEAT-0025"],
+      generatedAt: new Date().toISOString(),
+      fixtures: fixtureSummary,
+    });
 
     const browserExceptionTags = Array.from(
       new Set(
@@ -732,8 +994,38 @@ describe("bun adapter parity", () => {
         serverPassRateMin,
       },
       hosts: hostSummary,
+      families: Object.keys(workloadFamilies),
+      reasonCodes: Object.keys(compatibilityReasonCodes),
+      packageFixturesArtifact:
+        "artifacts/compat/package-fixture-lockfiles.json",
       allowedBrowserExceptionTags: ["browser-capability-limited"],
       cases: caseResults,
+    });
+
+    writeArtifact("artifacts/compat/workload-compatibility-matrix.json", {
+      ok: corpusOk,
+      invariants: ["INV-FEAT-0017", "INV-FEAT-0018", "INV-FEAT-0025"],
+      generatedAt: new Date().toISOString(),
+      thresholds: {
+        serverPassRateMin,
+      },
+      profiles: {
+        node: capabilities.node.profile,
+        deno: capabilities.deno.profile,
+        bun: capabilities.bun.profile,
+        browser: capabilities.browser.profile,
+      },
+      families: workloadFamilies,
+      reasonCodes: compatibilityReasonCodes,
+      packageFixtures: fixtureSummary,
+      hosts: hostSummary,
+      workloads: caseResults.map((entry) => ({
+        workloadId: entry.caseId,
+        family: entry.family,
+        description: entry.description,
+        tags: entry.tags,
+        hosts: entry.results,
+      })),
     });
 
     const adversarialCases = caseResults.filter((entry) =>
@@ -910,6 +1202,7 @@ describe("bun adapter parity", () => {
       },
       corpus: {
         artifact: "artifacts/compat/agent-workload-corpus.json",
+        matrixArtifact: "artifacts/compat/workload-compatibility-matrix.json",
         serverPassRateMin,
         serverPassRates: {
           node: hostSummary.node.passRate,

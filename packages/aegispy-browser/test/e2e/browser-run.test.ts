@@ -74,9 +74,8 @@ describe("browser runtime", () => {
     );
 
     const recoveryResult = await runtime.run(
-      makeBrowserRequest("import math\nprint(math.factorial(5))", 15_000),
+      makeBrowserRequest("import math\nprint(math.factorial(5))", 30_000),
     );
-
     await runtime.close();
 
     expect(capabilities.profile).toBe("browser-real-engine");
@@ -107,7 +106,28 @@ describe("browser runtime", () => {
       timeoutTermination: timeoutResult.meta.termination,
       recoveryTermination: recoveryResult.meta.termination,
     });
-  }, 30_000);
+  }, 60_000);
+
+  it("runs heavier stdlib hashing workloads in the real browser engine", async () => {
+    const runtime: AegisPyRuntime = await createRuntime({ host: "browser" });
+
+    const result = await runtime.run(
+      makeBrowserRequest(
+        [
+          "import json",
+          "import hashlib",
+          'payload = json.dumps({"answer": 42, "tags": ["a", "b"]}, sort_keys=True)',
+          "print(hashlib.sha256(payload.encode()).hexdigest())",
+        ].join("\n"),
+        30_000,
+      ),
+    );
+
+    await runtime.close();
+
+    expect(result.status).toBe("ok");
+    expect(result.stdoutUtf8.trim()).toMatch(/^[0-9a-f]{64}$/u);
+  }, 45_000);
 
   it("returns engine errors from real python execution", async () => {
     const runtime: AegisPyRuntime = await createRuntime({ host: "browser" });

@@ -17,6 +17,10 @@
 - `packages?: string[]`
 - `packageLockfile?: Lockfile`
 
+`packageLockfile` is currently metadata-only. It does not yet enforce browser
+package integrity at runtime, so callers must not treat it as an active
+security boundary.
+
 ## Host Kinds
 
 - `node`
