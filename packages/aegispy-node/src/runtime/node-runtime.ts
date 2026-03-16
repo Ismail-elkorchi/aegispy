@@ -1,5 +1,5 @@
 import { makeAegisPyError } from "../../../aegispy-core/src/errors";
-import { validateRunRequest } from "../../../aegispy-core/src/contracts/validation";
+import { preflightRuntimeRequest } from "../../../aegispy-core/src/runtime/preflight";
 import type {
   AegisPyRuntime,
   CreateRuntimeOptions,
@@ -121,39 +121,19 @@ export class NodeRuntime implements AegisPyRuntime {
   }
 
   public async run(req: RunRequest): Promise<RunResult> {
-    if (this.closed) {
-      return engineErrorResult("runtime closed");
+    const preflight = preflightRuntimeRequest(
+      {
+        runtimeHost: this.host,
+        capabilities: this.capabilities(),
+        closed: this.closed,
+      },
+      req,
+    );
+    if (!preflight.ok) {
+      return preflight.result;
     }
 
-    const validated = validateRunRequest(req);
-    if (!validated.ok) {
-      return {
-        status: "error",
-        exitCode: 2,
-        stdoutUtf8: "",
-        stderrUtf8: "invalid request",
-        meta: {
-          startedTsMs: Date.now(),
-          endedTsMs: Date.now(),
-          durationMs: 0,
-          cpuMs: 0,
-          memoryPeakBytes: 0,
-          stdoutBytes: 0,
-          stderrBytes: 0,
-          termination: "internal_error",
-          audit: [],
-        },
-        error: makeAegisPyError("AEG-INVALID-REQUEST", "invalid request", {
-          issues: validated.issues,
-        }),
-      };
-    }
-
-    if (req.host !== "node") {
-      return engineErrorResult("host mismatch");
-    }
-
-    return Promise.resolve(req)
+    return Promise.resolve(preflight.request)
       .then((request) => this.transport.run(request))
       .catch((error: unknown) =>
         engineErrorResult(

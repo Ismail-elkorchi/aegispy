@@ -1,5 +1,9 @@
 import { makeAegisPyError } from "../../../aegispy-core/src/errors";
 import { simulateRun } from "../../../aegispy-core/src/execution/simulated";
+import {
+  preflightRuntimeRequest,
+  withRuntimeBoundaryAudit,
+} from "../../../aegispy-core/src/runtime/preflight";
 import type {
   AegisPyRuntime,
   CreateRuntimeOptions,
@@ -17,51 +21,6 @@ export interface BrowserRuntimeOptions {
   assetBaseUrl?: string;
   packages?: string[];
   packageLockfile?: Lockfile;
-}
-
-function nowMeta(message = "") {
-  const now = Date.now();
-  return {
-    startedTsMs: now,
-    endedTsMs: now,
-    durationMs: 0,
-    cpuMs: 0,
-    memoryPeakBytes: 0,
-    stdoutBytes: 0,
-    stderrBytes: message.length,
-    termination: "internal_error" as const,
-    audit: [],
-  };
-}
-
-function runtimeClosedResult(): RunResult {
-  return {
-    status: "error",
-    exitCode: 1,
-    stdoutUtf8: "",
-    stderrUtf8: "runtime closed",
-    meta: nowMeta("runtime closed"),
-    error: makeAegisPyError("AEG-INTERNAL", "runtime closed", {
-      host: "browser",
-    }),
-  };
-}
-
-function unsupportedCapabilitiesResult(unsupported: string[]): RunResult {
-  const message = "unsupported browser capability request";
-  return {
-    status: "error",
-    exitCode: 2,
-    stdoutUtf8: "",
-    stderrUtf8: message,
-    meta: nowMeta(message),
-    error: makeAegisPyError("AEG-UNSUPPORTED-HOST", message, {
-      host: "browser",
-      unsupportedCapabilities: unsupported,
-      profile: "browser-real-engine",
-      reason: unsupported.join(","),
-    }),
-  };
 }
 
 function timeoutResult(wallMs: number): RunResult {
@@ -185,20 +144,24 @@ export class BrowserRuntime implements AegisPyRuntime {
   }
 
   public async run(req: RunRequest): Promise<RunResult> {
-    if (this.closed) {
-      return runtimeClosedResult();
+    const capabilities = this.capabilities();
+    const preflight = preflightRuntimeRequest(
+      {
+        runtimeHost: this.host,
+        capabilities,
+        closed: this.closed,
+      },
+      req,
+    );
+    if (!preflight.ok) {
+      return preflight.result;
     }
 
-    const unsupported: string[] = [];
-    if (req.permissions.fs !== null) unsupported.push("fs");
-    if (req.permissions.http !== null) unsupported.push("http");
-    if (req.permissions.env !== null) unsupported.push("env");
-    if (unsupported.length > 0) {
-      return unsupportedCapabilitiesResult(unsupported);
-    }
-
-    if (requiresRuntimeBoundaryFallback(req.code)) {
-      return simulateRun(req);
+    if (requiresRuntimeBoundaryFallback(preflight.request.code)) {
+      return withRuntimeBoundaryAudit(
+        capabilities,
+        simulateRun(preflight.request),
+      );
     }
 
     const startedTsMs = Date.now();
@@ -213,29 +176,38 @@ export class BrowserRuntime implements AegisPyRuntime {
           assetBaseUrl: this.options.assetBaseUrl,
           packages: this.options.packages,
         },
-        req.limits.time.wallMs,
+        preflight.request.limits.time.wallMs,
       )
       .then((result) => {
         if (result.status === "ok") {
-          return okResult(result.stdoutUtf8, result.stderrUtf8, startedTsMs);
+          return withRuntimeBoundaryAudit(
+            capabilities,
+            okResult(result.stdoutUtf8, result.stderrUtf8, startedTsMs),
+          );
         }
 
         if (result.errorMessage === "wall time reached") {
-          return timeoutResult(req.limits.time.wallMs);
+          return withRuntimeBoundaryAudit(
+            capabilities,
+            timeoutResult(preflight.request.limits.time.wallMs),
+          );
         }
 
-        return {
+        return withRuntimeBoundaryAudit(capabilities, {
           ...engineErrorResult(
             result.stderrUtf8 || result.errorMessage,
             startedTsMs,
           ),
           stdoutUtf8: result.stdoutUtf8,
-        };
+        });
       })
       .catch((error) => {
-        return engineErrorResult(
-          error instanceof Error ? error.message : "browser worker failure",
-          startedTsMs,
+        return withRuntimeBoundaryAudit(
+          capabilities,
+          engineErrorResult(
+            error instanceof Error ? error.message : "browser worker failure",
+            startedTsMs,
+          ),
         );
       });
   }

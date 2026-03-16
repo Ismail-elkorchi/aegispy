@@ -9,9 +9,17 @@
 ## Denial Outcomes
 
 - Policy denial returns `AEG-POLICY-DENIED` with `termination=policy_denied`.
+- Browser-unavailable capability requests return `AEG-UNSUPPORTED-HOST` with
+  `termination=policy_denied`.
 - Wall time overflow returns `AEG-TIMEOUT`.
 - Memory marker overflow returns `AEG-MEMORY-LIMIT`.
 - Output byte overflow returns `AEG-OUTPUT-LIMIT`.
+
+## Denial Audit Ordering
+
+- Runtime-bound deny results start with `runtime_channel` and
+  `runtime_binding`.
+- The terminal deny event follows those boundary entries.
 
 ## Engine Integrity
 

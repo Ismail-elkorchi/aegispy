@@ -6,6 +6,8 @@ Cause:
 
 - the `browser-real-engine` profile does not expose filesystem, HTTP, or
   environment capabilities
+- the runtime records this as a profile-level deny, so `termination` is
+  `policy_denied` even though the error code stays `AEG-UNSUPPORTED-HOST`
 
 Fix:
 

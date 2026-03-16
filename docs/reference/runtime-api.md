@@ -63,6 +63,17 @@ fails closed with `AEG-ENGINE` before guest code runs.
 - `meta`
 - `error` when `status === "error"`
 
+## Boundary Denials
+
+- server-host capability denials keep `AEG-POLICY-DENIED` with
+  `termination=policy_denied`
+- `browser-real-engine` rejects filesystem, HTTP, and environment permission
+  grants with `AEG-UNSUPPORTED-HOST` and `termination=policy_denied`
+- runtime-bound deny results start with runtime-boundary audit entries before
+  the terminal denial event
+  - `runtime_channel`
+  - `runtime_binding`
+
 ## Capability Introspection
 
 `runtime.capabilities()` returns the effective host contract, including:

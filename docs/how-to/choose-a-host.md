@@ -22,6 +22,8 @@ can accept the current browser limits:
 - experimental worker-backed real-engine execution
 - no filesystem, HTTP, or environment capability surface
 - stable `AEG-UNSUPPORTED-HOST` behavior when those capabilities are requested
+- runtime-bound deny audit ordering that starts with `runtime_channel` and
+  `runtime_binding`
 
 This host maps to the `browser-real-engine` profile.
 
