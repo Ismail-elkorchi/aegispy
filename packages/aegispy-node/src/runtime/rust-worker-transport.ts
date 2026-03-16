@@ -18,6 +18,11 @@ import {
   toWorkerIsolationEnv,
   type IsolationProfile,
 } from "./isolation-profile";
+import {
+  resolveWorkerLaunchSpec,
+  type WorkerExecutionBackendInfo,
+  type WorkerExecutionMode,
+} from "./worker-execution-mode";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,6 +62,10 @@ export class RustWorkerTransport implements WorkerTransport {
 
   public readonly isolationProfile: IsolationProfile;
 
+  public readonly executionMode: WorkerExecutionMode;
+
+  public readonly executionBackend: WorkerExecutionBackendInfo;
+
   private child: ChildProcessWithoutNullStreams | null = null;
 
   private pending = new Map<string, PendingRequest>();
@@ -72,6 +81,15 @@ export class RustWorkerTransport implements WorkerTransport {
     this.options = options;
     this.isolationProfile =
       options.isolationProfile ?? resolveIsolationProfile();
+    const launchSpec = resolveWorkerLaunchSpec({
+      command: this.options.command,
+      args: this.options.args,
+      componentBinaryPath: defaultComponentBinary,
+      repoRoot,
+      workerBinaryPath: this.options.command,
+    });
+    this.executionMode = launchSpec.backend.mode;
+    this.executionBackend = launchSpec.backend;
   }
 
   private ensureWorkerBinary(env: NodeJS.ProcessEnv): void {
@@ -149,11 +167,24 @@ export class RustWorkerTransport implements WorkerTransport {
     const env = this.resolveLinkerEnv(baseEnv);
     this.ensureComponentArtifact(env);
     this.ensureWorkerBinary(env);
+    const launchSpec = resolveWorkerLaunchSpec({
+      command: this.options.command,
+      args: this.options.args,
+      componentBinaryPath: defaultComponentBinary,
+      repoRoot,
+      workerBinaryPath: this.options.command,
+      env,
+    });
+    if (!launchSpec.backend.available) {
+      throw new Error(
+        `microvm execution mode unavailable: ${launchSpec.backend.reason}`,
+      );
+    }
 
-    const child = spawn(this.options.command, this.options.args, {
+    const child = spawn(launchSpec.command, launchSpec.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: repoRoot,
-      env,
+      env: launchSpec.env,
     });
 
     child.stdout.on("data", (chunk: Buffer) => {

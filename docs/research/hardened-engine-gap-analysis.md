@@ -10,6 +10,7 @@ target hardening posture for untrusted coding-agent execution.
 ## Verified Current State
 
 - `node`, `deno`, and `bun` default to process transport backed by the Rust worker.
+- The server transport now exposes an experimental opt-in `microvm` launcher mode through `AEGISPY_WORKER_EXECUTION_MODE`.
 - The worker defaults to the WASI executor and the `component-wit` capability channel.
 - Real-execution, capability-binding, and profile-conformance evidence artifacts are present.
 - The browser profile now uses an experimental real-engine worker path with explicit capability limits.
@@ -37,7 +38,8 @@ target hardening posture for untrusted coding-agent execution.
 2. Enforced isolation profile
 
 - Deepen worker execution enforcement for seccomp, namespace, cgroup, and rlimit controls.
-- Add microVM execution profile for hostile multi-tenant workloads.
+- Extend the new opt-in microVM launcher mode into a stronger execution profile
+  for hostile multi-tenant workloads.
 
 3. Capability boundary enforcement
 

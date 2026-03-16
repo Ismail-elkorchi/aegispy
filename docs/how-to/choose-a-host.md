@@ -5,6 +5,8 @@
 Choose a server host when you need the real runtime path:
 
 - process transport
+- default native process execution mode
+- optional experimental `microvm` execution mode through `AEGISPY_WORKER_EXECUTION_MODE=microvm`
 - Rust worker
 - WASI Python
 - `component-wit` capability channel
@@ -26,5 +28,7 @@ This host maps to the `browser-real-engine` profile.
 ## Decision Rule
 
 - Use `node`, `deno`, or `bun` when you need real interpreter execution.
+- Use the default process execution mode unless you already operate a
+  compatible microVM launcher.
 - Use `browser` only when the experimental browser limits are acceptable and
   explicitly documented to downstream users.

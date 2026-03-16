@@ -28,6 +28,18 @@ security boundary.
 - `bun`
 - `browser`
 
+## Server Execution Mode
+
+The server hosts keep the same public transport surface while exposing one
+shared execution-mode switch through the environment:
+
+- `AEGISPY_WORKER_EXECUTION_MODE=process` keeps the default native process path
+- `AEGISPY_WORKER_EXECUTION_MODE=microvm` selects the experimental launcher-backed
+  microVM path for `node`, `deno`, and `bun`
+
+When `microvm` mode is selected without a compatible launcher, the runtime
+fails closed with `AEG-ENGINE` before guest code runs.
+
 ## Request Shape
 
 `RunRequest` includes:
