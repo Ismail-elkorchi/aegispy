@@ -3,9 +3,19 @@
 ## Core Entry Points
 
 - `createRuntime({ host })`
+- `createBrowserRuntime(options?)` from `@aegispy/browser`
 - `runtime.capabilities()`
 - `runtime.run(RunRequest)`
 - `runtime.close()`
+
+## Browser Runtime Options
+
+`createBrowserRuntime(options?)` accepts:
+
+- `engine?: "pyodide"`
+- `assetBaseUrl?: string`
+- `packages?: string[]`
+- `packageLockfile?: Lockfile`
 
 ## Host Kinds
 

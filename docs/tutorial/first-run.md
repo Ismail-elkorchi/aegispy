@@ -46,8 +46,9 @@ await runtime.close();
 
 - `node`, `deno`, and `bun` use the `server-hardened` profile and default to
   the real process/WASI/component runtime path.
-- `browser` uses the `browser-subset` profile and keeps the same request/result
-  contract while rejecting unsupported capabilities.
+- `browser` uses the experimental `browser-real-engine` profile and keeps the
+  same request/result contract while rejecting filesystem, HTTP, and
+  environment capabilities.
 
 ## What To Read Next
 

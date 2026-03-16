@@ -6,7 +6,7 @@
   - portable docs, workflow policy, lint, format, typecheck, and portable tests
 - `host-contracts`
   - explicit host-oriented test suites for `node`, `deno`, `bun`, and
-    `browser-subset`
+    `browser-real-engine`
 - `linux-check`
   - full Linux truth lane with Rust build, component build, compatibility,
     hardening, and provenance verification

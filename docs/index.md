@@ -1,8 +1,8 @@
 # Docs
 
 AegisPy exposes a capability-gated Python runtime across `node`, `deno`, `bun`,
-and `browser`, with a real server-side execution path for the server hosts and a
-documented `browser-subset` profile for browser use.
+and `browser`, with a real server-side execution path for the server hosts and
+an experimental real-engine browser profile with explicit capability limits.
 
 ## Start Here
 

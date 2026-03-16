@@ -1,6 +1,6 @@
 export type HostKind = "node" | "deno" | "bun" | "browser";
 
-export type ConformanceProfile = "server-hardened" | "browser-subset";
+export type ConformanceProfile = "server-hardened" | "browser-real-engine";
 
 export type TerminationReason =
   | "ok"

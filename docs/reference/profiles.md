@@ -15,7 +15,7 @@ Properties:
 - `component-wit` capability channel
 - explicit denial semantics for filesystem, HTTP, and environment permissions
 
-## `browser-subset`
+## `browser-real-engine`
 
 Hosts:
 
@@ -24,9 +24,9 @@ Hosts:
 Properties:
 
 - same request/result API shape
-- simulated timeout-bounded execution path
+- experimental worker-backed real Python execution
 - no filesystem, HTTP, or environment capabilities
-- stable unsupported-host semantics
+- stable unsupported-host semantics for browser-unavailable capabilities
 
 ## Evidence
 

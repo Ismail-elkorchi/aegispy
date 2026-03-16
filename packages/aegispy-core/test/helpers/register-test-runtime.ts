@@ -25,7 +25,8 @@ class TestSimulatedRuntime implements AegisPyRuntime {
   public capabilities(): RuntimeCapabilities {
     return {
       host: this.host,
-      profile: this.host === "browser" ? "browser-subset" : "server-hardened",
+      profile:
+        this.host === "browser" ? "browser-real-engine" : "server-hardened",
       transport: this.host === "browser" ? "worker" : "simulation",
       capabilityChannel: this.host === "browser" ? "worker-timeout" : "none",
       fs: this.host !== "browser",

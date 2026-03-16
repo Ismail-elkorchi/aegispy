@@ -6,7 +6,8 @@ AegisPy provides a capability-gated Python runtime API across Node, Deno, Bun, a
 
 - Contract, runtime, and release gates are implemented and passing.
 - `node`, `deno`, and `bun` default to the real process/WASI/component path.
-- `browser` remains a restricted subset profile with simulated execution semantics.
+- `browser` now uses an experimental real-engine worker runtime with explicit
+  capability limits for filesystem, HTTP, and environment access.
 - Hardening is still in progress; see `docs/hardening-roadmap.md`.
 
 ## Getting Started
@@ -20,6 +21,7 @@ AegisPy provides a capability-gated Python runtime API across Node, Deno, Bun, a
 ## API
 
 - `createRuntime({ host })`
+- `createBrowserRuntime(options?)` from `@aegispy/browser`
 - `runtime.run(RunRequest)`
 - `runtime.close()`
 
