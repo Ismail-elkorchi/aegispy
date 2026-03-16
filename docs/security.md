@@ -48,10 +48,29 @@
 
 ## Replay And Adversarial Proof
 
-- Replay attestation now spans three deterministic workload shapes across
+- Replay attestation now spans six deterministic workload shapes across
   `node`, `deno`, `bun`, and `browser`.
-- The adversarial suite records filesystem traversal denial, output abuse,
-  strict-profile environment denial, and strict stdout-envelope denial.
+- The adversarial suite now records eight hostile boundary cases:
+  filesystem traversal denial, output abuse, strict-profile environment
+  denial, strict stdout-envelope denial, strict stderr-envelope denial,
+  strict CPU-envelope denial, strict memory-envelope denial, and strict
+  wall-envelope denial.
+
+## Fuzz Coverage Depth
+
+- Protocol framing records fixed-seed fuzz iterations and category counts for
+  frame decoding and JSON decoding.
+- Runtime-envelope validation records fixed-seed fuzz iterations and category
+  counts for valid inputs, invalid inputs, preflight-accepted inputs, and
+  browser-denied inputs.
+- Browser worker input normalization records fixed-seed fuzz iterations and
+  category counts for valid inputs, invalid inputs, package inputs,
+  `assetBaseUrl` inputs, and malformed package or asset inputs.
+- Browser integrity verification records fixed-seed fuzz iterations and
+  category counts for clean, tampered, and missing package and asset inputs.
+- Native ABI fuzz proof records fixed-seed iterations plus malformed-frame,
+  valid-frame, ok-response, denied-response, parse-failure, and
+  policy-denial counts.
 
 ## Security Evidence
 

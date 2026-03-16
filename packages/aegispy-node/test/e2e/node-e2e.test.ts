@@ -50,6 +50,41 @@ function capabilityChannel(result: {
     : null;
 }
 
+async function runWithIsolationEnv(
+  envOverrides: Record<string, string>,
+  request: RunRequest,
+) {
+  const originalEnv = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(envOverrides)) {
+    originalEnv.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+
+  function restoreEnv() {
+    for (const [key, value] of originalEnv.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+
+  const runtime = await createRuntime({ host: "node" });
+  return runtime.run(request).then(
+    async (result) => {
+      await runtime.close();
+      restoreEnv();
+      return result;
+    },
+    async (error) => {
+      await runtime.close();
+      restoreEnv();
+      throw error;
+    },
+  );
+}
+
 describe("node e2e", () => {
   it("executes a basic run", async () => {
     const runtime = await createRuntime({ host: "node" });
@@ -344,6 +379,44 @@ describe("node e2e", () => {
     expect(envResult.status).toBe("error");
     expect(strictStdoutResult.status).toBe("error");
 
+    const strictStderrReq = baseRequest(
+      'import sys\nprint("stderr strict envelope", file=sys.stderr)',
+    );
+    const strictStderrResult = await runWithIsolationEnv(
+      {
+        AEGISPY_ISOLATION_MAX_STDERR_BYTES: "128",
+      },
+      strictStderrReq,
+    );
+
+    const strictCpuReq = baseRequest('print("cpu strict envelope")');
+    strictCpuReq.limits.time.wallMs = 250;
+    strictCpuReq.limits.time.cpuMs = 2_000;
+    const strictCpuResult = await runWithIsolationEnv(
+      {
+        AEGISPY_ISOLATION_MAX_CPU_MS: "300",
+      },
+      strictCpuReq,
+    );
+
+    const strictMemoryReq = baseRequest('print("memory strict envelope")');
+    strictMemoryReq.limits.bytes.memoryBytes = 2 * 1024 * 1024;
+    const strictMemoryResult = await runWithIsolationEnv(
+      {
+        AEGISPY_ISOLATION_MAX_MEMORY_BYTES: "1048576",
+      },
+      strictMemoryReq,
+    );
+
+    const strictWallReq = baseRequest('print("wall strict envelope")');
+    strictWallReq.limits.time.wallMs = 2_000;
+    const strictWallResult = await runWithIsolationEnv(
+      {
+        AEGISPY_ISOLATION_MAX_WALL_MS: "300",
+      },
+      strictWallReq,
+    );
+
     writeArtifact("artifacts/security/adversarial-suite.json", {
       ok: true,
       invariants: ["INV-SECU-0006"],
@@ -368,7 +441,41 @@ describe("node e2e", () => {
           termination: strictStdoutResult.meta.termination,
           status: strictStdoutResult.status,
         },
+        {
+          caseId: "stderr-strict-envelope",
+          termination: strictStderrResult.meta.termination,
+          status: strictStderrResult.status,
+        },
+        {
+          caseId: "cpu-strict-envelope",
+          termination: strictCpuResult.meta.termination,
+          status: strictCpuResult.status,
+        },
+        {
+          caseId: "memory-strict-envelope",
+          termination: strictMemoryResult.meta.termination,
+          status: strictMemoryResult.status,
+        },
+        {
+          caseId: "wall-strict-envelope",
+          termination: strictWallResult.meta.termination,
+          status: strictWallResult.status,
+        },
       ],
     });
+
+    for (const result of [
+      strictStderrResult,
+      strictCpuResult,
+      strictMemoryResult,
+      strictWallResult,
+    ]) {
+      expect(result.status).toBe("error");
+      expect(result.meta.termination).toBe("policy_denied");
+      if (result.status !== "error") {
+        throw new Error("expected strict isolation denial");
+      }
+      expect(result.error.code).toBe("AEG-POLICY-DENIED");
+    }
   }, 600_000);
 });

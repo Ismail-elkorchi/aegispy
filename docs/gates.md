@@ -63,8 +63,11 @@
   `artifacts/security/browser-integrity-fuzz.json`,
   `artifacts/security/runtime-envelope-fuzz.json`, and
   `artifacts/security/protocol-framing-fuzz.json`.
-- The replay artifact records a three-workload cross-host corpus, and the
-  adversarial suite records strict-profile hostile-boundary denials.
+- The replay artifact records a six-workload cross-host corpus, and the
+  adversarial suite records eight strict-profile hostile-boundary denials.
+- The security gate also requires fixed-seed iteration metadata and explicit
+  category counts for protocol framing, runtime envelopes, browser worker
+  inputs, browser integrity inputs, and native ABI fuzzing.
 - Contributors can treat those artifacts as generated proof of the public
   runtime and security claims rather than as part of the runtime API itself.
 

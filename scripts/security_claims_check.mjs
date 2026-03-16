@@ -102,6 +102,10 @@ function isPositiveNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isHexSeed(value) {
+  return typeof value === "string" && /^[0-9a-f]{8,}$/u.test(value);
+}
+
 function isBlockedProbe(probe) {
   return (
     probe?.blocked === true &&
@@ -302,6 +306,12 @@ function main() {
       failures.push({ error: "native_abi_fuzz_not_component_wit_channel" });
     if (doc.dispatchMode !== "host-native-abi-direct-dispatch")
       failures.push({ error: "native_abi_fuzz_dispatch_mode_invalid" });
+    if (!isHexSeed(doc.seedHex)) {
+      failures.push({ error: "native_abi_fuzz_seed_missing" });
+    }
+    if (typeof doc.iterations !== "number" || doc.iterations < 600) {
+      failures.push({ error: "native_abi_fuzz_iterations_missing" });
+    }
     if (
       typeof doc?.audit?.parseFailures !== "number" ||
       doc.audit.parseFailures <= 0
@@ -334,7 +344,7 @@ function main() {
             host: hostDoc.host,
           });
         }
-        if (!Array.isArray(hostDoc.workloads) || hostDoc.workloads.length < 3) {
+        if (!Array.isArray(hostDoc.workloads) || hostDoc.workloads.length < 6) {
           failures.push({ error: "replay_attestation_workloads_invalid" });
           continue;
         }
@@ -372,6 +382,12 @@ function main() {
   } else {
     const doc = readJson(browserInputFuzzPath);
     if (doc.ok !== true) failures.push({ error: "browser_input_fuzz_not_ok" });
+    if (!isHexSeed(doc.seedHex)) {
+      failures.push({ error: "browser_input_fuzz_seed_missing" });
+    }
+    if (typeof doc.iterations !== "number" || doc.iterations < 180) {
+      failures.push({ error: "browser_input_fuzz_iterations_missing" });
+    }
     if (typeof doc.runs !== "number" || doc.runs < 180) {
       failures.push({ error: "browser_input_fuzz_runs_missing" });
     }
@@ -406,6 +422,24 @@ function main() {
         error: "browser_input_fuzz_invalid_asset_cases_missing",
       });
     }
+    for (const [field, minValue] of [
+      ["validInputs", 1],
+      ["invalidInputs", 1],
+      ["packageInputs", 1],
+      ["assetBaseUrlInputs", 1],
+      ["invalidPackageInputs", 1],
+      ["invalidAssetBaseUrlInputs", 1],
+    ]) {
+      if (
+        typeof doc?.categories?.[field] !== "number" ||
+        doc.categories[field] < minValue
+      ) {
+        failures.push({
+          error: "browser_input_fuzz_category_missing",
+          field,
+        });
+      }
+    }
   }
 
   if (!fs.existsSync(browserIntegrityFuzzPath)) {
@@ -417,6 +451,12 @@ function main() {
     const doc = readJson(browserIntegrityFuzzPath);
     if (doc.ok !== true)
       failures.push({ error: "browser_integrity_fuzz_not_ok" });
+    if (!isHexSeed(doc.seedHex)) {
+      failures.push({ error: "browser_integrity_fuzz_seed_missing" });
+    }
+    if (typeof doc.iterations !== "number" || doc.iterations < 120) {
+      failures.push({ error: "browser_integrity_fuzz_iterations_missing" });
+    }
     if (typeof doc.packageRuns !== "number" || doc.packageRuns < 60) {
       failures.push({ error: "browser_integrity_fuzz_package_runs_missing" });
     }
@@ -438,6 +478,24 @@ function main() {
         });
       }
     }
+    for (const [field, minValue] of [
+      ["cleanPackageInputs", 1],
+      ["tamperedPackageInputs", 1],
+      ["missingPackageInputs", 1],
+      ["cleanAssetInputs", 1],
+      ["tamperedAssetInputs", 1],
+      ["missingAssetInputs", 1],
+    ]) {
+      if (
+        typeof doc?.categories?.[field] !== "number" ||
+        doc.categories[field] < minValue
+      ) {
+        failures.push({
+          error: "browser_integrity_fuzz_category_missing",
+          field,
+        });
+      }
+    }
   }
 
   if (!fs.existsSync(runtimeEnvelopeFuzzPath)) {
@@ -449,6 +507,12 @@ function main() {
     const doc = readJson(runtimeEnvelopeFuzzPath);
     if (doc.ok !== true)
       failures.push({ error: "runtime_envelope_fuzz_not_ok" });
+    if (!isHexSeed(doc.seedHex)) {
+      failures.push({ error: "runtime_envelope_fuzz_seed_missing" });
+    }
+    if (typeof doc.iterations !== "number" || doc.iterations < 180) {
+      failures.push({ error: "runtime_envelope_fuzz_iterations_missing" });
+    }
     if (typeof doc.runs !== "number" || doc.runs < 180) {
       failures.push({ error: "runtime_envelope_fuzz_runs_missing" });
     }
@@ -475,6 +539,23 @@ function main() {
     ) {
       failures.push({ error: "runtime_envelope_fuzz_browser_denied_missing" });
     }
+    for (const [field, minValue] of [
+      ["validInputs", 1],
+      ["invalidInputs", 1],
+      ["preflightOkInputs", 1],
+      ["preflightDeniedInputs", 1],
+      ["browserDeniedInputs", 1],
+    ]) {
+      if (
+        typeof doc?.categories?.[field] !== "number" ||
+        doc.categories[field] < minValue
+      ) {
+        failures.push({
+          error: "runtime_envelope_fuzz_category_missing",
+          field,
+        });
+      }
+    }
   }
 
   if (!fs.existsSync(adversarialSuitePath)) {
@@ -485,7 +566,7 @@ function main() {
   } else {
     const doc = readJson(adversarialSuitePath);
     if (doc.ok !== true) failures.push({ error: "adversarial_suite_not_ok" });
-    if (!Array.isArray(doc.cases) || doc.cases.length < 4) {
+    if (!Array.isArray(doc.cases) || doc.cases.length < 8) {
       failures.push({ error: "adversarial_suite_case_count_invalid" });
     } else {
       for (const [caseId, termination] of [
@@ -493,6 +574,10 @@ function main() {
         ["output-abuse", "output_limit"],
         ["env-strict-profile", "policy_denied"],
         ["stdout-strict-envelope", "policy_denied"],
+        ["stderr-strict-envelope", "policy_denied"],
+        ["cpu-strict-envelope", "policy_denied"],
+        ["memory-strict-envelope", "policy_denied"],
+        ["wall-strict-envelope", "policy_denied"],
       ]) {
         const entry = doc.cases.find((item) => item.caseId === caseId);
         if (!entry) {
@@ -527,6 +612,12 @@ function main() {
     const doc = readJson(protocolFramingFuzzPath);
     if (doc.ok !== true)
       failures.push({ error: "protocol_framing_fuzz_not_ok" });
+    if (!isHexSeed(doc.seedHex)) {
+      failures.push({ error: "protocol_framing_fuzz_seed_missing" });
+    }
+    if (typeof doc.iterations !== "number" || doc.iterations < 240) {
+      failures.push({ error: "protocol_framing_fuzz_iterations_missing" });
+    }
     if (typeof doc.runs !== "number" || doc.runs < 240) {
       failures.push({ error: "protocol_framing_fuzz_runs_missing" });
     }
@@ -538,6 +629,20 @@ function main() {
       doc.jsonParseFailures <= 0
     ) {
       failures.push({ error: "protocol_framing_fuzz_json_failures_missing" });
+    }
+    for (const [field, minValue] of [
+      ["frameDecodeIterations", 120],
+      ["jsonDecodeIterations", 120],
+    ]) {
+      if (
+        typeof doc?.categories?.[field] !== "number" ||
+        doc.categories[field] < minValue
+      ) {
+        failures.push({
+          error: "protocol_framing_fuzz_category_missing",
+          field,
+        });
+      }
     }
   }
 

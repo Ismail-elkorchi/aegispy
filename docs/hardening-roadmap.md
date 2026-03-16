@@ -55,7 +55,7 @@ A real hardened Python engine suitable for hostile agent workloads.
 4. Deterministic replay and attestation
 
 - Runtime-level deterministic clock/RNG controls and stable replay hashes.
-- Current proof now records matching replay hashes across three workloads on
+- Current proof now records matching replay hashes across six workloads on
   `node`, `deno`, `bun`, and `browser-real-engine`.
 - Exit criteria: replay corpus grows beyond the current cross-host proof while
   keeping those hashes stable under fixed seed/epoch.
@@ -70,7 +70,11 @@ A real hardened Python engine suitable for hostile agent workloads.
 - Protocol-framing, runtime-envelope, browser-input, and native-ABI fuzz gates
   now run in the repository check lane.
 - The adversarial suite now records traversal, output abuse, strict-profile
-  environment denial, and strict stdout-envelope denial.
+  environment denial, and strict stdout, stderr, CPU, memory, and wall
+  envelope denials.
+- Fuzz artifacts now record fixed-seed iteration and category metadata for
+  protocol framing, runtime envelopes, browser worker inputs, browser
+  integrity inputs, and native ABI fuzzing.
 - Keep expanding adversarial regression suites with new execution surfaces.
 - Vulnerability SLA, disclosure process, and incident runbook.
 - Exit criteria: security gates and operational runbooks are release blockers.
