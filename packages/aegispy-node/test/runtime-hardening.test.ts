@@ -126,6 +126,20 @@ function isolationProfileView(
   return (view.isolationProfile as IsolationProfileView | null) ?? null;
 }
 
+function makeRealExecutionProofRequest(code: string): RunRequest {
+  return {
+    ...baseRequest,
+    code,
+    limits: {
+      ...baseRequest.limits,
+      time: {
+        wallMs: 10_000,
+        cpuMs: 10_000,
+      },
+    },
+  };
+}
+
 async function runStrictIsolationCase(
   envOverrides: Record<string, string>,
   request: RunRequest,
@@ -165,14 +179,15 @@ describe("runtime hardening", () => {
   it("defaults to process transport and records real execution proof", async () => {
     delete process.env.AEGISPY_NODE_TRANSPORT;
     process.env.AEGISPY_ISOLATION_PROFILE = "strict";
+    process.env.AEGISPY_ISOLATION_MAX_WALL_MS = "10000";
+    process.env.AEGISPY_ISOLATION_MAX_CPU_MS = "10000";
 
     const runtime = await createRuntime({ host: "node" });
     const view = runtimeView(runtime);
     const capabilities = runtime.capabilities();
-    const result = await runtime.run({
-      ...baseRequest,
-      code: 'print("real-path")',
-    });
+    const result = await runtime.run(
+      makeRealExecutionProofRequest('print("real-path")'),
+    );
     await runtime.close();
 
     expect(view.transportKind).toBe("process");

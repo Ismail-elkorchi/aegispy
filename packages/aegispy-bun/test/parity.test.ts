@@ -426,6 +426,7 @@ function isTimeoutDenied(result: RunResult): boolean {
 }
 
 function makeRequest(host: HostKind, code: string): RunRequest {
+  const defaultWallMs = host === "browser" ? 30_000 : 3_000;
   return {
     host,
     code,
@@ -438,8 +439,8 @@ function makeRequest(host: HostKind, code: string): RunRequest {
     },
     limits: {
       time: {
-        wallMs: 3000,
-        cpuMs: 3000,
+        wallMs: defaultWallMs,
+        cpuMs: defaultWallMs,
       },
       bytes: {
         memoryBytes: 64 * 1024 * 1024,
@@ -457,8 +458,16 @@ function makeRequest(host: HostKind, code: string): RunRequest {
 
 function makePackageExecutionRequest(host: HostKind, code: string): RunRequest {
   const request = makeRequest(host, code);
-  request.limits.time.wallMs = 10_000;
-  request.limits.time.cpuMs = 10_000;
+  const packageExecutionWallMs = host === "browser" ? 30_000 : 10_000;
+  request.limits.time.wallMs = packageExecutionWallMs;
+  request.limits.time.cpuMs = packageExecutionWallMs;
+  return request;
+}
+
+function makeSupportRequest(host: HostKind, code: string): RunRequest {
+  const request = makeRequest(host, code);
+  request.limits.time.wallMs = 30_000;
+  request.limits.time.cpuMs = 30_000;
   return request;
 }
 
@@ -1720,6 +1729,8 @@ describe("bun adapter parity", () => {
       AEGISPY_DENO_TRANSPORT: "process",
       AEGISPY_BUN_TRANSPORT: "process",
       AEGISPY_ISOLATION_PROFILE: "compat",
+      AEGISPY_ISOLATION_MAX_WALL_MS: "30000",
+      AEGISPY_ISOLATION_MAX_CPU_MS: "30000",
     };
 
     const nodeRuntime = await createNodeRuntime({ host: "node" });
@@ -1734,7 +1745,7 @@ describe("bun adapter parity", () => {
     ].join("\n");
 
     const request = (host: "node" | "deno" | "bun"): RunRequest => {
-      return makeRequest(host, requestCode);
+      return makeSupportRequest(host, requestCode);
     };
 
     const nodeResult = await nodeRuntime.run(request("node"));

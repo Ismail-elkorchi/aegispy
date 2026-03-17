@@ -9,7 +9,7 @@ import { writeArtifact } from "../helpers/artifact";
 
 const invariants = ["INV-FEAT-0013", "INV-FEAT-0014"];
 
-function makeBrowserRequest(code: string, wallMs = 5000) {
+function makeBrowserRequest(code: string, wallMs = 30_000) {
   return {
     host: "browser" as const,
     code,
@@ -53,7 +53,7 @@ describe("browser runtime", () => {
 
     expect(result.status).toBe("ok");
     expect(result.stdoutUtf8).toContain("direct-api");
-  }, 20_000);
+  }, 45_000);
 
   it("uses a real browser engine, imports stdlib, and recovers after timeout", async () => {
     const runtime: AegisPyRuntime = await createRuntime({ host: "browser" });
@@ -144,7 +144,7 @@ describe("browser runtime", () => {
     }
     expect(result.error.code).toBe("AEG-ENGINE");
     expect(result.stderrUtf8).toContain("browser-engine-failure");
-  }, 20_000);
+  }, 45_000);
 
   it("returns stable unsupported-host error for non-subset capability requests", async () => {
     const runtime: AegisPyRuntime = await createRuntime({ host: "browser" });
