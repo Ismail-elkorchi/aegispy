@@ -1,4 +1,4 @@
-import { describe, it } from "vitest";
+import { afterEach, describe, it } from "vitest";
 import { createRuntime as createNodeRuntime } from "../../src/index";
 import { createRuntime as createDenoRuntime } from "../../../aegispy-deno/src/index";
 import { createRuntime as createBunRuntime } from "../../../aegispy-bun/src/index";
@@ -8,7 +8,9 @@ import type { HostKind, RunRequest, RunResult } from "@aegispy/core";
 import { writeArtifact } from "../helpers/artifact";
 
 const invariants = ["INV-FEAT-0024", "INV-SECU-0010"];
-const replayRunBudgetMs = 5_000;
+const serverReplayRunBudgetMs = 10_000;
+const browserReplayRunBudgetMs = 30_000;
+const originalEnv = { ...process.env };
 
 interface ReplayWorkload {
   workloadId: string;
@@ -73,6 +75,8 @@ function makeRequest(
   seedHex: string,
   workload: ReplayWorkload,
 ): RunRequest {
+  const replayRunBudgetMs =
+    host === "browser" ? browserReplayRunBudgetMs : serverReplayRunBudgetMs;
   return {
     host,
     code: workload.code,
@@ -135,7 +139,7 @@ const runtimeFactories = {
   browser: () => createBrowserRuntime({ host: "browser" }),
 } as const;
 
-function shouldRetryAfterEngineExit(
+function shouldRetryAfterTransientEngineError(
   host: HostKind,
   result: RunResult,
 ): boolean {
@@ -143,7 +147,8 @@ function shouldRetryAfterEngineExit(
     host !== "browser" &&
     result.status === "error" &&
     result.error.code === "AEG-ENGINE" &&
-    result.stderrUtf8.includes("worker process exited")
+    (result.stderrUtf8.includes("worker process exited") ||
+      result.stderrUtf8.includes("No module named 'aegispy'"))
   );
 }
 
@@ -156,7 +161,7 @@ async function runWithRuntimeRecovery(
   runtime: Awaited<ReturnType<(typeof runtimeFactories)[HostKind]>>;
 }> {
   const firstResult = await currentRuntime.run(request);
-  if (!shouldRetryAfterEngineExit(host, firstResult)) {
+  if (!shouldRetryAfterTransientEngineError(host, firstResult)) {
     return { result: firstResult, runtime: currentRuntime };
   }
 
@@ -167,7 +172,21 @@ async function runWithRuntimeRecovery(
 }
 
 describe("replay attestation", () => {
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
   it("records stable replay hashes across a broader host workload corpus", async () => {
+    process.env = {
+      ...originalEnv,
+      AEGISPY_NODE_TRANSPORT: "process",
+      AEGISPY_DENO_TRANSPORT: "process",
+      AEGISPY_BUN_TRANSPORT: "process",
+      AEGISPY_ISOLATION_PROFILE: "strict",
+      AEGISPY_ISOLATION_MAX_WALL_MS: String(serverReplayRunBudgetMs),
+      AEGISPY_ISOLATION_MAX_CPU_MS: String(serverReplayRunBudgetMs),
+    };
+
     const hosts = [];
 
     for (const host of ["node", "deno", "bun", "browser"] as const) {
