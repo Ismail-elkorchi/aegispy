@@ -28,6 +28,7 @@
     "engine:verify": "node scripts/engine/verify.mjs",
     "selftest": "node scripts/selftest.mjs",
     "release:gate": "node scripts/release-gate.mjs",
+    "release:rehearsal": "node scripts/release-rehearsal.mjs",
     "release:audit": "node scripts/release-audit.mjs",
     "release:claims": "bash scripts/release_claims_check"
   },

@@ -32,6 +32,11 @@
 - `provenance.json` records source script and build timestamp.
 - repository verification publishes matching integrity evidence for shipped
   engine artifacts.
+- Release rehearsal now stages a source archive, release notes, SBOM, and
+  supply-chain attestation in `artifacts/security/release-rehearsal.json`.
+- The manual release rehearsal verifies provenance for the source archive plus
+  the shipped runtime artifacts before the strict release claim gate accepts
+  the rehearsal artifact.
 - browser package requests now fail closed unless they match a verified
   `packageLockfile`.
 - browser runs with `assetBaseUrl` now verify pinned Pyodide asset hashes
@@ -90,6 +95,7 @@
 - `artifacts/security/supply-chain-sbom.json`
 - `artifacts/security/supply-chain-attestation.json`
 - `artifacts/security/provenance-verification.json`
+- `artifacts/security/release-rehearsal.json`
 - `artifacts/security/kernel-isolation-runtime.json`
 - `artifacts/gates/provenance-verify-check.json`
 - `artifacts/gates/kernel-isolation-check.json`
