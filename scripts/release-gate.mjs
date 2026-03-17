@@ -1,10 +1,20 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadReleaseVersion } from "./release-version.mjs";
 
+const __filename = fileURLToPath(import.meta.url);
+
+export function resolveReleaseTag({
+  envRefName = process.env.GITHUB_REF_NAME,
+  cliArgs = process.argv.slice(2),
+} = {}) {
+  const cliValue = firstCliValue(cliArgs);
+  return normalizeTag(cliValue || envRefName || "");
+}
+
 const run = async () => {
-  const tagName = normalizeTag(
-    process.env.GITHUB_REF_NAME ?? firstCliValue(process.argv.slice(2)),
-  );
+  const tagName = resolveReleaseTag();
   if (!tagName.startsWith("v")) {
     throw new Error(
       `release-gate: expected v-prefixed tag, received "${tagName}"`,
@@ -55,9 +65,15 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-run().catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exitCode = 1;
-});
+const isEntryPoint =
+  typeof process.argv[1] === "string" &&
+  path.resolve(process.argv[1]) === __filename;
+
+if (isEntryPoint) {
+  run().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  });
+}
