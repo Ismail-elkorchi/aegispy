@@ -37,11 +37,15 @@
 
 - `bash scripts/release_claims_check` runs the release-grade claim gate and
   writes `artifacts/gates/release-claims.json`.
+- When `artifacts/security/release-rehearsal.json` is present, the release
+  claim gate validates that staged rehearsal artifact instead of restaging new
+  release inputs.
 - `bash scripts/security_claims_check` runs the security-claim gate and writes
   `artifacts/gates/security-claims-check.json`.
 
 ## Release Commands
 
+- `pnpm run release:rehearsal -- --tag v0.0.0`
 - `pnpm run release:gate -- v0.0.0`
 - `pnpm run release:audit`
 - `pnpm run release:claims`
@@ -65,6 +69,9 @@
   `artifacts/security/browser-integrity-fuzz.json`,
   `artifacts/security/runtime-envelope-fuzz.json`, and
   `artifacts/security/protocol-framing-fuzz.json`.
+- Release rehearsal writes `artifacts/security/release-rehearsal.json` and
+  pairs it with provenance verification for the source archive plus the shipped
+  runtime artifacts.
 - The replay artifact records a six-workload cross-host corpus, and the
   adversarial suite records eight strict-profile hostile-boundary denials.
 - The security gate also requires fixed-seed iteration metadata and explicit

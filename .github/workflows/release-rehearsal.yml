@@ -1,0 +1,133 @@
+name: release-rehearsal
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Optional v-prefixed tag name to rehearse
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-rehearsal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-rehearsal:
+    name: release-rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Load Runtime Policy
+        id: runtime-policy
+        shell: bash
+        run: |
+          node -e "const fs=require('node:fs');const p=JSON.parse(fs.readFileSync('tools/runtime-versions.json','utf8'));fs.appendFileSync(process.env.GITHUB_OUTPUT,'node_pinned='+p.node.pinned+'\\n');fs.appendFileSync(process.env.GITHUB_OUTPUT,'rust_toolchain='+p.rust.toolchain+'\\n');"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: ${{ steps.runtime-policy.outputs.node_pinned }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.runtime-policy.outputs.rust_toolchain }}
+
+      - name: Resolve Rehearsal Tag
+        id: release-tag
+        shell: bash
+        run: |
+          tag_name="${{ inputs.tag_name }}"
+          if [ -z "$tag_name" ]; then
+            tag_name="$(node -e "const fs=require('node:fs');const doc=JSON.parse(fs.readFileSync('package.json','utf8'));process.stdout.write('v'+doc.version)")"
+          fi
+          if [[ "$tag_name" != v* ]]; then
+            echo "expected v-prefixed rehearsal tag, got: ${tag_name}" >&2
+            exit 1
+          fi
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Stage Release Rehearsal
+        run: pnpm run release:rehearsal -- --tag "${{ steps.release-tag.outputs.tag_name }}"
+
+      - name: Attest Release Subjects
+        id: attest_release_subjects
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            dist/aegispy-source.tar.gz
+            artifacts/engine/cpython-wasi.wasm
+            artifacts/engine/aegispy-capability-bridge.py
+            artifacts/component/aegispy.component.wasm
+
+      - name: Stage Provenance Bundle
+        run: |
+          mkdir -p artifacts/security
+          bundle_path="${{ steps.attest_release_subjects.outputs.bundle-path }}"
+          if [ -z "$bundle_path" ] || [ ! -f "$bundle_path" ]; then
+            echo "attestation bundle not found at: ${bundle_path}" >&2
+            exit 1
+          fi
+          cp "$bundle_path" artifacts/security/provenance-bundle.jsonl
+
+      - name: Verify Provenance Bundle
+        env:
+          AEGISPY_PROVENANCE_VERIFY_REQUIRED: "1"
+          AEGISPY_PROVENANCE_REPO: ${{ github.repository }}
+          AEGISPY_PROVENANCE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/release-rehearsal.yml
+          AEGISPY_PROVENANCE_BUNDLE_PATH: artifacts/security/provenance-bundle.jsonl
+          AEGISPY_PROVENANCE_SUBJECTS: |
+            dist/aegispy-source.tar.gz
+            artifacts/engine/cpython-wasi.wasm
+            artifacts/engine/aegispy-capability-bridge.py
+            artifacts/component/aegispy.component.wasm
+        run: bash scripts/provenance_verify_check
+
+      - name: Finalize Release Rehearsal
+        run: node scripts/release-rehearsal.mjs --finalize
+
+      - name: Release Claims
+        env:
+          AEGISPY_PROVENANCE_VERIFY_REQUIRED: "1"
+          AEGISPY_PROVENANCE_REPO: ${{ github.repository }}
+          AEGISPY_PROVENANCE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/release-rehearsal.yml
+          AEGISPY_PROVENANCE_BUNDLE_PATH: artifacts/security/provenance-bundle.jsonl
+          AEGISPY_PROVENANCE_SUBJECTS: |
+            dist/aegispy-source.tar.gz
+            artifacts/engine/cpython-wasi.wasm
+            artifacts/engine/aegispy-capability-bridge.py
+            artifacts/component/aegispy.component.wasm
+        run: pnpm run release:claims
+
+      - name: Upload Rehearsal Artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: release-rehearsal-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/**
+            dist/**
+          if-no-files-found: ignore
+          retention-days: 14
