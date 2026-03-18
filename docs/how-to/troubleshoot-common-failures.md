@@ -6,6 +6,8 @@ Cause:
 
 - the `browser-real-engine` profile does not expose filesystem, HTTP, or
   environment capabilities
+- browser-native `storage` and `fileAccess` requests also remain unavailable on
+  the current browser surface
 - the runtime records this as a profile-level deny, so `termination` is
   `policy_denied` even though the error code stays `AEG-UNSUPPORTED-HOST`
 
@@ -19,11 +21,15 @@ Fix:
 Cause:
 
 - the request asks for a capability that was not granted in `permissions`
+- browser-native `network` requests can also be denied by origin allow/deny
+  policy, request-count budgets, or byte budgets
 
 Fix:
 
 - add the required filesystem roots, HTTP origins, or environment keys to the
   request
+- widen the browser network allowlist or budgets when the request is supposed
+  to succeed
 - or keep the capability disabled and update the workload to avoid it
 
 ## `AEG-TIMEOUT`

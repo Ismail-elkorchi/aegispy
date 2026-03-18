@@ -276,10 +276,10 @@
         "browserEngine": "pyodide",
         "browserVersionBand": "0.29.x",
         "capabilityFamily": "network",
-        "featureState": "unavailable",
+        "featureState": "available",
         "permissionState": "not_applicable",
         "packageClass": "base_interpreter",
-        "evidenceStatus": "unsupported"
+        "evidenceStatus": "supported"
       },
       {
         "browserEngine": "pyodide",

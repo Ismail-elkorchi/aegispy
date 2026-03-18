@@ -38,7 +38,7 @@ compatibility model expands through additive capability families.
 | Capability family | Current state       | Current meaning                                                                     |
 | ----------------- | ------------------- | ----------------------------------------------------------------------------------- |
 | storage           | `unavailable`       | Browser storage primitives are not yet exposed through the current runtime surface. |
-| network           | `unavailable`       | Browser networking is not yet exposed as a typed runtime capability family.         |
+| network           | `available_granted` | Browser networking is exposed through `requestedCapabilities.network`.              |
 | fileAccess        | `unavailable`       | Browser file-picker and file-handle flows are not yet exposed.                      |
 | worker            | `available_granted` | The current browser runtime already executes through a worker-backed engine path.   |
 | handles           | `unavailable`       | No public browser handle/FFI object-capability surface is exposed yet.              |
@@ -195,6 +195,7 @@ These rows are intentionally conservative:
 
 | Engine  | Version band | Capability family | Feature state | Permission state | Package class    | Status    |
 | ------- | ------------ | ----------------- | ------------- | ---------------- | ---------------- | --------- |
+| pyodide | 0.29.x       | network           | available     | not_applicable   | base_interpreter | supported |
 | pyodide | 0.29.x       | worker            | available     | not_applicable   | base_interpreter | supported |
 | pyodide | 0.29.x       | worker            | available     | not_applicable   | pure_python      | supported |
 
@@ -204,9 +205,11 @@ Current browser rows stay equally conservative:
 
 - the worker-backed browser lane is published as the current supported browser
   execution surface
-- storage, network, file-access, and handle capability families remain outside
-  the current supported browser claim rows because the current runtime reports
-  them as `unavailable`, not because the browser platform makes them impossible
+- browser-native `network` is published only for the exact worker-backed
+  Pyodide lane that the current tests prove
+- storage, file-access, and handle capability families remain outside the
+  current supported browser claim rows because the runtime still reports them
+  as `unavailable`, not because the browser platform makes them impossible
 
 ## Parity Evidence
 

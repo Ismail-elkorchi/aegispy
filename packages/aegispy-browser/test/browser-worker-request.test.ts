@@ -19,6 +19,11 @@ function validWorkerRequest() {
     },
     assetBaseUrl: "https://cdn.example.test/pyodide",
     packages: ["micropip"],
+    network: {
+      allowOrigins: ["https://example.com"],
+      maxRequests: 1,
+      maxBytes: 1024,
+    },
   };
 }
 
@@ -32,6 +37,11 @@ describe("browser worker request", () => {
     }
     expect(result.value.requestId).toBe("req-1");
     expect(result.value.packages).toEqual(["micropip"]);
+    expect(result.value.network).toEqual({
+      allowOrigins: ["https://example.com"],
+      maxRequests: 1,
+      maxBytes: 1024,
+    });
   });
 
   it("keeps browser worker input validation stable across fuzzed payloads", () => {

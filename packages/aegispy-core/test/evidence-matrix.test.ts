@@ -72,9 +72,9 @@ describe("evidence matrices", () => {
         }),
         expect.objectContaining({
           capabilityFamily: "network",
-          featureState: "unavailable",
+          featureState: "available",
           permissionState: "not_applicable",
-          evidenceStatus: "unsupported",
+          evidenceStatus: "supported",
         }),
         expect.objectContaining({
           capabilityFamily: "fileAccess",
