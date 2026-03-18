@@ -80,6 +80,8 @@ export interface AuditEvent {
     | "policy_denied"
     | "runtime_channel"
     | "runtime_binding"
+    | "runtime_projection"
+    | "runtime_temp_root"
     | "engine_error"
     | "kernel_isolation";
   detailJson: string;
@@ -157,4 +159,6 @@ export interface AegisPyRuntime {
 
 export interface CreateRuntimeOptions {
   host: HostKind;
+  projectRoots?: string[];
+  tempRoot?: string;
 }

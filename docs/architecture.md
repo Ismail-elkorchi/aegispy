@@ -43,16 +43,30 @@ Frozen compatibility-model truth:
    The default execution mode is native process execution, and the same
    process transport can be switched to an experimental `microvm` launcher
    mode with `AEGISPY_WORKER_EXECUTION_MODE=microvm`.
-4. The WASI worker imports the shipped runtime `aegispy` module from WASI Python and serves guest capability calls through runtime request/response dispatch to the host ABI on the fixed `component-wit` channel.
-5. The server-hardened path enforces runtime-bound capability policy plus the
+4. The server runtime resolves one manifest-defined bundle family and reports
+   its selected bundle metadata through `runtime.capabilities()`.
+5. The WASI worker imports the shipped runtime `aegispy` module from WASI
+   Python and serves guest capability calls through runtime request/response
+   dispatch to the host ABI on the fixed `component-wit` channel.
+6. When server `projectRoots` are configured, the worker projects each host
+   root into a stable internal guest path under `/workspace/projects/*` and
+   prepends those guest paths to the import path in the order provided.
+7. The worker also projects a read-only guest view of the writable capability
+   filesystem under `/workspace/bindings/fs` so package trees written through
+   runtime capability calls can be imported safely without exposing direct
+   guest write access.
+8. The server temp root is exposed as a dedicated guest `/tmp`, backed by the
+   configured `tempRoot` when provided or by a generated host temp directory
+   otherwise.
+9. The server-hardened path enforces runtime-bound capability policy plus the
    strict-profile limit envelope for wall, CPU, memory, stdout, stderr, and
    environment access.
-6. The browser real-engine path uses the same request/response contract, runs a
-   worker-backed Python engine, and keeps filesystem, HTTP, and environment
-   access denied at the runtime boundary.
-   Browser package requests are bound to verified lockfile entries, and
-   `assetBaseUrl` verifies pinned browser engine assets before execution.
-7. Runtime returns `RunResult` with `meta` and `audit`.
+10. The browser real-engine path uses the same request/response contract, runs a
+    worker-backed Python engine, and keeps filesystem, HTTP, and environment
+    access denied at the runtime boundary.
+    Browser package requests are bound to verified lockfile entries, and
+    `assetBaseUrl` verifies pinned browser engine assets before execution.
+11. Runtime returns `RunResult` with `meta` and `audit`.
 
 ## Compatibility Matrices
 
