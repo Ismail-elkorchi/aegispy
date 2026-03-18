@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "claimPolicy": {
+    "publicSupportRequiresStatus": "supported"
+  },
+  "serverMatrixDimensions": [
+    "host",
+    "os",
+    "arch",
+    "runtimeFamily",
+    "packageClass",
+    "capabilityFamily",
+    "isolationFloorVersion",
+    "evidenceStatus"
+  ],
+  "browserMatrixDimensions": [
+    "browserEngine",
+    "browserVersionBand",
+    "capabilityFamily",
+    "featureState",
+    "permissionState",
+    "packageClass",
+    "evidenceStatus"
+  ],
+  "serverCapabilityFamilies": [
+    "storage",
+    "network",
+    "environment",
+    "process",
+    "handles"
+  ],
+  "browserCapabilityFamilies": [
+    "storage",
+    "network",
+    "fileAccess",
+    "worker",
+    "handles"
+  ],
+  "packageClasses": [
+    "base_interpreter",
+    "pure_python",
+    "native_platform",
+    "project_overlay"
+  ],
+  "browserCapabilityStates": [
+    "available_granted",
+    "available_denied",
+    "unavailable",
+    "hard_limit"
+  ],
+  "browserFeatureStates": ["available", "unavailable", "hard_limit"],
+  "browserPermissionStates": [
+    "granted",
+    "denied",
+    "not_requested",
+    "not_applicable"
+  ],
+  "portableCommonIsolationFloor": [
+    "process_boundary",
+    "immutable_runtime_image",
+    "projected_roots",
+    "guest_temp_root",
+    "environment_allowlist",
+    "resource_ceilings",
+    "brokered_capabilities",
+    "audit_trail",
+    "artifact_integrity"
+  ],
+  "evidenceStatuses": ["supported", "unsupported", "prototype", "not_proven"]
+}

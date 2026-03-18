@@ -1,5 +1,10 @@
 # Support Matrix
 
+This page keeps two truths separate:
+
+- current implementation truth
+- frozen compatibility-model vocabulary for future matrix-backed claims
+
 ## Conformance Profiles
 
 | Profile               | Hosts                 | Purpose                                                                             |
@@ -24,6 +29,34 @@
 | http                   | gated by `permissions.http` | gated by `permissions.http` | gated by `permissions.http` | unsupported in `browser-real-engine` (`AEG-UNSUPPORTED-HOST`) |
 | env                    | gated by `permissions.env`  | gated by `permissions.env`  | gated by `permissions.env`  | unsupported in `browser-real-engine` (`AEG-UNSUPPORTED-HOST`) |
 | deterministic time/rng | supported                   | supported                   | supported                   | supported                                                     |
+
+These booleans remain current implementation truth while the contributor-facing
+compatibility model expands through additive capability families.
+
+## Frozen Package Classes
+
+Future package evidence and support rows are grouped by package classes:
+
+- `base_interpreter`
+- `pure_python`
+- `native_platform`
+- `project_overlay`
+
+## Portable Common Isolation Floor
+
+Future cross-OS claims must start from the portable common isolation floor:
+
+- `process_boundary`
+- `immutable_runtime_image`
+- `projected_roots`
+- `guest_temp_root`
+- `environment_allowlist`
+- `resource_ceilings`
+- `brokered_capabilities`
+- `audit_trail`
+- `artifact_integrity`
+
+Stronger host-specific claims remain additive OS-specific strengthening claims.
 
 ## Workload Classification
 
@@ -54,6 +87,19 @@ browser real-engine path.
 - failure codes such as `browser_engine_timeout`,
   `capability_channel_not_component_wit`, or `stdlib_digest_missing` when a
   host diverges from the expected contract
+
+## Matrix-Backed Claims
+
+Future contributor-facing support statements must be matrix-backed.
+
+The frozen evidence status vocabulary is:
+
+- `supported`
+- `unsupported`
+- `prototype`
+- `not_proven`
+
+Only `supported` rows may feed public support claims.
 
 ## Parity Evidence
 

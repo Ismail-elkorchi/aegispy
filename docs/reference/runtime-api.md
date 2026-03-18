@@ -22,8 +22,23 @@ becomes an active runtime boundary:
 
 - requested browser packages must be backed by verified lockfile entries
 - lockfile hash mismatches fail closed with `AEG-ENGINE`
-- when `assetBaseUrl` is set, the browser runtime also verifies pinned Pyodide
-  asset hashes before guest code runs
+- when `assetBaseUrl` is set, the browser runtime also verifies pinned browser
+  engine asset hashes before guest code runs
+
+## Compatibility Vocabulary
+
+Current implementation truth:
+
+- `runtime.capabilities()` still returns `fs`, `http`, and `env` booleans
+- `server-hardened` and `browser-real-engine` remain the current profile names
+
+Frozen compatibility vocabulary:
+
+- future additive capability families are frozen for contributor-facing design
+  work
+- future support claims must be matrix-backed
+- only `supported` evidence rows may feed public support claims
+- future cross-OS support language must start from the portable common isolation floor and then add host-specific strengthening claims
 
 ## Host Kinds
 
@@ -92,6 +107,32 @@ fails closed with `AEG-ENGINE` before guest code runs.
 - `env`
 - `deterministic`
 - `hardened`
+
+These fields remain current implementation truth during the current
+compatibility sequence.
+
+Future additive capability families are frozen as:
+
+- server:
+  - `storage`
+  - `network`
+  - `environment`
+  - `process`
+  - `handles`
+- browser:
+  - `storage`
+  - `network`
+  - `fileAccess`
+  - `worker`
+  - `handles`
+
+The browser capability-state vocabulary is also frozen for future additive
+introspection:
+
+- `available_granted`
+- `available_denied`
+- `unavailable`
+- `hard_limit`
 
 See `docs/reference/profiles.md` and `docs/support-matrix.md` for the current
 host-specific behavior.
