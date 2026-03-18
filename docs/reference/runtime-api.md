@@ -30,7 +30,8 @@ When process transport is active:
   lockfile is missing, tampered, unpinned, or requests a package class that the
   current server runtime does not support
 - the current server package-layer path is limited to locked `pure_python`
-  packages projected into read-only guest import roots
+  packages projected into read-only guest import roots plus target-specific
+  `native_platform` packages on supported targets
 - the runtime audit includes:
   - `runtime_projection`
   - `runtime_temp_root`

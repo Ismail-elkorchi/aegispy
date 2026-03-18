@@ -89,6 +89,18 @@ function formatServerPackageClaims(packageClaims) {
     .join("\n");
 }
 
+function formatServerNativePackageClaims(claims) {
+  return claims
+    .map((claim) => {
+      const packageList = [...claim.packages]
+        .sort()
+        .map((name) => `\`${name}\``)
+        .join(", ");
+      return `- \`${claim.host}\` / \`${claim.os}\` / \`${claim.arch}\`: ${packageList}`;
+    })
+    .join("\n");
+}
+
 function formatBrowserFixtureClaims(families) {
   return [...families].map((family) => `- \`${family}\``).join("\n");
 }
@@ -130,6 +142,16 @@ function main() {
     ) !== formatServerPackageClaims(serverDoc.supportedPurePythonImports)
   ) {
     failures.push({ error: "server_package_claims_out_of_sync" });
+  }
+  if (
+    extractBlock(
+      compatibilityMatrix,
+      "<!-- server-native-package-claims:start -->",
+      "<!-- server-native-package-claims:end -->",
+    ) !==
+    formatServerNativePackageClaims(serverDoc.supportedNativePlatformClaims)
+  ) {
+    failures.push({ error: "server_native_package_claims_out_of_sync" });
   }
   if (
     extractBlock(

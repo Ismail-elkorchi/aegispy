@@ -15,6 +15,8 @@ Properties:
   `node`, `deno`, and `bun`
 - locked server package-layer projection for verified `pure_python` packages
   through read-only guest import roots
+- target-specific native package-layer projection for proven `native_platform`
+  packages on supported targets
 - capability enforcement at the runtime boundary
 - `component-wit` capability channel
 - explicit denial semantics for filesystem, HTTP, and environment permissions
@@ -43,6 +45,8 @@ Contributor-facing compatibility model notes:
   - `pure_python`
   - `native_platform`
   - `project_overlay`
+- current proven `native_platform` package claim:
+  - `rapidfuzz` on `node` / `deno` / `bun` for `linux` / `x64`
 
 ## `browser-real-engine`
 
