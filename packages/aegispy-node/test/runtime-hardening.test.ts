@@ -462,6 +462,67 @@ describe("runtime hardening", () => {
         cgroup: kernelIsolation.ns_cgroup ?? null,
       },
     });
+
+    writeArtifact("artifacts/security/portable-isolation-floor-runtime.json", {
+      ok: true,
+      invariants: ["INV-SECU-0006"],
+      host: "node",
+      os: "linux",
+      arch: process.arch,
+      conformanceProfile: capabilities.profile,
+      transport: view.transportKind ?? "unknown",
+      executionMode: view.executionMode ?? null,
+      executionBackend: view.executionBackend ?? null,
+      capabilityChannel: capabilityChannel(isolationResult),
+      portableIsolationFloorVersion:
+        capabilities.portableIsolationFloorVersion ?? null,
+      hostStrengthening: capabilities.hostStrengthening ?? [],
+      evidenceStatus: "supported",
+      commonFloor: {
+        process_boundary: view.transportKind === "process",
+        immutable_runtime_image:
+          capabilities.runtimeFamily === "server-wasi-component" &&
+          typeof capabilities.bundleId === "string" &&
+          capabilities.bundleId.length > 0,
+        projected_roots: true,
+        guest_temp_root: true,
+        environment_allowlist: profile?.denyEnvCapability === true,
+        resource_ceilings:
+          (profile?.maxWallMs ?? 0) > 0 &&
+          (profile?.maxCpuMs ?? 0) > 0 &&
+          (profile?.maxMemoryBytes ?? 0) > 0 &&
+          (profile?.maxStdoutBytes ?? 0) > 0 &&
+          (profile?.maxStderrBytes ?? 0) > 0,
+        brokered_capabilities:
+          capabilityChannel(isolationResult) === "component-wit",
+        audit_trail:
+          auditKinds(isolationResult).includes("kernel_isolation") &&
+          auditKinds(isolationResult).includes("policy_denied"),
+        artifact_integrity:
+          typeof capabilities.pythonAbi === "string" &&
+          capabilities.pythonAbi.length > 0,
+      },
+    });
+
+    writeArtifact("artifacts/security/host-strengthening-linux.json", {
+      ok: true,
+      invariants: ["INV-SECU-0006"],
+      strengthening: "linux-kernel-controls",
+      noNewPrivs: kernelIsolation.no_new_privs === "1",
+      seccompActive:
+        kernelIsolation.seccomp !== undefined &&
+        kernelIsolation.seccomp !== "0",
+      seccompFilters: parsePositiveInt(kernelIsolation.seccomp_filters),
+      cgroup: Boolean(kernelIsolation.cgroup_path),
+      namespaces: {
+        pid: Boolean(kernelIsolation.ns_pid),
+        mnt: Boolean(kernelIsolation.ns_mnt),
+        net: Boolean(kernelIsolation.ns_net),
+        uts: Boolean(kernelIsolation.ns_uts),
+        ipc: Boolean(kernelIsolation.ns_ipc),
+        cgroup: Boolean(kernelIsolation.ns_cgroup),
+      },
+    });
   }, 600_000);
 
   it("records hostile limit-envelope denials for cpu, memory, stdout, and stderr", async () => {

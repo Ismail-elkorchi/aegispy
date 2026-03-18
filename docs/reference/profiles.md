@@ -91,6 +91,15 @@ The portable common isolation floor vocabulary is frozen as:
 Future host-specific hardening language must be written as OS-specific
 strengthening rather than implied equivalence.
 
+Current proof posture:
+
+- Linux publishes runtime-backed floor evidence and separate Linux
+  strengthening proof
+- macOS and Windows currently publish prototype portable-floor artifacts in
+  smoke lanes only
+- broader cross-OS support claims remain blocked until those prototype lanes
+  are upgraded by runtime-backed proof
+
 ## Evidence
 
 - `artifacts/e2e/deno-parity.json`
@@ -98,3 +107,8 @@ strengthening rather than implied equivalence.
 - `artifacts/e2e/browser-run.json`
 - `artifacts/e2e/host-parity-contract.json`
 - `artifacts/compat/profile-conformance.json`
+- `artifacts/security/portable-isolation-floor-linux.json`
+- `artifacts/security/portable-isolation-floor-macos.json`
+- `artifacts/security/portable-isolation-floor-windows.json`
+- `artifacts/security/portable-isolation-floor-runtime.json`
+- `artifacts/security/host-strengthening-linux.json`

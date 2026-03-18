@@ -30,4 +30,7 @@ if [ "$(uname -s)" = "Linux" ] && [ ! -f artifacts/component/aegispy.component.c
   fi
 fi
 
-pnpm run test:host-contracts:suites
+pnpm vitest run --maxWorkers=1 packages/aegispy-node/test packages/aegispy-node/test/e2e
+pnpm vitest run packages/aegispy-deno/test
+pnpm vitest run packages/aegispy-bun/test
+pnpm vitest run packages/aegispy-browser/test packages/aegispy-browser/test/e2e

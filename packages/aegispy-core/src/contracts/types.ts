@@ -145,6 +145,8 @@ export interface RuntimeCapabilities {
   bundleId?: string;
   pythonAbi?: string;
   packageSetVersion?: string;
+  portableIsolationFloorVersion?: string;
+  hostStrengthening?: string[];
   fs: boolean;
   http: boolean;
   env: boolean;

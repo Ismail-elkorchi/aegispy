@@ -37,6 +37,10 @@ describe("server bundle contract", () => {
       expect(capabilities.pythonAbi).toBe(bundle.pythonAbi);
       expect(capabilities.packageSetVersion).toBe(bundle.packageSetVersion);
       expect(capabilities.capabilityChannel).toBe("component-wit");
+      expect(capabilities.portableIsolationFloorVersion).toBe(
+        "portable-floor-draft-v1",
+      );
+      expect(Array.isArray(capabilities.hostStrengthening)).toBe(true);
     }
 
     expect(nodeCapabilities.runtimeFamily).toBe(denoCapabilities.runtimeFamily);
@@ -50,6 +54,18 @@ describe("server bundle contract", () => {
     );
     expect(nodeCapabilities.packageSetVersion).toBe(
       bunCapabilities.packageSetVersion,
+    );
+    expect(nodeCapabilities.portableIsolationFloorVersion).toBe(
+      denoCapabilities.portableIsolationFloorVersion,
+    );
+    expect(nodeCapabilities.portableIsolationFloorVersion).toBe(
+      bunCapabilities.portableIsolationFloorVersion,
+    );
+    expect(nodeCapabilities.hostStrengthening).toEqual(
+      denoCapabilities.hostStrengthening,
+    );
+    expect(nodeCapabilities.hostStrengthening).toEqual(
+      bunCapabilities.hostStrengthening,
     );
   });
 });

@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "check": "bash scripts/check",
-    "check:portable": "node scripts/workflow_policy_check.mjs && bash scripts/docs_check && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:portable",
+    "check:portable": "node scripts/workflow_policy_check.mjs && bash scripts/docs_check && node scripts/portable_isolation_floor_smoke.mjs && bash scripts/portable_isolation_floor_check && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:portable",
     "lint": "eslint .",
     "format:check": "prettier -c .",
     "format": "prettier -w .",

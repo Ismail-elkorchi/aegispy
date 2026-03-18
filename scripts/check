@@ -49,6 +49,8 @@ fi
 
 pnpm test
 bash scripts/kernel_isolation_check
+node scripts/portable_isolation_floor_smoke.mjs
+AEGISPY_PORTABLE_FLOOR_RUNTIME_REQUIRED=1 bash scripts/portable_isolation_floor_check
 node scripts/release_evidence.mjs
 node scripts/runtime_guest_abi_probe.mjs
 node scripts/runtime_native_abi_gap_probe.mjs
