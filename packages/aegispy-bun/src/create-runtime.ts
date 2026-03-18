@@ -10,6 +10,11 @@ import type {
 import { InProcessTransport } from "../../aegispy-node/src/runtime/in-process-transport";
 import type { IsolationProfile } from "../../aegispy-node/src/runtime/isolation-profile";
 import { RustWorkerTransport } from "../../aegispy-node/src/runtime/rust-worker-transport";
+import {
+  resolveCurrentServerBundle,
+  type ServerBundleRecord,
+} from "../../aegispy-node/src/runtime/server-bundle-manifest";
+import { createServerRuntimeCapabilities } from "../../aegispy-node/src/runtime/server-runtime-capabilities";
 import type { WorkerTransport } from "../../aegispy-node/src/runtime/worker-transport";
 import type {
   WorkerExecutionBackendInfo,
@@ -45,6 +50,7 @@ export type BunTransportMode = "process" | "simulation";
 interface TransportSelection {
   transport: WorkerTransport;
   mode: BunTransportMode;
+  bundle: ServerBundleRecord;
   isolationProfile: IsolationProfile | null;
   executionMode: WorkerExecutionMode | null;
   executionBackend: WorkerExecutionBackendInfo | null;
@@ -68,6 +74,7 @@ function createTransport(): TransportSelection {
     return {
       transport,
       mode,
+      bundle: transport.bundle,
       isolationProfile: transport.isolationProfile,
       executionMode: transport.executionMode,
       executionBackend: transport.executionBackend,
@@ -76,6 +83,7 @@ function createTransport(): TransportSelection {
   return {
     transport: new InProcessTransport(),
     mode,
+    bundle: resolveCurrentServerBundle(),
     isolationProfile: null,
     executionMode: null,
     executionBackend: null,
@@ -86,6 +94,8 @@ export class BunRuntime implements AegisPyRuntime {
   public readonly host = "bun" as const;
 
   private readonly transport: WorkerTransport;
+
+  private readonly bundle: ServerBundleRecord;
 
   public readonly transportKind: BunTransportMode;
 
@@ -100,24 +110,18 @@ export class BunRuntime implements AegisPyRuntime {
   public constructor(selection: TransportSelection = createTransport()) {
     this.transport = selection.transport;
     this.transportKind = selection.mode;
+    this.bundle = selection.bundle;
     this.isolationProfile = selection.isolationProfile;
     this.executionMode = selection.executionMode;
     this.executionBackend = selection.executionBackend;
   }
 
   public capabilities(): RuntimeCapabilities {
-    const hardened = this.transportKind === "process";
-    return {
-      host: this.host,
-      profile: "server-hardened",
-      transport: this.transportKind,
-      capabilityChannel: hardened ? "component-wit" : "none",
-      fs: true,
-      http: true,
-      env: true,
-      deterministic: true,
-      hardened,
-    };
+    return createServerRuntimeCapabilities(
+      this.host,
+      this.transportKind,
+      this.bundle,
+    );
   }
 
   public async run(req: RunRequest): Promise<RunResult> {

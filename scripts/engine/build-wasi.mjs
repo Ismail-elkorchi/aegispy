@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { repoRoot, writeEngineArtifact } from "./lib.mjs";
+import { repoRoot, writeEngineArtifact, writeEngineBundle } from "./lib.mjs";
 
 const SOURCE_URL =
   "https://github.com/brettcannon/cpython-wasi-build/releases/download/v3.14.3/python-3.14.3-wasi_sdk-24.zip";
@@ -19,6 +19,15 @@ const COMPILED_MODULE = path.join(ENGINE_DIR, "cpython-wasi.cwasm");
 const BRIDGE_SOURCE_DIR = path.join(repoRoot, "engine", "python", "aegispy");
 const BRIDGE_MODULE_NAME = "__init__.py";
 const WASM_REL_PATH = "python.wasm";
+
+const SUPPORTED_BUNDLE_TARGETS = [
+  { os: "linux", arch: "x64" },
+  { os: "linux", arch: "arm64" },
+  { os: "darwin", arch: "x64" },
+  { os: "darwin", arch: "arm64" },
+  { os: "windows", arch: "x64" },
+  { os: "windows", arch: "arm64" },
+];
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -170,6 +179,37 @@ export function buildWasi() {
       },
     },
   });
+
+  for (const target of SUPPORTED_BUNDLE_TARGETS) {
+    const bundleId = [
+      "server-wasi-component",
+      target.os,
+      target.arch,
+      "cpython-3.14",
+      "base",
+    ].join("-");
+    writeEngineBundle(bundleId, {
+      runtimeFamily: "server-wasi-component",
+      bundleId,
+      os: target.os,
+      arch: target.arch,
+      pythonAbi: "cpython-3.14",
+      packageSetVersion: "base",
+      engine: {
+        manifestPath: "artifacts/engine/manifest.json",
+        modulePath: "artifacts/engine/cpython-wasi.wasm",
+        runtimeDir: "artifacts/engine/wasi-python",
+        sourceMetadataPath: "artifacts/engine/cpython-wasi-source.json",
+        bridgeArtifactPath: "artifacts/engine/aegispy-capability-bridge.py",
+      },
+      component: {
+        buildManifestPath: "artifacts/component/build.json",
+        binaryPath: "artifacts/component/aegispy.component.wasm",
+        compiledBinaryPath: "artifacts/component/aegispy.component.cwasm",
+      },
+      packageLayers: [],
+    });
+  }
 
   fs.rmSync(extractedRoot, { recursive: true, force: true });
   return result;

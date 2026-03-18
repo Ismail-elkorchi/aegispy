@@ -66,6 +66,41 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function normalizeEngineManifest(value) {
+  if (
+    value &&
+    value.schemaVersion === 1 &&
+    typeof value.artifacts === "object" &&
+    value.artifacts !== null &&
+    typeof value.bundles === "object" &&
+    value.bundles !== null
+  ) {
+    return value;
+  }
+
+  const artifacts = {};
+  for (const [name, entry] of Object.entries(value ?? {})) {
+    if (
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof entry.sha256 === "string" &&
+      typeof entry.bytes === "number"
+    ) {
+      artifacts[name] = {
+        path: `artifacts/engine/${name}`,
+        sha256: entry.sha256,
+        bytes: entry.bytes,
+      };
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    artifacts,
+    bundles: {},
+  };
+}
+
 function isSha256(value) {
   return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
 }
@@ -175,7 +210,9 @@ function main() {
   }
 
   const packageJson = readJson(paths.packageJson);
-  const engineManifest = readJson(paths.engineManifest);
+  const engineManifest = normalizeEngineManifest(
+    readJson(paths.engineManifest),
+  );
   const engineProvenance = readJson(paths.engineProvenance);
   const engineSource = readJson(paths.engineSource);
   const componentBuild = readJson(paths.componentBuild);
@@ -204,7 +241,7 @@ function main() {
   ];
   const engineArtifacts = [];
   for (const name of requiredEngineArtifacts) {
-    const manifestEntry = engineManifest[name];
+    const manifestEntry = engineManifest.artifacts[name];
     const provenanceEntry = engineProvenance[name];
     if (typeof manifestEntry !== "object" || manifestEntry === null) {
       failures.push({ error: "engine_manifest_entry_missing", artifact: name });
@@ -255,7 +292,7 @@ function main() {
     failures.push({ error: "wasi_source_wasm_hash_invalid" });
   }
 
-  const wasiManifestSha = engineManifest["cpython-wasi.wasm"]?.sha256;
+  const wasiManifestSha = engineManifest.artifacts["cpython-wasi.wasm"]?.sha256;
   if (
     isSha256(engineSource.wasmSha256) &&
     engineSource.wasmSha256 !== wasiManifestSha
@@ -298,6 +335,11 @@ function main() {
     failures.push({ error: "component_source_core_hash_mismatch" });
   }
 
+  const bundleRecords = Object.values(engineManifest.bundles);
+  if (bundleRecords.length === 0) {
+    failures.push({ error: "engine_bundle_manifest_empty" });
+  }
+
   const lockDigests = {
     pnpmLock: {
       path: fileRef(paths.pnpmLock),
@@ -325,6 +367,10 @@ function main() {
       },
     },
     artifacts: {
+      engineManifest: {
+        schemaVersion: engineManifest.schemaVersion,
+        bundles: bundleRecords,
+      },
       engine: engineArtifacts,
       component: {
         path:
