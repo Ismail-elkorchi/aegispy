@@ -13,6 +13,7 @@ bash scripts/entrypoint_check
 bash scripts/core_io_scan
 node scripts/workflow_policy_check.mjs
 bash scripts/docs_check
+bash scripts/evidence_claims_check
 bash scripts/claim_alignment_check
 bash scripts/repo_layout_check
 bash scripts/dependency_boundary_check

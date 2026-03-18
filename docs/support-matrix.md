@@ -113,6 +113,64 @@ The frozen evidence status vocabulary is:
 
 Only `supported` rows may feed public support claims.
 
+Current generated claim artifacts:
+
+- `artifacts/compat/server-compatibility-matrix.json`
+- `artifacts/compat/browser-capability-matrix.json`
+
+### Current Supported Server Rows
+
+<!-- server-claim-rows:start -->
+
+| Host | OS    | Arch | Runtime family        | Package class    | Capability family | Isolation floor         | Status    |
+| ---- | ----- | ---- | --------------------- | ---------------- | ----------------- | ----------------------- | --------- |
+| bun  | linux | x64  | server-wasi-component | base_interpreter | environment       | portable-floor-draft-v1 | supported |
+| bun  | linux | x64  | server-wasi-component | base_interpreter | network           | portable-floor-draft-v1 | supported |
+| bun  | linux | x64  | server-wasi-component | base_interpreter | process           | portable-floor-draft-v1 | supported |
+| bun  | linux | x64  | server-wasi-component | base_interpreter | storage           | portable-floor-draft-v1 | supported |
+| bun  | linux | x64  | server-wasi-component | project_overlay  | storage           | portable-floor-draft-v1 | supported |
+| bun  | linux | x64  | server-wasi-component | pure_python      | storage           | portable-floor-draft-v1 | supported |
+| deno | linux | x64  | server-wasi-component | base_interpreter | environment       | portable-floor-draft-v1 | supported |
+| deno | linux | x64  | server-wasi-component | base_interpreter | network           | portable-floor-draft-v1 | supported |
+| deno | linux | x64  | server-wasi-component | base_interpreter | process           | portable-floor-draft-v1 | supported |
+| deno | linux | x64  | server-wasi-component | base_interpreter | storage           | portable-floor-draft-v1 | supported |
+| deno | linux | x64  | server-wasi-component | project_overlay  | storage           | portable-floor-draft-v1 | supported |
+| deno | linux | x64  | server-wasi-component | pure_python      | storage           | portable-floor-draft-v1 | supported |
+| node | linux | x64  | server-wasi-component | base_interpreter | environment       | portable-floor-draft-v1 | supported |
+| node | linux | x64  | server-wasi-component | base_interpreter | network           | portable-floor-draft-v1 | supported |
+| node | linux | x64  | server-wasi-component | base_interpreter | process           | portable-floor-draft-v1 | supported |
+| node | linux | x64  | server-wasi-component | base_interpreter | storage           | portable-floor-draft-v1 | supported |
+| node | linux | x64  | server-wasi-component | project_overlay  | storage           | portable-floor-draft-v1 | supported |
+| node | linux | x64  | server-wasi-component | pure_python      | storage           | portable-floor-draft-v1 | supported |
+
+<!-- server-claim-rows:end -->
+
+These rows are intentionally conservative:
+
+- they publish current generated server support only for the Linux x64 target
+  that the current runtime sequence proves end to end
+- broader cross-OS claim expansion remains blocked on the portable common
+  isolation-floor work
+
+### Current Supported Browser Rows
+
+<!-- browser-claim-rows:start -->
+
+| Engine  | Version band | Capability family | Feature state | Permission state | Package class    | Status    |
+| ------- | ------------ | ----------------- | ------------- | ---------------- | ---------------- | --------- |
+| pyodide | 0.29.x       | worker            | available     | not_applicable   | base_interpreter | supported |
+| pyodide | 0.29.x       | worker            | available     | not_applicable   | pure_python      | supported |
+
+<!-- browser-claim-rows:end -->
+
+Current browser rows stay equally conservative:
+
+- the worker-backed browser lane is published as the current supported browser
+  execution surface
+- storage, network, and file-access capability families remain outside the
+  current supported browser claim rows until typed capability-state reporting
+  lands publicly
+
 ## Parity Evidence
 
 - `artifacts/e2e/deno-parity.json`
@@ -121,6 +179,8 @@ Only `supported` rows may feed public support claims.
 - `artifacts/compat/profile-conformance.json`
 - `artifacts/compat/agent-workload-corpus.json`
 - `artifacts/compat/workload-compatibility-matrix.json`
+- `artifacts/compat/server-compatibility-matrix.json`
+- `artifacts/compat/browser-capability-matrix.json`
 - `artifacts/compat/package-fixture-lockfiles.json` now mixes
   `metadata-only` proof with browser-executed fixture families for `micropip`,
   `packaging`, and `jinja2` plus `markupsafe`

@@ -7,6 +7,8 @@ The compatibility surface is generated from automated host runs and written to:
 - `artifacts/compat/workload-compatibility-matrix.json`
 - `artifacts/compat/agent-workload-corpus.json`
 - `artifacts/compat/package-fixture-lockfiles.json`
+- `artifacts/compat/server-compatibility-matrix.json`
+- `artifacts/compat/browser-capability-matrix.json`
 
 Those artifacts are the canonical source for workload-family coverage, host
 profiles, and stable reason codes.
@@ -77,18 +79,22 @@ proof for representative pure-Python package families. That artifact now mixes
 
 The current browser-executed fixture families cover:
 
-- bundled `micropip`
+<!-- browser-fixture-claims:start -->
+
+- `micropip`
 - `packaging`
-- `jinja2` with `markupsafe`
+- `jinja2+markupsafe`
+<!-- browser-fixture-claims:end -->
 
 Current server package-layer proof is narrower and remains target-scoped:
 
 - `node`, `deno`, and `bun` can import locked `pure_python` package layers
   when requests supply a verified `packageLockfile`
 - current proven server pure-Python imports are:
-  - `attrs`
-  - `jinja2`
-  - `jsonschema`
-  - `packaging`
+<!-- server-package-claims:start -->
+- `node`: `attrs`, `jinja2`, `jsonschema`, `packaging`
+- `deno`: `attrs`, `jinja2`, `jsonschema`, `packaging`
+- `bun`: `attrs`, `jinja2`, `jsonschema`, `packaging`
+<!-- server-package-claims:end -->
 - native package classes remain outside the supported server package-layer
   surface until target-specific proof is published

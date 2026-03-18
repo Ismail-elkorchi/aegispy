@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "server": {
+    "isolationFloorVersion": "portable-floor-draft-v1",
+    "rows": [
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "environment",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "network",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "process",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "project_overlay",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "pure_python",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "environment",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "network",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "process",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "project_overlay",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "pure_python",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "environment",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "network",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "process",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "base_interpreter",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "project_overlay",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "pure_python",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      }
+    ],
+    "supportedPurePythonImports": {
+      "node": ["attrs", "jinja2", "jsonschema", "packaging"],
+      "deno": ["attrs", "jinja2", "jsonschema", "packaging"],
+      "bun": ["attrs", "jinja2", "jsonschema", "packaging"]
+    }
+  },
+  "browser": {
+    "rows": [
+      {
+        "browserEngine": "pyodide",
+        "browserVersionBand": "0.29.x",
+        "capabilityFamily": "worker",
+        "featureState": "available",
+        "permissionState": "not_applicable",
+        "packageClass": "base_interpreter",
+        "evidenceStatus": "supported"
+      },
+      {
+        "browserEngine": "pyodide",
+        "browserVersionBand": "0.29.x",
+        "capabilityFamily": "worker",
+        "featureState": "available",
+        "permissionState": "not_applicable",
+        "packageClass": "pure_python",
+        "evidenceStatus": "supported"
+      },
+      {
+        "browserEngine": "pyodide",
+        "browserVersionBand": "0.29.x",
+        "capabilityFamily": "storage",
+        "featureState": "hard_limit",
+        "permissionState": "not_applicable",
+        "packageClass": "base_interpreter",
+        "evidenceStatus": "unsupported"
+      },
+      {
+        "browserEngine": "pyodide",
+        "browserVersionBand": "0.29.x",
+        "capabilityFamily": "network",
+        "featureState": "hard_limit",
+        "permissionState": "not_applicable",
+        "packageClass": "base_interpreter",
+        "evidenceStatus": "unsupported"
+      },
+      {
+        "browserEngine": "pyodide",
+        "browserVersionBand": "0.29.x",
+        "capabilityFamily": "fileAccess",
+        "featureState": "hard_limit",
+        "permissionState": "not_applicable",
+        "packageClass": "base_interpreter",
+        "evidenceStatus": "unsupported"
+      },
+      {
+        "browserEngine": "pyodide",
+        "browserVersionBand": "0.29.x",
+        "capabilityFamily": "handles",
+        "featureState": "available",
+        "permissionState": "not_applicable",
+        "packageClass": "base_interpreter",
+        "evidenceStatus": "prototype"
+      }
+    ],
+    "browserExecutedFixtureFamilies": [
+      "micropip",
+      "packaging",
+      "jinja2+markupsafe"
+    ]
+  }
+}

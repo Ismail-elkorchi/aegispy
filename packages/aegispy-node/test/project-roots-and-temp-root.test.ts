@@ -1,9 +1,10 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime } from "../src/index";
-import type { AegisPyRuntime, RunRequest } from "@aegispy/core";
+import type { RunRequest, RunResult } from "@aegispy/core";
 
 const sharedLimits = {
   time: {
@@ -17,7 +18,7 @@ const sharedLimits = {
   },
 };
 
-const originalEnv = { ...process.env };
+const originalNodeTransport = process.env.AEGISPY_NODE_TRANSPORT;
 const tempPaths: string[] = [];
 
 function createTempDir(prefix: string): string {
@@ -46,19 +47,32 @@ function makeRequest(code: string): RunRequest {
   };
 }
 
-function auditDetails(
-  runtime: Awaited<ReturnType<typeof createRuntime>>,
-  result: Awaited<ReturnType<AegisPyRuntime["run"]>>,
-  kind: string,
-): string[] {
-  void runtime;
+function auditDetails(result: RunResult, kind: string): string[] {
   return result.meta.audit
     .filter((entry) => entry.kind === kind)
     .map((entry) => entry.detailJson);
 }
 
+function expectRunOk(
+  result: RunResult,
+): asserts result is Extract<RunResult, { status: "ok" }> {
+  expect(
+    result.status,
+    [
+      "expected successful runtime result",
+      `stderr: ${JSON.stringify(result.stderrUtf8)}`,
+      `stdout: ${JSON.stringify(result.stdoutUtf8)}`,
+      `error: ${JSON.stringify(result.status === "error" ? result.error : null)}`,
+    ].join("\n"),
+  ).toBe("ok");
+}
+
 afterEach(() => {
-  process.env = { ...originalEnv };
+  if (originalNodeTransport === undefined) {
+    delete process.env.AEGISPY_NODE_TRANSPORT;
+  } else {
+    process.env.AEGISPY_NODE_TRANSPORT = originalNodeTransport;
+  }
   while (tempPaths.length > 0) {
     const tempPath = tempPaths.pop();
     if (tempPath) {
@@ -71,17 +85,18 @@ describe("project roots and guest temp root", () => {
   it("prepends projected project roots to guest imports in the provided order", async () => {
     process.env.AEGISPY_NODE_TRANSPORT = "process";
 
+    const packageName = `priority_pkg_${randomUUID().replaceAll("-", "")}`;
     const firstRoot = createTempDir("aegispy-project-root-first-");
     const secondRoot = createTempDir("aegispy-project-root-second-");
-    fs.mkdirSync(path.join(firstRoot, "priority_pkg"), { recursive: true });
-    fs.mkdirSync(path.join(secondRoot, "priority_pkg"), { recursive: true });
+    fs.mkdirSync(path.join(firstRoot, packageName), { recursive: true });
+    fs.mkdirSync(path.join(secondRoot, packageName), { recursive: true });
     fs.writeFileSync(
-      path.join(firstRoot, "priority_pkg", "__init__.py"),
+      path.join(firstRoot, packageName, "__init__.py"),
       'VALUE = "first-root"\n',
       "utf8",
     );
     fs.writeFileSync(
-      path.join(secondRoot, "priority_pkg", "__init__.py"),
+      path.join(secondRoot, packageName, "__init__.py"),
       'VALUE = "second-root"\n',
       "utf8",
     );
@@ -91,16 +106,16 @@ describe("project roots and guest temp root", () => {
       projectRoots: [firstRoot, secondRoot],
     });
     const result = await runtime.run(
-      makeRequest("import priority_pkg\nprint(priority_pkg.VALUE)"),
+      makeRequest(`import ${packageName}\nprint(${packageName}.VALUE)`),
     );
     await runtime.close();
 
-    expect(result.status).toBe("ok");
+    expectRunOk(result);
     expect(result.stdoutUtf8).toContain("first-root");
-    expect(auditDetails(runtime, result, "runtime_projection")).toContain(
+    expect(auditDetails(result, "runtime_projection")).toContain(
       "project_root:/workspace/projects/0",
     );
-    expect(auditDetails(runtime, result, "runtime_projection")).toContain(
+    expect(auditDetails(result, "runtime_projection")).toContain(
       "project_root:/workspace/projects/1",
     );
   }, 600_000);
@@ -128,9 +143,9 @@ describe("project roots and guest temp root", () => {
     const result = await runtime.run(request);
     await runtime.close();
 
-    expect(result.status).toBe("ok");
+    expectRunOk(result);
     expect(result.stdoutUtf8).toContain("guest-write");
-    expect(auditDetails(runtime, result, "runtime_projection")).toContain(
+    expect(auditDetails(result, "runtime_projection")).toContain(
       "writable_import_root:/workspace/bindings/fs/sandbox/write",
     );
   }, 600_000);
@@ -148,9 +163,9 @@ describe("project roots and guest temp root", () => {
     );
     await runtime.close();
 
-    expect(result.status).toBe("ok");
+    expectRunOk(result);
     expect(result.stdoutUtf8.trim()).toBe("/tmp");
-    expect(auditDetails(runtime, result, "runtime_temp_root")).toContain(
+    expect(auditDetails(result, "runtime_temp_root")).toContain(
       "guest_temp_root:/tmp",
     );
   }, 600_000);
@@ -189,7 +204,7 @@ describe("project roots and guest temp root", () => {
     );
     await runtime.close();
 
-    expect(result.status).toBe("ok");
+    expectRunOk(result);
     const parsed = JSON.parse(result.stdoutUtf8.trim()) as {
       existsAfterRemove: boolean;
       existsBeforeRemove: boolean;

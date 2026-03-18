@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+node scripts/evidence_claims_check.mjs
