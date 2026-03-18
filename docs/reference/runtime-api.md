@@ -135,6 +135,7 @@ fails closed with `AEG-ENGINE` before guest code runs.
 - `packageSetVersion`
 - `portableIsolationFloorVersion`
 - `hostStrengthening`
+- `capabilityFamilies`
 - `fs`
 - `http`
 - `env`
@@ -151,6 +152,21 @@ Current portable-floor reporting rules:
 - `hostStrengthening` stays additive:
   - Linux currently reports the strict kernel-control strengthening lane
   - other hosts remain conservative until stronger proof lands publicly
+
+Current browser capability-family reporting:
+
+- `browser-real-engine` now reports `capabilityFamilies` through typed browser
+  capability states
+- current browser state map:
+  - `storage`: `unavailable`
+  - `network`: `unavailable`
+  - `fileAccess`: `unavailable`
+  - `worker`: `available_granted`
+  - `handles`: `unavailable`
+- `available_denied` remains reserved for future browser features that exist in
+  the runtime but are blocked by permission or user gesture
+- `hard_limit` remains reserved for browser-impossible categories, not for
+  implementation gaps
 
 Future additive capability families are frozen as:
 

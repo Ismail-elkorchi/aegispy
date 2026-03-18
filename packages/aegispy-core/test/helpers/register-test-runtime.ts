@@ -29,6 +29,16 @@ class TestSimulatedRuntime implements AegisPyRuntime {
         this.host === "browser" ? "browser-real-engine" : "server-hardened",
       transport: this.host === "browser" ? "worker" : "simulation",
       capabilityChannel: this.host === "browser" ? "worker-timeout" : "none",
+      capabilityFamilies:
+        this.host === "browser"
+          ? {
+              storage: "unavailable",
+              network: "unavailable",
+              fileAccess: "unavailable",
+              worker: "available_granted",
+              handles: "unavailable",
+            }
+          : undefined,
       fs: this.host !== "browser",
       http: this.host !== "browser",
       env: this.host !== "browser",

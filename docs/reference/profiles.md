@@ -54,7 +54,9 @@ Properties:
 
 - same request/result API shape
 - experimental worker-backed real Python execution
-- no filesystem, HTTP, or environment capabilities
+- typed browser capability-family reporting through `runtime.capabilities()`
+- no browser-native `storage`, `network`, `fileAccess`, or `handles` surface is
+  exposed yet
 - stable unsupported-host semantics for browser-unavailable capabilities
 - runtime-boundary audit entries before terminal deny events
 
@@ -73,6 +75,23 @@ Contributor-facing compatibility model notes:
   - `available_denied`
   - `unavailable`
   - `hard_limit`
+
+Current browser capability-family states:
+
+- `storage`: `unavailable`
+- `network`: `unavailable`
+- `fileAccess`: `unavailable`
+- `worker`: `available_granted`
+- `handles`: `unavailable`
+
+State interpretation:
+
+- `available_granted`: the runtime exposes the family and can use it now
+- `available_denied`: the runtime exposes the family but a permission or user
+  gesture blocks it
+- `unavailable`: the family is technically possible in browsers but not exposed
+  by the current runtime
+- `hard_limit`: the family is blocked by a real browser-platform limit
 
 ## Portable Common Isolation Floor
 

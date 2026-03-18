@@ -11,6 +11,7 @@ import {
 } from "./browser-integrity";
 import type {
   AegisPyRuntime,
+  BrowserCapabilityFamilies,
   CreateRuntimeOptions,
   RuntimeCapabilities,
   RunRequest,
@@ -20,6 +21,14 @@ import type { Lockfile } from "../../../aegispy-pack/src/index";
 import { BrowserWorkerSupervisor } from "./browser-worker-supervisor";
 
 const utf8Encoder = new TextEncoder();
+
+const browserCapabilityFamilies: BrowserCapabilityFamilies = {
+  storage: "unavailable",
+  network: "unavailable",
+  fileAccess: "unavailable",
+  worker: "available_granted",
+  handles: "unavailable",
+};
 
 export interface BrowserRuntimeOptions {
   engine?: "pyodide";
@@ -169,6 +178,7 @@ export class BrowserRuntime implements AegisPyRuntime {
       profile: "browser-real-engine",
       transport: "worker",
       capabilityChannel: "worker-timeout",
+      capabilityFamilies: { ...browserCapabilityFamilies },
       fs: false,
       http: false,
       env: false,

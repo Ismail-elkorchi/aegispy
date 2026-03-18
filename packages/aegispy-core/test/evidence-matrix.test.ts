@@ -38,6 +38,34 @@ describe("evidence matrices", () => {
     expect(doc.browser.browserExecutedFixtureFamilies.length).toBeGreaterThan(
       0,
     );
+    expect(doc.browser.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capabilityFamily: "storage",
+          featureState: "unavailable",
+          permissionState: "not_applicable",
+          evidenceStatus: "unsupported",
+        }),
+        expect.objectContaining({
+          capabilityFamily: "network",
+          featureState: "unavailable",
+          permissionState: "not_applicable",
+          evidenceStatus: "unsupported",
+        }),
+        expect.objectContaining({
+          capabilityFamily: "fileAccess",
+          featureState: "unavailable",
+          permissionState: "not_applicable",
+          evidenceStatus: "unsupported",
+        }),
+        expect.objectContaining({
+          capabilityFamily: "handles",
+          featureState: "unavailable",
+          permissionState: "not_applicable",
+          evidenceStatus: "unsupported",
+        }),
+      ]),
+    );
   });
 
   it("keeps contributor-facing claim blocks aligned with the generated artifacts", () => {
