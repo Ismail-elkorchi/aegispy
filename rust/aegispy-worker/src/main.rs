@@ -2842,6 +2842,18 @@ impl WasiExecutor {
                 audit,
             );
         }
+        let writable_import_host_root = capability_fs_root.join("sandbox").join("write");
+        if let Err(error) = fs::create_dir_all(&writable_import_host_root) {
+            let _ = fs::remove_dir_all(&capability_host_root);
+            return make_error_result(
+                "AEG-ENGINE",
+                &format!("failed to create writable import dir: {error}"),
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
         let native_capability = Arc::new(Mutex::new(NativeHostCapabilityState::new(
             capability_config.clone(),
             capability_fs_root.clone(),

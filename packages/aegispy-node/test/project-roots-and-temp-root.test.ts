@@ -111,6 +111,8 @@ describe("project roots and guest temp root", () => {
     const runtime = await createRuntime({ host: "node" });
     const request = makeRequest(
       "import importlib\n" +
+        "import os\n" +
+        'assert os.path.isdir("/workspace/bindings/fs/sandbox/write")\n' +
         'aegispy.fs_write("/sandbox/write/guest_pkg/__init__.py", \'VALUE = "guest-write"\\n\')\n' +
         "importlib.invalidate_caches()\n" +
         "import guest_pkg\n" +
