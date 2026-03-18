@@ -13,6 +13,8 @@ Properties:
 - real process/WASI/component runtime path
 - manifest-defined server bundle selection with shared bundle metadata across
   `node`, `deno`, and `bun`
+- locked server package-layer projection for verified `pure_python` packages
+  through read-only guest import roots
 - capability enforcement at the runtime boundary
 - `component-wit` capability channel
 - explicit denial semantics for filesystem, HTTP, and environment permissions

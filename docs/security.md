@@ -39,6 +39,8 @@
   the rehearsal artifact.
 - browser package requests now fail closed unless they match a verified
   `packageLockfile`.
+- server package-layer requests also fail closed unless they match a verified
+  `packageLockfile` and currently supported `pure_python` package entries.
 - browser runs with `assetBaseUrl` now verify pinned Pyodide asset hashes
   before guest code runs.
 

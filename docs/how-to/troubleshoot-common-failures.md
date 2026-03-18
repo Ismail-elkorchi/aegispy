@@ -53,6 +53,10 @@ Fix:
 Cause:
 
 - the worker-backed runtime failed before guest completion
+- `node`, `deno`, and `bun` now also return `AEG-ENGINE` when server package
+  requests are missing a verified `packageLockfile`, request unpinned
+  packages, or request package classes outside the current supported
+  `pure_python` server layer
 - `browser-real-engine` now also returns `AEG-ENGINE` when browser package
   requests are not backed by a verified `packageLockfile`
 - `browser-real-engine` with `assetBaseUrl` also returns `AEG-ENGINE` when a
@@ -60,6 +64,9 @@ Cause:
 
 Fix:
 
+- verify the server lockfile entry set, hashes, and requested package names
+- keep current server package requests scoped to the supported `pure_python`
+  package layer
 - verify the browser lockfile entry set and hashes
 - verify that `assetBaseUrl` serves the expected Pyodide asset set
 - or remove custom browser package and asset configuration from the request

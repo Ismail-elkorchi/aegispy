@@ -42,6 +42,18 @@ Future package evidence and support rows are grouped by package classes:
 - `native_platform`
 - `project_overlay`
 
+Current implementation truth for server package layers:
+
+- locked `pure_python` package layers are supported on `node`, `deno`, and
+  `bun` when the request includes a verified `packageLockfile`
+- current proven server pure-Python import set is:
+  - `attrs`
+  - `jinja2`
+  - `jsonschema`
+  - `packaging`
+- native package classes remain outside the current supported server package
+  layer surface
+
 ## Portable Common Isolation Floor
 
 Future cross-OS claims must start from the portable common isolation floor:

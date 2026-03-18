@@ -1393,8 +1393,10 @@ const CAPABILITY_FS_DIR: &str = "fs";
 const CAPABILITY_NATIVE_REQ_PREFIX: &str = "\u{1e}aegispy-cap-req:";
 const CAPABILITY_NATIVE_RES_PREFIX: &str = "\u{1e}aegispy-cap-res:";
 const WORKER_PROJECT_ROOTS_JSON_ENV: &str = "AEGISPY_WORKER_PROJECT_ROOTS_JSON";
+const WORKER_PACKAGE_ROOTS_JSON_ENV: &str = "AEGISPY_WORKER_PACKAGE_ROOTS_JSON";
 const WORKER_TEMP_ROOT_ENV: &str = "AEGISPY_WORKER_TEMP_ROOT";
 const GUEST_PROJECT_ROOTS_BASE: &str = "/workspace/projects";
+const GUEST_PACKAGE_ROOTS_BASE: &str = "/workspace/packages";
 const GUEST_WRITABLE_BINDING_ROOT: &str = "/workspace/bindings/fs";
 const GUEST_WRITABLE_IMPORT_ROOT: &str = "/workspace/bindings/fs/sandbox/write";
 const GUEST_TEMP_ROOT: &str = "/tmp";
@@ -1539,8 +1541,25 @@ fn read_worker_project_roots() -> Result<Vec<PathBuf>, String> {
     Ok(parsed.into_iter().map(PathBuf::from).collect())
 }
 
+fn read_worker_package_roots() -> Result<Vec<PathBuf>, String> {
+    let Ok(raw) = std::env::var(WORKER_PACKAGE_ROOTS_JSON_ENV) else {
+        return Ok(Vec::new());
+    };
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let parsed = serde_json::from_str::<Vec<String>>(&raw)
+        .map_err(|error| format!("invalid package root list: {error}"))?;
+    Ok(parsed.into_iter().map(PathBuf::from).collect())
+}
+
 fn guest_project_root(index: usize) -> String {
     format!("{GUEST_PROJECT_ROOTS_BASE}/{index}")
+}
+
+fn guest_package_root(index: usize) -> String {
+    format!("{GUEST_PACKAGE_ROOTS_BASE}/{index}")
 }
 
 fn resolve_guest_temp_host_root() -> Result<PathBuf, String> {
@@ -2893,6 +2912,27 @@ impl WasiExecutor {
             .enumerate()
             .map(|(index, _)| guest_project_root(index))
             .collect::<Vec<_>>();
+        let package_roots = match read_worker_package_roots() {
+            Ok(roots) => roots,
+            Err(message) => {
+                let native_capability_state = snapshot_native_capability_state(&native_capability);
+                audit.extend(native_capability_state.audit);
+                let _ = fs::remove_dir_all(&capability_host_root);
+                return make_error_result(
+                    "AEG-ENGINE",
+                    &message,
+                    "engine_error",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+        };
+        let guest_package_roots = package_roots
+            .iter()
+            .enumerate()
+            .map(|(index, _)| guest_package_root(index))
+            .collect::<Vec<_>>();
         let guest_temp_root = match resolve_guest_temp_host_root() {
             Ok(path) => path,
             Err(message) => {
@@ -2917,6 +2957,7 @@ impl WasiExecutor {
         builder.env("PYTHONHOME", guest_root);
         let mut python_path_entries = Vec::<String>::new();
         python_path_entries.extend(guest_project_roots.iter().cloned());
+        python_path_entries.extend(guest_package_roots.iter().cloned());
         python_path_entries.push(GUEST_WRITABLE_IMPORT_ROOT.to_string());
         if let Some(path) = py_path {
             python_path_entries.push(path);
@@ -2991,6 +3032,24 @@ impl WasiExecutor {
                 );
             }
         }
+        for (host_path, guest_path) in package_roots.iter().zip(guest_package_roots.iter()) {
+            if builder
+                .preopened_dir(host_path, guest_path, DirPerms::READ, FilePerms::READ)
+                .is_err()
+            {
+                let native_capability_state = snapshot_native_capability_state(&native_capability);
+                audit.extend(native_capability_state.audit);
+                let _ = fs::remove_dir_all(&capability_host_root);
+                return make_error_result(
+                    "AEG-ENGINE",
+                    "failed to preopen package root",
+                    "engine_error",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+        }
         if builder
             .preopened_dir(
                 &guest_temp_root,
@@ -3016,6 +3075,12 @@ impl WasiExecutor {
             audit.push(json!({
               "kind": "runtime_projection",
               "detailJson": format!("project_root:{guest_path}")
+            }));
+        }
+        for guest_path in &guest_package_roots {
+            audit.push(json!({
+              "kind": "runtime_projection",
+              "detailJson": format!("package_root:{guest_path}")
             }));
         }
         audit.push(json!({

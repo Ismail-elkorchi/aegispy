@@ -80,3 +80,15 @@ The current browser-executed fixture families cover:
 - bundled `micropip`
 - `packaging`
 - `jinja2` with `markupsafe`
+
+Current server package-layer proof is narrower and remains target-scoped:
+
+- `node`, `deno`, and `bun` can import locked `pure_python` package layers
+  when requests supply a verified `packageLockfile`
+- current proven server pure-Python imports are:
+  - `attrs`
+  - `jinja2`
+  - `jsonschema`
+  - `packaging`
+- native package classes remain outside the supported server package-layer
+  surface until target-specific proof is published

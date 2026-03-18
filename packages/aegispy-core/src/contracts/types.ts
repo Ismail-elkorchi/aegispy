@@ -1,3 +1,5 @@
+import type { Lockfile } from "../../../aegispy-pack/src/index";
+
 export type HostKind = "node" | "deno" | "bun" | "browser";
 
 export type ConformanceProfile = "server-hardened" | "browser-real-engine";
@@ -161,4 +163,6 @@ export interface CreateRuntimeOptions {
   host: HostKind;
   projectRoots?: string[];
   tempRoot?: string;
+  packages?: string[];
+  packageLockfile?: Lockfile;
 }
