@@ -160,30 +160,40 @@ describe("server package layers", () => {
 
   it("imports the locked pure-python package set on the server runtime", async () => {
     process.env.AEGISPY_NODE_TRANSPORT = "process";
+    const cases = [
+      {
+        packages: ["packaging"],
+        code: 'from packaging.version import Version\nprint(Version("2.3.4"))\n',
+        expectStdout: "2.3.4",
+      },
+      {
+        packages: ["attrs"],
+        code: "import attr\nprint(hasattr(attr, 'define'))\n",
+        expectStdout: "True",
+      },
+      {
+        packages: ["attrs", "jsonschema"],
+        code: 'import jsonschema\nprint(jsonschema.validators.validator_for({"type": "string"}).__name__)\n',
+        expectStdout: "Draft",
+      },
+      {
+        packages: ["jinja2", "markupsafe"],
+        code: 'from jinja2 import Template\nprint(Template("hello {{ name }}").render(name="AEGISPY"))\n',
+        expectStdout: "hello AEGISPY",
+      },
+    ] as const;
 
-    const runtime = await createRuntime({
-      host: "node",
-      packages: ["packaging", "attrs", "jsonschema", "jinja2"],
-      packageLockfile: makeServerLockfile(),
-    });
-    const result = await runtime.run(
-      makeRequest(
-        "from packaging.version import Version\n" +
-          "import attr\n" +
-          "import jsonschema\n" +
-          "from jinja2 import Template\n" +
-          'print(Version("2.3.4"))\n' +
-          "print(hasattr(attr, 'define'))\n" +
-          'print(jsonschema.validators.validator_for({"type": "string"}).__name__)\n' +
-          'print(Template("hello {{ name }}").render(name="AEGISPY"))\n',
-      ),
-    );
-    await runtime.close();
+    for (const testCase of cases) {
+      const runtime = await createRuntime({
+        host: "node",
+        packages: [...testCase.packages],
+        packageLockfile: makeServerLockfile(),
+      });
+      const result = await runtime.run(makeRequest(testCase.code));
+      await runtime.close();
 
-    expect(result.status, JSON.stringify(result, null, 2)).toBe("ok");
-    expect(result.stdoutUtf8).toContain("2.3.4");
-    expect(result.stdoutUtf8).toContain("True");
-    expect(result.stdoutUtf8).toContain("Draft");
-    expect(result.stdoutUtf8).toContain("hello AEGISPY");
+      expect(result.status, JSON.stringify(result, null, 2)).toBe("ok");
+      expect(result.stdoutUtf8).toContain(testCase.expectStdout);
+    }
   }, 600_000);
 });
