@@ -53,6 +53,19 @@ function makeBrowserCapabilities(): RuntimeCapabilities {
   };
 }
 
+function makeBrowserCapabilitiesWithNetwork(): RuntimeCapabilities {
+  return {
+    ...makeBrowserCapabilities(),
+    capabilityFamilies: {
+      storage: "unavailable",
+      network: "available_granted",
+      fileAccess: "unavailable",
+      worker: "available_granted",
+      handles: "unavailable",
+    },
+  };
+}
+
 describe("runtime preflight", () => {
   it("rejects unsupported capability grants with stable audit ordering", () => {
     const outcome = preflightRuntimeRequest(
@@ -146,5 +159,27 @@ describe("runtime preflight", () => {
       unsupportedCapabilities: ["network"],
       profile: "browser-real-engine",
     });
+  });
+
+  it("accepts browser requested network capability when the family is available", () => {
+    const outcome = preflightRuntimeRequest(
+      {
+        runtimeHost: "browser",
+        capabilities: makeBrowserCapabilitiesWithNetwork(),
+        closed: false,
+      },
+      {
+        ...makeRequest(),
+        requestedCapabilities: {
+          network: {
+            allowOrigins: ["https://example.com"],
+            maxRequests: 1,
+            maxBytes: 256,
+          },
+        },
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
   });
 });

@@ -124,8 +124,11 @@ Current request-shape rules:
   - `requestedCapabilities.network` conflicts with `permissions.http`
   - `requestedCapabilities.storage` conflicts with `permissions.fs`
   - `requestedCapabilities.fileAccess` conflicts with `permissions.fs`
-- until browser-native activation lands, requesting these browser capability
-  families still fails closed with `AEG-UNSUPPORTED-HOST`
+- browser-native `network` requests are currently exposed through
+  `requestedCapabilities.network` and the existing `aegispy.http_get(...)`
+  guest helper
+- browser-native `storage` and `fileAccess` requests still fail closed with
+  `AEG-UNSUPPORTED-HOST`
 
 ## Result Shape
 
@@ -144,6 +147,8 @@ Current request-shape rules:
   `termination=policy_denied`
 - `browser-real-engine` rejects filesystem, HTTP, and environment permission
   grants with `AEG-UNSUPPORTED-HOST` and `termination=policy_denied`
+- `browser-real-engine` returns `AEG-POLICY-DENIED` when a requested browser
+  network grant is denied by origin, request-count, or byte-budget policy
 - `browser-real-engine` returns `AEG-ENGINE` before execution when browser
   package integrity or pinned engine-asset verification fails
 - runtime-bound deny results start with runtime-boundary audit entries before
@@ -188,7 +193,7 @@ Current browser capability-family reporting:
   capability states
 - current browser state map:
   - `storage`: `unavailable`
-  - `network`: `unavailable`
+  - `network`: `available_granted`
   - `fileAccess`: `unavailable`
   - `worker`: `available_granted`
   - `handles`: `unavailable`

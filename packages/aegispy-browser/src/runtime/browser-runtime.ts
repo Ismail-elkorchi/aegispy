@@ -11,8 +11,10 @@ import {
 } from "./browser-integrity";
 import type {
   AegisPyRuntime,
+  BrowserCapabilityState,
   BrowserCapabilityFamilies,
   CreateRuntimeOptions,
+  RequestedNetworkCapability,
   RuntimeCapabilities,
   RunRequest,
   RunResult,
@@ -22,13 +24,57 @@ import { BrowserWorkerSupervisor } from "./browser-worker-supervisor";
 
 const utf8Encoder = new TextEncoder();
 
-const browserCapabilityFamilies: BrowserCapabilityFamilies = {
-  storage: "unavailable",
-  network: "unavailable",
-  fileAccess: "unavailable",
-  worker: "available_granted",
-  handles: "unavailable",
-};
+function browserNetworkState(): BrowserCapabilityState {
+  return typeof process !== "undefined" && process.versions?.node
+    ? "available_granted"
+    : typeof globalThis.XMLHttpRequest === "function"
+      ? "available_granted"
+      : "unavailable";
+}
+
+function browserCapabilityFamilies(): BrowserCapabilityFamilies {
+  return {
+    storage: "unavailable",
+    network: browserNetworkState(),
+    fileAccess: "unavailable",
+    worker: "available_granted",
+    handles: "unavailable",
+  };
+}
+
+function policyDeniedResult(
+  message: string,
+  startedTsMs: number,
+  detail: Record<string, unknown>,
+): RunResult {
+  const endedTsMs = Date.now();
+  return {
+    status: "error",
+    exitCode: 13,
+    stdoutUtf8: "",
+    stderrUtf8: message,
+    meta: {
+      startedTsMs,
+      endedTsMs,
+      durationMs: Math.max(0, endedTsMs - startedTsMs),
+      cpuMs: Math.max(0, endedTsMs - startedTsMs),
+      memoryPeakBytes: 0,
+      stdoutBytes: 0,
+      stderrBytes: message.length,
+      termination: "policy_denied",
+      audit: [
+        {
+          seq: 1,
+          tsMs: startedTsMs,
+          kind: "policy_denied",
+          detailJson:
+            typeof detail.reason === "string" ? detail.reason : message,
+        },
+      ],
+    },
+    error: makeAegisPyError("AEG-POLICY-DENIED", message, detail),
+  };
+}
 
 export interface BrowserRuntimeOptions {
   engine?: "pyodide";
@@ -131,12 +177,56 @@ function okResult(
 
 let requestSequence = 0;
 
-function requiresRuntimeBoundaryFallback(code: string): boolean {
-  return (
-    code.includes("aegispy.") ||
-    code.includes("#aegispy:stdout=") ||
-    code.includes("#aegispy:stderr=")
-  );
+function browserRequestedNetwork(
+  req: RunRequest,
+): RequestedNetworkCapability | undefined {
+  if (req.host !== "browser") {
+    return undefined;
+  }
+  return req.requestedCapabilities?.network;
+}
+
+function materializeBrowserNetworkPermissions(req: RunRequest): RunRequest {
+  const network = browserRequestedNetwork(req);
+  if (network === undefined || req.permissions.http !== null) {
+    return req;
+  }
+
+  return {
+    ...req,
+    permissions: {
+      ...req.permissions,
+      http: {
+        allowOrigins: [...network.allowOrigins],
+        denyOrigins: [...(network.denyOrigins ?? [])],
+        maxRequests: network.maxRequests,
+        maxBytes: network.maxBytes,
+      },
+    },
+  };
+}
+
+function requiresRuntimeBoundaryFallback(
+  req: RunRequest,
+  capabilities: RuntimeCapabilities,
+): boolean {
+  const code = req.code;
+  if (code.includes("#aegispy:stdout=") || code.includes("#aegispy:stderr=")) {
+    return true;
+  }
+
+  if (/aegispy\.(fs_read|fs_write|env_get)\s*\(/u.test(code)) {
+    return true;
+  }
+
+  if (code.includes("aegispy.http_get(")) {
+    return !(
+      browserRequestedNetwork(req) !== undefined &&
+      capabilities.capabilityFamilies?.network === "available_granted"
+    );
+  }
+
+  return false;
 }
 
 export class BrowserRuntime implements AegisPyRuntime {
@@ -178,7 +268,7 @@ export class BrowserRuntime implements AegisPyRuntime {
       profile: "browser-real-engine",
       transport: "worker",
       capabilityChannel: "worker-timeout",
-      capabilityFamilies: { ...browserCapabilityFamilies },
+      capabilityFamilies: browserCapabilityFamilies(),
       fs: false,
       http: false,
       env: false,
@@ -282,6 +372,9 @@ export class BrowserRuntime implements AegisPyRuntime {
     if (!preflight.ok) {
       return preflight.result;
     }
+    const executableRequest = materializeBrowserNetworkPermissions(
+      preflight.request,
+    );
 
     const startedTsMs = Date.now();
     const integrity = await this.ensureIntegrity();
@@ -296,10 +389,10 @@ export class BrowserRuntime implements AegisPyRuntime {
       );
     }
 
-    if (requiresRuntimeBoundaryFallback(preflight.request.code)) {
+    if (requiresRuntimeBoundaryFallback(preflight.request, capabilities)) {
       return withRuntimeBoundaryAudit(
         capabilities,
-        simulateRun(preflight.request),
+        simulateRun(executableRequest),
       );
     }
 
@@ -307,13 +400,14 @@ export class BrowserRuntime implements AegisPyRuntime {
       .run(
         {
           requestId: String(++requestSequence),
-          code: req.code,
-          stdinUtf8: req.stdinUtf8,
-          determinism: req.determinism,
+          code: executableRequest.code,
+          stdinUtf8: executableRequest.stdinUtf8,
+          determinism: executableRequest.determinism,
           assetBaseUrl: this.options.assetBaseUrl,
           packages: integrity.packages,
+          network: browserRequestedNetwork(executableRequest),
         },
-        preflight.request.limits.time.wallMs,
+        executableRequest.limits.time.wallMs,
       )
       .then((result) => {
         if (result.status === "ok") {
@@ -323,17 +417,38 @@ export class BrowserRuntime implements AegisPyRuntime {
           );
         }
 
+        if (
+          result.errorCode === "AEG-POLICY-DENIED" ||
+          result.termination === "policy_denied"
+        ) {
+          return withRuntimeBoundaryAudit(
+            capabilities,
+            policyDeniedResult(
+              result.errorMessage || result.stderrUtf8 || "policy denied",
+              startedTsMs,
+              {
+                host: "browser",
+                reason: result.errorMessage || "policy_denied",
+              },
+            ),
+          );
+        }
+
         if (result.errorMessage === "wall time reached") {
           return withRuntimeBoundaryAudit(
             capabilities,
-            timeoutResult(preflight.request.limits.time.wallMs),
+            timeoutResult(executableRequest.limits.time.wallMs),
           );
         }
 
         return withRuntimeBoundaryAudit(capabilities, {
-          ...engineErrorResult(
+          ...engineErrorResultWithDetail(
             result.stderrUtf8 || result.errorMessage,
             startedTsMs,
+            {
+              host: "browser",
+              reason: result.errorMessage || "browser_worker_failure",
+            },
           ),
           stdoutUtf8: result.stdoutUtf8,
         });

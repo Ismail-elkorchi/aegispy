@@ -61,8 +61,9 @@ Properties:
 - same request/result API shape
 - experimental worker-backed real Python execution
 - typed browser capability-family reporting through `runtime.capabilities()`
-- no browser-native `storage`, `network`, `fileAccess`, or `handles` surface is
-  exposed yet
+- browser-native `network` is exposed through `requestedCapabilities.network`
+  and the existing `aegispy.http_get(...)` guest helper
+- browser-native `storage`, `fileAccess`, and `handles` are not exposed yet
 - stable unsupported-host semantics for browser-unavailable capabilities
 - runtime-boundary audit entries before terminal deny events
 
@@ -89,7 +90,7 @@ Contributor-facing compatibility model notes:
 Current browser capability-family states:
 
 - `storage`: `unavailable`
-- `network`: `unavailable`
+- `network`: `available_granted`
 - `fileAccess`: `unavailable`
 - `worker`: `available_granted`
 - `handles`: `unavailable`

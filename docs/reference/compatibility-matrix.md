@@ -64,6 +64,9 @@ and capability-limited:
 - `fs` workloads are unsupported by profile
 - `http` workloads are unsupported by profile
 - `env` workloads are unsupported by profile
+- browser-native `network` is tracked separately through the generated browser
+  capability matrix and does not change the legacy `capability-http` workload
+  family
 
 That unsupported status is expected and recorded in the generated matrix via
 `unsupported_browser_capability`.

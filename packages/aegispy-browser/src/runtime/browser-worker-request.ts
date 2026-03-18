@@ -1,4 +1,9 @@
-import type { DeterminismConfig } from "@aegispy/core";
+import type {
+  DeterminismConfig,
+  RequestedNetworkCapability,
+  TerminationReason,
+} from "@aegispy/core";
+import type { ErrorCode } from "../../../aegispy-core/src/contracts/types";
 
 export interface BrowserWorkerRunRequest {
   requestId: string;
@@ -7,6 +12,7 @@ export interface BrowserWorkerRunRequest {
   determinism: DeterminismConfig;
   assetBaseUrl?: string;
   packages: string[];
+  network?: RequestedNetworkCapability;
 }
 
 interface BrowserWorkerRunResultOk {
@@ -22,6 +28,8 @@ interface BrowserWorkerRunResultError {
   stdoutUtf8: string;
   stderrUtf8: string;
   errorMessage: string;
+  errorCode?: ErrorCode;
+  termination?: TerminationReason;
 }
 
 export type BrowserWorkerRunResult =
@@ -46,6 +54,37 @@ function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
+}
+
+function validateNetworkCapability(
+  value: unknown,
+  issues: string[],
+): value is RequestedNetworkCapability {
+  if (!isRecord(value)) {
+    issues.push("network:object_expected");
+    return false;
+  }
+  if (!isStringArray(value.allowOrigins)) {
+    issues.push("network.allowOrigins:string_array_expected");
+  }
+  if (value.denyOrigins !== undefined && !isStringArray(value.denyOrigins)) {
+    issues.push("network.denyOrigins:string_array_expected");
+  }
+  if (
+    typeof value.maxRequests !== "number" ||
+    !Number.isFinite(value.maxRequests) ||
+    value.maxRequests < 0
+  ) {
+    issues.push("network.maxRequests:number_expected");
+  }
+  if (
+    typeof value.maxBytes !== "number" ||
+    !Number.isFinite(value.maxBytes) ||
+    value.maxBytes < 0
+  ) {
+    issues.push("network.maxBytes:number_expected");
+  }
+  return issues.length === 0;
 }
 
 function validateDeterminism(
@@ -105,6 +144,9 @@ export function normalizeBrowserWorkerRequest(
   if (!isStringArray(input.packages)) {
     issues.push("packages:string_array_expected");
   }
+  const networkValid =
+    input.network === undefined ||
+    validateNetworkCapability(input.network, issues);
 
   if (issues.length > 0) {
     return {
@@ -117,6 +159,21 @@ export function normalizeBrowserWorkerRequest(
   const assetBaseUrl =
     typeof input.assetBaseUrl === "string" ? input.assetBaseUrl : undefined;
   const packages = input.packages as string[];
+  const networkInput =
+    input.network !== undefined && networkValid
+      ? (input.network as RequestedNetworkCapability)
+      : undefined;
+  const network =
+    networkInput !== undefined
+      ? {
+          allowOrigins: [...networkInput.allowOrigins],
+          denyOrigins: Array.isArray(networkInput.denyOrigins)
+            ? [...networkInput.denyOrigins]
+            : undefined,
+          maxRequests: networkInput.maxRequests,
+          maxBytes: networkInput.maxBytes,
+        }
+      : undefined;
 
   return {
     ok: true,
@@ -131,6 +188,7 @@ export function normalizeBrowserWorkerRequest(
       },
       assetBaseUrl,
       packages: [...packages],
+      network,
     },
   };
 }
@@ -161,6 +219,22 @@ export function normalizeBrowserWorkerResult(
   if (input.status === "error" && typeof input.errorMessage !== "string") {
     issues.push("errorMessage:string_expected");
   }
+  if (
+    input.status === "error" &&
+    input.errorCode !== undefined &&
+    input.errorCode !== "AEG-POLICY-DENIED" &&
+    input.errorCode !== "AEG-ENGINE"
+  ) {
+    issues.push("errorCode:error_code_expected");
+  }
+  if (
+    input.status === "error" &&
+    input.termination !== undefined &&
+    input.termination !== "policy_denied" &&
+    input.termination !== "engine_error"
+  ) {
+    issues.push("termination:termination_reason_expected");
+  }
 
   if (issues.length > 0) {
     return {
@@ -189,6 +263,8 @@ export function normalizeBrowserWorkerResult(
       stdoutUtf8: input.stdoutUtf8 as string,
       stderrUtf8: input.stderrUtf8 as string,
       errorMessage: input.errorMessage as string,
+      errorCode: input.errorCode as ErrorCode | undefined,
+      termination: input.termination as TerminationReason | undefined,
     },
   };
 }
