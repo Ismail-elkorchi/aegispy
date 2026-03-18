@@ -53,6 +53,7 @@ export interface RustWorkerTransportOptions {
   args: string[];
   isolationProfile?: IsolationProfile;
   projectRoots?: string[];
+  packageRoots?: string[];
   tempRoot?: string;
 }
 
@@ -84,6 +85,7 @@ export class RustWorkerTransport implements WorkerTransport {
       args: options.args ?? [],
       isolationProfile: options.isolationProfile,
       projectRoots: options.projectRoots,
+      packageRoots: options.packageRoots,
       tempRoot: options.tempRoot,
     };
     this.bundle = resolveCurrentServerBundle();
@@ -223,6 +225,13 @@ export class RustWorkerTransport implements WorkerTransport {
           ? {
               AEGISPY_WORKER_PROJECT_ROOTS_JSON: JSON.stringify(
                 this.options.projectRoots,
+              ),
+            }
+          : {}),
+        ...(this.options.packageRoots
+          ? {
+              AEGISPY_WORKER_PACKAGE_ROOTS_JSON: JSON.stringify(
+                this.options.packageRoots,
               ),
             }
           : {}),

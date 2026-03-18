@@ -357,5 +357,8 @@ export async function createBrowserRuntimeFactory(
   if (opts.host !== "browser") {
     return new BrowserRuntime();
   }
-  return new BrowserRuntime();
+  return new BrowserRuntime({
+    packages: opts.packages,
+    packageLockfile: opts.packageLockfile,
+  });
 }

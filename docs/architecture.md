@@ -51,22 +51,26 @@ Frozen compatibility-model truth:
 6. When server `projectRoots` are configured, the worker projects each host
    root into a stable internal guest path under `/workspace/projects/*` and
    prepends those guest paths to the import path in the order provided.
-7. The worker also projects a read-only guest view of the writable capability
+7. When server package layers are requested with a verified lockfile, the
+   worker projects each locked `pure_python` package root into a stable
+   internal guest path under `/workspace/packages/*` and prepends those guest
+   paths to the import path ahead of the writable import area.
+8. The worker also projects a read-only guest view of the writable capability
    filesystem under `/workspace/bindings/fs` so package trees written through
    runtime capability calls can be imported safely without exposing direct
    guest write access.
-8. The server temp root is exposed as a dedicated guest `/tmp`, backed by the
+9. The server temp root is exposed as a dedicated guest `/tmp`, backed by the
    configured `tempRoot` when provided or by a generated host temp directory
    otherwise.
-9. The server-hardened path enforces runtime-bound capability policy plus the
-   strict-profile limit envelope for wall, CPU, memory, stdout, stderr, and
-   environment access.
-10. The browser real-engine path uses the same request/response contract, runs a
+10. The server-hardened path enforces runtime-bound capability policy plus the
+    strict-profile limit envelope for wall, CPU, memory, stdout, stderr, and
+    environment access.
+11. The browser real-engine path uses the same request/response contract, runs a
     worker-backed Python engine, and keeps filesystem, HTTP, and environment
     access denied at the runtime boundary.
     Browser package requests are bound to verified lockfile entries, and
     `assetBaseUrl` verifies pinned browser engine assets before execution.
-11. Runtime returns `RunResult` with `meta` and `audit`.
+12. Runtime returns `RunResult` with `meta` and `audit`.
 
 ## Compatibility Matrices
 

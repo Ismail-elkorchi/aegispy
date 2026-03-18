@@ -14,6 +14,7 @@ import {
   resolveCurrentServerBundle,
   type ServerBundleRecord,
 } from "../../aegispy-node/src/runtime/server-bundle-manifest";
+import { resolveServerPackageLayer } from "../../aegispy-node/src/runtime/server-package-layer";
 import { createServerRuntimeCapabilities } from "../../aegispy-node/src/runtime/server-runtime-capabilities";
 import type { WorkerTransport } from "../../aegispy-node/src/runtime/worker-transport";
 import type {
@@ -51,6 +52,7 @@ interface TransportSelection {
   transport: WorkerTransport;
   mode: DenoTransportMode;
   bundle: ServerBundleRecord;
+  packageSetVersion: string;
   isolationProfile: IsolationProfile | null;
   executionMode: WorkerExecutionMode | null;
   executionBackend: WorkerExecutionBackendInfo | null;
@@ -67,26 +69,45 @@ export function resolveDenoTransportMode(
   );
 }
 
-function createTransport(opts: CreateRuntimeOptions): TransportSelection {
+async function createTransport(
+  opts: CreateRuntimeOptions,
+): Promise<TransportSelection> {
   const mode = resolveDenoTransportMode();
   if (mode === "process") {
+    const packageLayer = await resolveServerPackageLayer(
+      opts.packages,
+      opts.packageLockfile,
+    );
     const transport = new RustWorkerTransport({
       projectRoots: opts.projectRoots,
+      packageRoots: packageLayer.packageRoots,
       tempRoot: opts.tempRoot,
     });
     return {
       transport,
       mode,
       bundle: transport.bundle,
+      packageSetVersion: packageLayer.packageSetVersion,
       isolationProfile: transport.isolationProfile,
       executionMode: transport.executionMode,
       executionBackend: transport.executionBackend,
     };
   }
+  if ((opts.packages?.length ?? 0) > 0) {
+    throw makeAegisPyError(
+      "AEG-ENGINE",
+      "server package layers require process transport",
+      {
+        host: "deno",
+        reason: "package_layers_require_process_transport",
+      },
+    );
+  }
   return {
     transport: new InProcessTransport(),
     mode,
     bundle: resolveCurrentServerBundle(),
+    packageSetVersion: "base",
     isolationProfile: null,
     executionMode: null,
     executionBackend: null,
@@ -99,6 +120,8 @@ export class DenoRuntime implements AegisPyRuntime {
   private readonly transport: WorkerTransport;
 
   private readonly bundle: ServerBundleRecord;
+
+  private readonly packageSetVersion: string;
 
   public readonly transportKind: DenoTransportMode;
 
@@ -114,6 +137,7 @@ export class DenoRuntime implements AegisPyRuntime {
     this.transport = selection.transport;
     this.transportKind = selection.mode;
     this.bundle = selection.bundle;
+    this.packageSetVersion = selection.packageSetVersion;
     this.isolationProfile = selection.isolationProfile;
     this.executionMode = selection.executionMode;
     this.executionBackend = selection.executionBackend;
@@ -124,6 +148,7 @@ export class DenoRuntime implements AegisPyRuntime {
       this.host,
       this.transportKind,
       this.bundle,
+      this.packageSetVersion,
     );
   }
 
@@ -163,5 +188,5 @@ export async function createRuntime(
       host: opts.host,
     });
   }
-  return new DenoRuntime(createTransport(opts));
+  return new DenoRuntime(await createTransport(opts));
 }

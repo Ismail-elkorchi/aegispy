@@ -15,6 +15,8 @@
 
 - `projectRoots?: string[]`
 - `tempRoot?: string`
+- `packages?: string[]`
+- `packageLockfile?: Lockfile`
 
 When process transport is active:
 
@@ -23,6 +25,12 @@ When process transport is active:
 - the writable guest import area is also projected into the guest import path
 - `tempRoot`, when provided, becomes the backing host directory for the guest
   temp root exposed as `/tmp`
+- requested server packages must be backed by a verified `packageLockfile`
+- server package-layer requests fail closed with `AEG-ENGINE` when the
+  lockfile is missing, tampered, unpinned, or requests a package class that the
+  current server runtime does not support
+- the current server package-layer path is limited to locked `pure_python`
+  packages projected into read-only guest import roots
 - the runtime audit includes:
   - `runtime_projection`
   - `runtime_temp_root`

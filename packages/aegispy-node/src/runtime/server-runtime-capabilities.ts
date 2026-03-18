@@ -9,6 +9,7 @@ export function createServerRuntimeCapabilities(
     | "simulation"
     | "inprocess",
   bundle: ServerBundleRecord,
+  packageSetVersion: string = bundle.packageSetVersion,
 ): RuntimeCapabilities {
   const hardened = transport === "process";
   return {
@@ -19,7 +20,7 @@ export function createServerRuntimeCapabilities(
     runtimeFamily: bundle.runtimeFamily,
     bundleId: bundle.bundleId,
     pythonAbi: bundle.pythonAbi,
-    packageSetVersion: bundle.packageSetVersion,
+    packageSetVersion,
     fs: true,
     http: true,
     env: true,
