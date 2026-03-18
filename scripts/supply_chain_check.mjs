@@ -286,6 +286,14 @@ function main() {
   ) {
     failures.push({ error: "component_tooling_hash_not_verified" });
   }
+  if (!componentBuild.tooling?.wac) {
+    failures.push({ error: "component_wac_tooling_missing" });
+  } else if (
+    componentBuild.tooling.wac.assetSha256 !==
+    componentBuild.tooling.wac.expectedAssetSha256
+  ) {
+    failures.push({ error: "component_wac_hash_not_verified" });
+  }
   if (componentBuild.sourceCoreWasmSha256 !== engineSource.wasmSha256) {
     failures.push({ error: "component_source_core_hash_mismatch" });
   }

@@ -39,6 +39,15 @@ const wasmToolsRelease = {
   },
 };
 
+const wacRelease = {
+  version: "0.9.0",
+  tag: "v0.9.0",
+  linuxX64: {
+    fileName: "wac-cli-x86_64-unknown-linux-musl",
+    sha256: "c992dd14dd7d67d687f70f77347d9523be6c04eb9845351bf2a1f24dee1bbfc8",
+  },
+};
+
 const wasmtimeRelease = {
   version: "42.0.1",
   tag: "v42.0.1",
@@ -162,6 +171,32 @@ function resolveBundledWasmTools() {
   return wasmToolsRelease.linuxX64;
 }
 
+export function resolveBundledWac(
+  platformKey = `${process.platform}:${process.arch}`,
+) {
+  if (platformKey !== "linux:x64") {
+    throw new Error(
+      `unsupported platform for bundled wac (${platformKey}); set AEGISPY_WAC_BIN`,
+    );
+  }
+  return wacRelease.linuxX64;
+}
+
+export function buildWacPlugArgs({
+  wrapperComponentPath,
+  dependencyComponentPath,
+  outputComponentPath,
+}) {
+  return [
+    "plug",
+    wrapperComponentPath,
+    "--plug",
+    dependencyComponentPath,
+    "-o",
+    outputComponentPath,
+  ];
+}
+
 function ensureWasmTools() {
   if (process.env.AEGISPY_WASM_TOOLS_BIN) {
     const binPath = path.resolve(process.env.AEGISPY_WASM_TOOLS_BIN);
@@ -210,6 +245,48 @@ function ensureWasmTools() {
     archiveSha256,
     expectedArchiveSha256: bundle.sha256,
     version,
+  };
+}
+
+function ensureWac() {
+  if (process.env.AEGISPY_WAC_BIN) {
+    const binPath = path.resolve(process.env.AEGISPY_WAC_BIN);
+    if (!fs.existsSync(binPath)) {
+      throw new Error(`missing wac override: ${binPath}`);
+    }
+    return {
+      binPath,
+      source: "env:AEGISPY_WAC_BIN",
+      assetSha256: null,
+      expectedAssetSha256: null,
+      version: runCaptureOrThrow(binPath, ["--version"]).trim(),
+    };
+  }
+
+  const bundle = resolveBundledWac();
+  ensureDir(downloadDir);
+
+  const assetPath = path.join(downloadDir, bundle.fileName);
+
+  if (!fs.existsSync(assetPath)) {
+    const assetUrl = `https://github.com/bytecodealliance/wac/releases/download/${wacRelease.tag}/${bundle.fileName}`;
+    runOrThrow("curl", ["-L", "-sSf", assetUrl, "-o", assetPath]);
+  }
+
+  const assetSha256 = sha256File(assetPath);
+  if (assetSha256 !== bundle.sha256) {
+    fs.rmSync(assetPath, { force: true });
+    throw new Error("wac asset hash mismatch");
+  }
+
+  fs.chmodSync(assetPath, 0o755);
+
+  return {
+    binPath: assetPath,
+    source: `github:${wacRelease.tag}/${bundle.fileName}`,
+    assetSha256,
+    expectedAssetSha256: bundle.sha256,
+    version: runCaptureOrThrow(assetPath, ["--version"]).trim(),
   };
 }
 
@@ -399,6 +476,7 @@ function main() {
 
   const adapter = ensureAdapter();
   const wasmTools = ensureWasmTools();
+  const wac = ensureWac();
 
   const componentArgs = [
     "component",
@@ -424,14 +502,14 @@ function main() {
     wrapperWasmPath,
   ]);
   runOrThrow(wasmTools.binPath, ["validate", wrapperWasmPath]);
-  runOrThrow(wasmTools.binPath, [
-    "compose",
-    wrapperWasmPath,
-    "-d",
-    baseComponentPath,
-    "-o",
-    wasmPath,
-  ]);
+  runOrThrow(
+    wac.binPath,
+    buildWacPlugArgs({
+      wrapperComponentPath: wrapperWasmPath,
+      dependencyComponentPath: baseComponentPath,
+      outputComponentPath: wasmPath,
+    }),
+  );
   runOrThrow(wasmTools.binPath, ["validate", wasmPath]);
 
   assertWasmMagic(wasmPath);
@@ -480,6 +558,12 @@ function main() {
         archiveSha256: wasmTools.archiveSha256,
         expectedArchiveSha256: wasmTools.expectedArchiveSha256,
       },
+      wac: {
+        source: wac.source,
+        version: wac.version,
+        assetSha256: wac.assetSha256,
+        expectedAssetSha256: wac.expectedAssetSha256,
+      },
     },
     hostImportChannelDefault: "component-wit",
     runtimeBridge: "component-host-guest-runtime-native-abi-dispatch",
@@ -492,4 +576,8 @@ function main() {
   console.log(JSON.stringify(manifest, null, 2));
 }
 
-main();
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+
+if (invokedPath === __filename) {
+  main();
+}
