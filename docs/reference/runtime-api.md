@@ -133,6 +133,8 @@ fails closed with `AEG-ENGINE` before guest code runs.
 - `bundleId`
 - `pythonAbi`
 - `packageSetVersion`
+- `portableIsolationFloorVersion`
+- `hostStrengthening`
 - `fs`
 - `http`
 - `env`
@@ -141,6 +143,14 @@ fails closed with `AEG-ENGINE` before guest code runs.
 
 These fields remain current implementation truth during the current
 compatibility sequence.
+
+Current portable-floor reporting rules:
+
+- server process transport reports `portableIsolationFloorVersion` for the
+  current portable common-floor draft
+- `hostStrengthening` stays additive:
+  - Linux currently reports the strict kernel-control strengthening lane
+  - other hosts remain conservative until stronger proof lands publicly
 
 Future additive capability families are frozen as:
 

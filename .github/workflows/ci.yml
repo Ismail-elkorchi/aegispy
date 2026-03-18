@@ -233,6 +233,9 @@ jobs:
       - name: Portable Check
         run: pnpm run check:portable
 
+      - name: Portable Floor Prototype
+        run: node scripts/portable_isolation_floor_smoke.mjs
+
       - name: Fail on tracked-file churn
         shell: bash
         run: |
@@ -241,6 +244,15 @@ jobs:
             git status --porcelain=v1
             exit 1
           fi
+
+      - name: Upload macOS Artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: macos-smoke-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/**
+          if-no-files-found: ignore
+          retention-days: 14
 
   windows-smoke:
     name: windows-smoke
@@ -274,6 +286,10 @@ jobs:
         shell: bash
         run: pnpm run check:portable
 
+      - name: Portable Floor Prototype
+        shell: bash
+        run: node scripts/portable_isolation_floor_smoke.mjs
+
       - name: Fail on tracked-file churn
         shell: bash
         run: |
@@ -282,3 +298,12 @@ jobs:
             git status --porcelain=v1
             exit 1
           fi
+
+      - name: Upload Windows Artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-smoke-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/**
+          if-no-files-found: ignore
+          retention-days: 14

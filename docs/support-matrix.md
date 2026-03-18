@@ -70,6 +70,14 @@ Future cross-OS claims must start from the portable common isolation floor:
 
 Stronger host-specific claims remain additive OS-specific strengthening claims.
 
+Current contributor-facing proof posture:
+
+- Linux full-check lanes emit runtime-backed portable-floor evidence plus a
+  separate Linux strengthening artifact
+- macOS and Windows smoke lanes emit prototype portable-floor artifacts only
+- public compatibility rows remain conservative until a host has
+  `supported` evidence, not just prototype floor artifacts
+
 ## Workload Classification
 
 Generated workload coverage is grouped into:
@@ -189,6 +197,11 @@ Current browser rows stay equally conservative:
 - `artifacts/security/native-abi-adversarial.json`
 - `artifacts/security/native-abi-fuzz.json`
 - `artifacts/security/kernel-isolation-runtime.json`
+- `artifacts/security/portable-isolation-floor-linux.json`
+- `artifacts/security/portable-isolation-floor-macos.json`
+- `artifacts/security/portable-isolation-floor-windows.json`
+- `artifacts/security/portable-isolation-floor-runtime.json`
+- `artifacts/security/host-strengthening-linux.json`
 - `artifacts/security/microvm-execution.json` when a compatible self-hosted
   launcher is present
 

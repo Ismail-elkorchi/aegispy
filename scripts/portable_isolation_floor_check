@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+node scripts/portable_isolation_floor_check.mjs
