@@ -4,6 +4,71 @@ let pyodidePromise = null;
 let loadedPackages = new Set();
 let stdoutLines = [];
 let stderrLines = [];
+let jsBridgeRegistered = false;
+
+async function createSyncHttpGet() {
+  if (typeof process !== "undefined" && process.versions?.node) {
+    const { spawnSync } = await import("node:child_process");
+    const fetchScript = [
+      "const url = process.argv[1];",
+      "const response = await fetch(url);",
+      "const text = await response.text();",
+      "process.stdout.write(JSON.stringify({ ok: response.ok, status: response.status, text }));",
+    ].join("\n");
+
+    return (url) => {
+      const result = spawnSync(
+        process.execPath,
+        ["--input-type=module", "-e", fetchScript, url],
+        {
+          encoding: "utf8",
+          maxBuffer: 16 * 1024 * 1024,
+        },
+      );
+      if (result.error) {
+        throw new Error(`AEG-ENGINE:http_get_failed:${String(result.error)}`);
+      }
+      if (result.status !== 0) {
+        const failureMessage = (result.stderr || "http_get_failed").trim();
+        throw new Error(`AEG-ENGINE:${failureMessage}`);
+      }
+
+      const payload = JSON.parse(result.stdout);
+      if (!payload.ok) {
+        throw new Error(`AEG-ENGINE:http_status_${payload.status}`);
+      }
+      return String(payload.text);
+    };
+  }
+
+  if (typeof XMLHttpRequest === "function") {
+    return (url) => {
+      const request = new XMLHttpRequest();
+      request.open("GET", url, false);
+      request.send();
+      const status = Number(request.status || 0);
+      if (status < 200 || status >= 300) {
+        throw new Error(`AEG-ENGINE:http_status_${status}`);
+      }
+      return String(request.responseText ?? request.response ?? "");
+    };
+  }
+
+  return () => {
+    throw new Error("AEG-ENGINE:http_transport_unavailable");
+  };
+}
+
+async function ensureJsBridge(pyodide) {
+  if (jsBridgeRegistered) {
+    return;
+  }
+
+  pyodide.registerJsModule("aegispy_js_bridge", {
+    http_get_sync: await createSyncHttpGet(),
+  });
+  jsBridgeRegistered = true;
+}
 
 function networkBridgePrelude(network) {
   if (!network) {
@@ -14,11 +79,10 @@ function networkBridgePrelude(network) {
   const denyOrigins = JSON.stringify(network.denyOrigins ?? []);
 
   return [
-    "import asyncio",
     "import sys",
     "import types",
     "from urllib.parse import urlsplit",
-    "from pyodide.http import pyfetch",
+    "from aegispy_js_bridge import http_get_sync as _aegispy_http_get_sync",
     `_aegispy_allow_origins = ${allowOrigins}`,
     `_aegispy_deny_origins = ${denyOrigins}`,
     `_aegispy_max_requests = ${network.maxRequests}`,
@@ -47,12 +111,7 @@ function networkBridgePrelude(network) {
     "        self._check_origin(url)",
     "        if _aegispy_max_requests > 0 and self._requests_used >= _aegispy_max_requests:",
     "            self._policy_denied('http_max_requests_exceeded')",
-    "        async def _fetch_text():",
-    "            response = await pyfetch(url)",
-    "            if not response.ok:",
-    "                raise RuntimeError(f'AEG-ENGINE:http_status_{response.status}')",
-    "            return await response.text()",
-    "        payload = asyncio.get_event_loop().run_until_complete(_fetch_text())",
+    "        payload = _aegispy_http_get_sync(url)",
     "        payload_bytes = len(payload.encode('utf-8'))",
     "        if _aegispy_max_bytes > 0 and self._bytes_used + payload_bytes > _aegispy_max_bytes:",
     "            self._policy_denied('http_byte_budget_reached')",
@@ -168,6 +227,7 @@ async function ensurePyodide(request) {
   }
 
   const pyodide = await pyodidePromise;
+  await ensureJsBridge(pyodide);
   const packages = request.packages.filter((name) => !loadedPackages.has(name));
   if (packages.length > 0) {
     await pyodide.loadPackage(packages);

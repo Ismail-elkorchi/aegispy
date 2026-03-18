@@ -25,9 +25,11 @@ import { BrowserWorkerSupervisor } from "./browser-worker-supervisor";
 const utf8Encoder = new TextEncoder();
 
 function browserNetworkState(): BrowserCapabilityState {
-  return typeof globalThis.fetch === "function"
+  return typeof process !== "undefined" && process.versions?.node
     ? "available_granted"
-    : "unavailable";
+    : typeof globalThis.XMLHttpRequest === "function"
+      ? "available_granted"
+      : "unavailable";
 }
 
 function browserCapabilityFamilies(): BrowserCapabilityFamilies {
