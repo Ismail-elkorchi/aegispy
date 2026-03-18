@@ -52,7 +52,14 @@ export interface RustWorkerTransportOptions {
   command: string;
   args: string[];
   isolationProfile?: IsolationProfile;
+  projectRoots?: string[];
+  tempRoot?: string;
 }
+
+type RustWorkerTransportOptionsInput = Partial<
+  Pick<RustWorkerTransportOptions, "command" | "args">
+> &
+  Omit<RustWorkerTransportOptions, "command" | "args">;
 
 export class RustWorkerTransport implements WorkerTransport {
   private readonly options: RustWorkerTransportOptions;
@@ -71,16 +78,17 @@ export class RustWorkerTransport implements WorkerTransport {
 
   private frameRemainder: Uint8Array = new Uint8Array();
 
-  public constructor(
-    options: RustWorkerTransportOptions = {
-      command: defaultWorkerBinary,
-      args: [],
-    },
-  ) {
-    this.options = options;
+  public constructor(options: RustWorkerTransportOptionsInput = {}) {
+    this.options = {
+      command: options.command ?? defaultWorkerBinary,
+      args: options.args ?? [],
+      isolationProfile: options.isolationProfile,
+      projectRoots: options.projectRoots,
+      tempRoot: options.tempRoot,
+    };
     this.bundle = resolveCurrentServerBundle();
     this.isolationProfile =
-      options.isolationProfile ?? resolveIsolationProfile();
+      this.options.isolationProfile ?? resolveIsolationProfile();
     const launchSpec = resolveWorkerLaunchSpec({
       command: this.options.command,
       args: this.options.args,
@@ -211,6 +219,18 @@ export class RustWorkerTransport implements WorkerTransport {
           repoRoot,
           this.bundle.component.compiledBinaryPath,
         ),
+        ...(this.options.projectRoots
+          ? {
+              AEGISPY_WORKER_PROJECT_ROOTS_JSON: JSON.stringify(
+                this.options.projectRoots,
+              ),
+            }
+          : {}),
+        ...(this.options.tempRoot
+          ? {
+              AEGISPY_WORKER_TEMP_ROOT: this.options.tempRoot,
+            }
+          : {}),
       },
     });
     if (!launchSpec.backend.available) {

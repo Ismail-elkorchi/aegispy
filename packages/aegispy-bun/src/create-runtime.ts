@@ -67,10 +67,13 @@ export function resolveBunTransportMode(
   );
 }
 
-function createTransport(): TransportSelection {
+function createTransport(opts: CreateRuntimeOptions): TransportSelection {
   const mode = resolveBunTransportMode();
   if (mode === "process") {
-    const transport = new RustWorkerTransport();
+    const transport = new RustWorkerTransport({
+      projectRoots: opts.projectRoots,
+      tempRoot: opts.tempRoot,
+    });
     return {
       transport,
       mode,
@@ -107,7 +110,7 @@ export class BunRuntime implements AegisPyRuntime {
 
   private closed = false;
 
-  public constructor(selection: TransportSelection = createTransport()) {
+  public constructor(selection: TransportSelection) {
     this.transport = selection.transport;
     this.transportKind = selection.mode;
     this.bundle = selection.bundle;
@@ -160,5 +163,5 @@ export async function createRuntime(
       host: opts.host,
     });
   }
-  return new BunRuntime();
+  return new BunRuntime(createTransport(opts));
 }

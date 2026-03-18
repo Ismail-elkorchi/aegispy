@@ -67,10 +67,13 @@ export function resolveNodeTransportMode(
   );
 }
 
-function createTransport(): TransportSelection {
+function createTransport(opts: CreateRuntimeOptions): TransportSelection {
   const mode = resolveNodeTransportMode();
   if (mode === "process") {
-    const transport = new RustWorkerTransport();
+    const transport = new RustWorkerTransport({
+      projectRoots: opts.projectRoots,
+      tempRoot: opts.tempRoot,
+    });
     return {
       transport,
       mode,
@@ -107,7 +110,7 @@ export class NodeRuntime implements AegisPyRuntime {
 
   private closed = false;
 
-  public constructor(selection: TransportSelection = createTransport()) {
+  public constructor(selection: TransportSelection) {
     this.transport = selection.transport;
     this.transportKind = selection.mode;
     this.bundle = selection.bundle;
@@ -160,5 +163,5 @@ export async function createNodeRuntime(
       host: opts.host,
     });
   }
-  return new NodeRuntime();
+  return new NodeRuntime(createTransport(opts));
 }

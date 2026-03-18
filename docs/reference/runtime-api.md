@@ -8,6 +8,25 @@
 - `runtime.run(RunRequest)`
 - `runtime.close()`
 
+## Server Runtime Options
+
+`createRuntime(options)` accepts these additive server options on `node`,
+`deno`, and `bun`:
+
+- `projectRoots?: string[]`
+- `tempRoot?: string`
+
+When process transport is active:
+
+- `projectRoots` are projected into stable internal guest paths and prepended to
+  the guest import path in the order provided
+- the writable guest import area is also projected into the guest import path
+- `tempRoot`, when provided, becomes the backing host directory for the guest
+  temp root exposed as `/tmp`
+- the runtime audit includes:
+  - `runtime_projection`
+  - `runtime_temp_root`
+
 ## Browser Runtime Options
 
 `createBrowserRuntime(options?)` accepts:
@@ -102,6 +121,10 @@ fails closed with `AEG-ENGINE` before guest code runs.
 - `profile`
 - `transport`
 - `capabilityChannel`
+- `runtimeFamily`
+- `bundleId`
+- `pythonAbi`
+- `packageSetVersion`
 - `fs`
 - `http`
 - `env`

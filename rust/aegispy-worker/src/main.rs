@@ -1392,6 +1392,12 @@ fn rewrite_code_for_determinism(code: &str, run: &Value) -> String {
 const CAPABILITY_FS_DIR: &str = "fs";
 const CAPABILITY_NATIVE_REQ_PREFIX: &str = "\u{1e}aegispy-cap-req:";
 const CAPABILITY_NATIVE_RES_PREFIX: &str = "\u{1e}aegispy-cap-res:";
+const WORKER_PROJECT_ROOTS_JSON_ENV: &str = "AEGISPY_WORKER_PROJECT_ROOTS_JSON";
+const WORKER_TEMP_ROOT_ENV: &str = "AEGISPY_WORKER_TEMP_ROOT";
+const GUEST_PROJECT_ROOTS_BASE: &str = "/workspace/projects";
+const GUEST_WRITABLE_BINDING_ROOT: &str = "/workspace/bindings/fs";
+const GUEST_WRITABLE_IMPORT_ROOT: &str = "/workspace/bindings/fs/sandbox/write";
+const GUEST_TEMP_ROOT: &str = "/tmp";
 
 #[derive(Clone, Default)]
 struct HostCapabilityHttpState {
@@ -1518,6 +1524,34 @@ fn create_temp_binding_dir(prefix: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&dir)
         .map_err(|error| format!("failed to create capability temp dir: {error}"))?;
     Ok(dir)
+}
+
+fn read_worker_project_roots() -> Result<Vec<PathBuf>, String> {
+    let Ok(raw) = std::env::var(WORKER_PROJECT_ROOTS_JSON_ENV) else {
+        return Ok(Vec::new());
+    };
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let parsed = serde_json::from_str::<Vec<String>>(&raw)
+        .map_err(|error| format!("invalid project root list: {error}"))?;
+    Ok(parsed.into_iter().map(PathBuf::from).collect())
+}
+
+fn guest_project_root(index: usize) -> String {
+    format!("{GUEST_PROJECT_ROOTS_BASE}/{index}")
+}
+
+fn resolve_guest_temp_host_root() -> Result<PathBuf, String> {
+    if let Ok(raw) = std::env::var(WORKER_TEMP_ROOT_ENV) {
+        let path = PathBuf::from(raw);
+        fs::create_dir_all(&path)
+            .map_err(|error| format!("failed to create guest temp root: {error}"))?;
+        return Ok(path);
+    }
+
+    create_temp_binding_dir("aegispy-worker-temp")
 }
 
 impl NativeHostAbiInputPipe {
@@ -2808,9 +2842,21 @@ impl WasiExecutor {
                 audit,
             );
         }
+        let writable_import_host_root = capability_fs_root.join("sandbox").join("write");
+        if let Err(error) = fs::create_dir_all(&writable_import_host_root) {
+            let _ = fs::remove_dir_all(&capability_host_root);
+            return make_error_result(
+                "AEG-ENGINE",
+                &format!("failed to create writable import dir: {error}"),
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
         let native_capability = Arc::new(Mutex::new(NativeHostCapabilityState::new(
             capability_config.clone(),
-            capability_fs_root,
+            capability_fs_root.clone(),
         )));
         let native_stdin_pipe = NativeHostAbiInputPipe::from_utf8(stdin_utf8);
         let stdout_pipe = MemoryOutputPipe::new(clamp_u64_to_usize(stdout_limit));
@@ -2826,6 +2872,43 @@ impl WasiExecutor {
         let program_name = std::env::var("AEGISPY_WORKER_WASI_PROGRAM_NAME")
             .unwrap_or_else(|_| "python.wasm".to_string());
         let py_path = detect_python_stdlib_guest_path(&self.python_home, guest_root);
+        let project_roots = match read_worker_project_roots() {
+            Ok(roots) => roots,
+            Err(message) => {
+                let native_capability_state = snapshot_native_capability_state(&native_capability);
+                audit.extend(native_capability_state.audit);
+                let _ = fs::remove_dir_all(&capability_host_root);
+                return make_error_result(
+                    "AEG-ENGINE",
+                    &message,
+                    "engine_error",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+        };
+        let guest_project_roots = project_roots
+            .iter()
+            .enumerate()
+            .map(|(index, _)| guest_project_root(index))
+            .collect::<Vec<_>>();
+        let guest_temp_root = match resolve_guest_temp_host_root() {
+            Ok(path) => path,
+            Err(message) => {
+                let native_capability_state = snapshot_native_capability_state(&native_capability);
+                audit.extend(native_capability_state.audit);
+                let _ = fs::remove_dir_all(&capability_host_root);
+                return make_error_result(
+                    "AEG-ENGINE",
+                    &message,
+                    "engine_error",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+        };
         let mut builder = WasiCtxBuilder::new();
         builder.stdin(native_stdin_pipe.clone());
         builder
@@ -2833,12 +2916,17 @@ impl WasiExecutor {
             .stderr(stderr_pipe.clone());
         builder.env("PYTHONHOME", guest_root);
         let mut python_path_entries = Vec::<String>::new();
+        python_path_entries.extend(guest_project_roots.iter().cloned());
+        python_path_entries.push(GUEST_WRITABLE_IMPORT_ROOT.to_string());
         if let Some(path) = py_path {
             python_path_entries.push(path);
         }
         if !python_path_entries.is_empty() {
             builder.env("PYTHONPATH", python_path_entries.join(":"));
         }
+        builder.env("TMPDIR", GUEST_TEMP_ROOT);
+        builder.env("TEMP", GUEST_TEMP_ROOT);
+        builder.env("TMP", GUEST_TEMP_ROOT);
         builder.env("PYTHONDONTWRITEBYTECODE", "1");
         let args = vec![program_name.as_str(), "-B", "-c", runtime_code.as_str()];
         builder.args(&args);
@@ -2864,6 +2952,80 @@ impl WasiExecutor {
                 audit,
             );
         }
+        if builder
+            .preopened_dir(
+                &capability_fs_root,
+                GUEST_WRITABLE_BINDING_ROOT,
+                DirPerms::READ,
+                FilePerms::READ,
+            )
+            .is_err()
+        {
+            let native_capability_state = snapshot_native_capability_state(&native_capability);
+            audit.extend(native_capability_state.audit);
+            let _ = fs::remove_dir_all(&capability_host_root);
+            return make_error_result(
+                "AEG-ENGINE",
+                "failed to preopen writable import root",
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
+        for (host_path, guest_path) in project_roots.iter().zip(guest_project_roots.iter()) {
+            if builder
+                .preopened_dir(host_path, guest_path, DirPerms::READ, FilePerms::READ)
+                .is_err()
+            {
+                let native_capability_state = snapshot_native_capability_state(&native_capability);
+                audit.extend(native_capability_state.audit);
+                let _ = fs::remove_dir_all(&capability_host_root);
+                return make_error_result(
+                    "AEG-ENGINE",
+                    "failed to preopen project root",
+                    "engine_error",
+                    started_ts_ms,
+                    started_ts_ms + 1,
+                    audit,
+                );
+            }
+        }
+        if builder
+            .preopened_dir(
+                &guest_temp_root,
+                GUEST_TEMP_ROOT,
+                DirPerms::READ | DirPerms::MUTATE,
+                FilePerms::READ | FilePerms::WRITE,
+            )
+            .is_err()
+        {
+            let native_capability_state = snapshot_native_capability_state(&native_capability);
+            audit.extend(native_capability_state.audit);
+            let _ = fs::remove_dir_all(&capability_host_root);
+            return make_error_result(
+                "AEG-ENGINE",
+                "failed to preopen guest temp root",
+                "engine_error",
+                started_ts_ms,
+                started_ts_ms + 1,
+                audit,
+            );
+        }
+        for guest_path in &guest_project_roots {
+            audit.push(json!({
+              "kind": "runtime_projection",
+              "detailJson": format!("project_root:{guest_path}")
+            }));
+        }
+        audit.push(json!({
+          "kind": "runtime_projection",
+          "detailJson": format!("writable_import_root:{GUEST_WRITABLE_IMPORT_ROOT}")
+        }));
+        audit.push(json!({
+          "kind": "runtime_temp_root",
+          "detailJson": format!("guest_temp_root:{GUEST_TEMP_ROOT}")
+        }));
         let wasi = builder.build();
         let runtime_memory_limit = min(
             profile.max_memory_bytes,

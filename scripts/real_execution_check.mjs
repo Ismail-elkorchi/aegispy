@@ -276,7 +276,7 @@ function main() {
       'if (raw === "simulation") return "simulation";',
     ),
     denoRuntimeUsesRustWorkerTransportDefault: denoRuntime.includes(
-      "const transport = new RustWorkerTransport();",
+      "const transport = new RustWorkerTransport(",
     ),
     bunTransportDefaultsToProcess: bunRuntime.includes(
       'AEGISPY_BUN_TRANSPORT ?? "process"',
@@ -285,7 +285,7 @@ function main() {
       'if (raw === "simulation") return "simulation";',
     ),
     bunRuntimeUsesRustWorkerTransportDefault: bunRuntime.includes(
-      "const transport = new RustWorkerTransport();",
+      "const transport = new RustWorkerTransport(",
     ),
     workerExecutorDefaultsToSimulation: workerMain.includes(
       'unwrap_or_else(|_| "simulation".to_string())',

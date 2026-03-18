@@ -11,9 +11,14 @@ Hosts:
 Properties:
 
 - real process/WASI/component runtime path
+- manifest-defined server bundle selection with shared bundle metadata across
+  `node`, `deno`, and `bun`
 - capability enforcement at the runtime boundary
 - `component-wit` capability channel
 - explicit denial semantics for filesystem, HTTP, and environment permissions
+- projected server project roots under stable internal guest paths when
+  configured through `createRuntime`
+- dedicated guest temp-root semantics exposed as `/tmp`
 - strict-profile evidence for no-new-privs, active seccomp filtering,
   namespace, cgroup, process-level CPU/address-space ceilings, and
   limit-envelope controls
