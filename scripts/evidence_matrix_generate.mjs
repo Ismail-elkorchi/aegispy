@@ -122,6 +122,31 @@ function normalizeBrowserRow(row, model) {
   };
 }
 
+function normalizeNativePlatformClaim(claim, model) {
+  const packages = Array.isArray(claim.packages)
+    ? [...claim.packages].map((value) => {
+        if (typeof value !== "string" || value.length === 0) {
+          throw new Error("native_platform_claim_package_invalid");
+        }
+        return value;
+      })
+    : null;
+  if (!packages || packages.length === 0) {
+    throw new Error("native_platform_claim_packages_missing");
+  }
+  return {
+    host: requireEnum(claim.host, ["node", "deno", "bun"], "native_claim_host"),
+    os: requireEnum(claim.os, ["linux", "macos", "windows"], "native_claim_os"),
+    arch: requireEnum(claim.arch, ["x64", "arm64"], "native_claim_arch"),
+    packages: packages.sort((left, right) => left.localeCompare(right)),
+    proofDepth: requireEnum(
+      claim.proofDepth,
+      model.nativeProofDepths,
+      "native_claim_proof_depth",
+    ),
+  };
+}
+
 function sortRows(rows, keys) {
   return [...rows].sort((left, right) =>
     keys
@@ -160,6 +185,12 @@ export function generateEvidenceMatrices() {
       "evidenceStatus",
     ],
   );
+  const nativePlatformClaims = sortRows(
+    (source.server.supportedNativePlatformClaims ?? []).map((claim) =>
+      normalizeNativePlatformClaim(claim, model),
+    ),
+    ["host", "os", "arch", "proofDepth"],
+  );
 
   const serverDoc = {
     ok: true,
@@ -171,8 +202,7 @@ export function generateEvidenceMatrices() {
       (row) => row.evidenceStatus === "supported",
     ),
     supportedPurePythonImports: source.server.supportedPurePythonImports,
-    supportedNativePlatformClaims:
-      source.server.supportedNativePlatformClaims ?? [],
+    supportedNativePlatformClaims: nativePlatformClaims,
   };
   const browserDoc = {
     ok: true,

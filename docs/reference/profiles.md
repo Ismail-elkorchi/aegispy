@@ -47,6 +47,8 @@ Contributor-facing compatibility model notes:
   - `project_overlay`
 - current proven `native_platform` package claim:
   - `rapidfuzz` on `node` / `deno` / `bun` for `linux` / `x64`
+- current native proof depth:
+  - `package`
 
 ## `browser-real-engine`
 

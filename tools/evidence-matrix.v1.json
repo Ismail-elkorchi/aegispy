@@ -224,19 +224,22 @@
         "host": "bun",
         "os": "linux",
         "arch": "x64",
-        "packages": ["rapidfuzz"]
+        "packages": ["rapidfuzz"],
+        "proofDepth": "package"
       },
       {
         "host": "deno",
         "os": "linux",
         "arch": "x64",
-        "packages": ["rapidfuzz"]
+        "packages": ["rapidfuzz"],
+        "proofDepth": "package"
       },
       {
         "host": "node",
         "os": "linux",
         "arch": "x64",
-        "packages": ["rapidfuzz"]
+        "packages": ["rapidfuzz"],
+        "proofDepth": "package"
       }
     ]
   },

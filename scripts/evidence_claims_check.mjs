@@ -96,7 +96,7 @@ function formatServerNativePackageClaims(claims) {
         .sort()
         .map((name) => `\`${name}\``)
         .join(", ");
-      return `- \`${claim.host}\` / \`${claim.os}\` / \`${claim.arch}\`: ${packageList}`;
+      return `- \`${claim.host}\` / \`${claim.os}\` / \`${claim.arch}\` / proof depth \`${claim.proofDepth}\`: ${packageList}`;
     })
     .join("\n");
 }

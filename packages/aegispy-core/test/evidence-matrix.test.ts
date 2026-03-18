@@ -40,18 +40,21 @@ describe("evidence matrices", () => {
         os: "linux",
         arch: "x64",
         packages: ["rapidfuzz"],
+        proofDepth: "package",
       },
       {
         host: "deno",
         os: "linux",
         arch: "x64",
         packages: ["rapidfuzz"],
+        proofDepth: "package",
       },
       {
         host: "node",
         os: "linux",
         arch: "x64",
         packages: ["rapidfuzz"],
+        proofDepth: "package",
       },
     ]);
     expect(Array.isArray(doc.browser.rows)).toBe(true);
@@ -111,6 +114,7 @@ describe("evidence matrices", () => {
     expect(compatibilityMatrix).toContain(
       "<!-- server-native-package-claims:start -->",
     );
+    expect(compatibilityMatrix).toContain("proof depth");
     expect(compatibilityMatrix).toContain(
       "<!-- browser-fixture-claims:start -->",
     );
@@ -119,6 +123,9 @@ describe("evidence matrices", () => {
     expect(docsCheck).toContain("browser-capability-matrix.json");
     expect(compatCheck).toContain("server-compatibility-matrix.json");
     expect(compatCheck).toContain("browser-capability-matrix.json");
+    expect(compatCheck).toContain(
+      "server_native_platform_claim_proof_depth_missing",
+    );
     expect(topLevelCheck).toContain("bash scripts/evidence_claims_check");
   });
 });

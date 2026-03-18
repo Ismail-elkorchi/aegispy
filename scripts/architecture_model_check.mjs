@@ -74,6 +74,12 @@ function main() {
     );
     expectExactList(
       failures,
+      doc.nativeProofDepths,
+      ["package", "module"],
+      "nativeProofDepths",
+    );
+    expectExactList(
+      failures,
       doc.browserCapabilityStates,
       ["available_granted", "available_denied", "unavailable", "hard_limit"],
       "browserCapabilityStates",
@@ -124,6 +130,7 @@ function main() {
     runtimeApi: read("docs/reference/runtime-api.md"),
     supportMatrix: read("docs/support-matrix.md"),
     profiles: read("docs/reference/profiles.md"),
+    compatibilityMatrix: read("docs/reference/compatibility-matrix.md"),
   };
 
   for (const [name, text] of Object.entries(docs)) {
@@ -179,6 +186,17 @@ function main() {
       error: "profiles_phrase_missing",
       phrase: "OS-specific strengthening",
     });
+  }
+  for (const [file, text] of Object.entries({
+    supportMatrix: docs.supportMatrix,
+    compatibilityMatrix: docs.compatibilityMatrix,
+  })) {
+    if (!text.includes("proof depth")) {
+      failures.push({
+        error: "native_proof_depth_phrase_missing",
+        file,
+      });
+    }
   }
 
   const payload = {
