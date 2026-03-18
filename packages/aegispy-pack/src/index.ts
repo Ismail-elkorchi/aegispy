@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export type DependencyKind = "pure_python" | "native_wasm";
+export type DependencyKind = "pure_python" | "native_platform" | "native_wasm";
 
 export interface DependencyInput {
   name: string;
@@ -42,6 +42,10 @@ function cleanUrl(base: string): string {
   return base.endsWith("/") ? base.slice(0, -1) : base;
 }
 
+function isNativeDependencyKind(kind: DependencyKind): boolean {
+  return kind === "native_platform" || kind === "native_wasm";
+}
+
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -58,10 +62,9 @@ export function resolveLockfile(input: ResolveLockfileInput): Lockfile {
   };
 
   const entries = input.dependencies.map((dependency) => {
-    const registry =
-      dependency.kind === "native_wasm"
-        ? registries.nativeIndex
-        : registries.pythonIndex;
+    const registry = isNativeDependencyKind(dependency.kind)
+      ? registries.nativeIndex
+      : registries.pythonIndex;
     const artifactUrl = entryUrl(registry, dependency);
     return {
       name: dependency.name,
@@ -111,7 +114,7 @@ export function enforcesNativeRegistry(
   const failures: string[] = [];
 
   for (const entry of lockfile.entries) {
-    if (entry.kind !== "native_wasm") continue;
+    if (!isNativeDependencyKind(entry.kind)) continue;
     if (!entry.artifactUrl.startsWith(cleaned)) {
       failures.push(`native_registry_violation:${entry.name}@${entry.version}`);
     }

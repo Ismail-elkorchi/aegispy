@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, inflateRawSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { makeAegisPyError } from "../../../aegispy-core/src/errors";
 import {
@@ -9,17 +9,15 @@ import {
   type Lockfile,
   type LockfileEntry,
 } from "../../../aegispy-pack/src/index";
+import {
+  normalizeBundleTarget,
+  type NormalizedBundleTarget,
+} from "./server-bundle-manifest";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../../../../");
-const packageLayerRoot = path.join(
-  repoRoot,
-  "artifacts",
-  "engine",
-  "package-layers",
-  "pure-python",
-);
+type SupportedServerPackageClass = "pure_python" | "native_platform";
 const materializationPromises = new Map<
   string,
   Promise<ServerPackageLayerSelection>
@@ -31,6 +29,7 @@ interface ServerPackageLayerEntry {
   name: string;
   version: string;
   artifactUrl: string;
+  artifactFilename: string;
   lockfileSha256: string;
   archiveSha256: string;
   extractedRoot: string;
@@ -40,10 +39,15 @@ interface ServerPackageLayerEntry {
 
 interface ServerPackageLayerManifest {
   version: 1;
-  packageClass: "pure_python";
+  packageClass: SupportedServerPackageClass;
   packageSetVersion: string;
   generatedAt: string;
   requestedPackages: string[];
+  target?: {
+    os: NormalizedBundleTarget["os"];
+    arch: NormalizedBundleTarget["arch"];
+    pythonAbi: string;
+  };
   entries: ServerPackageLayerEntry[];
 }
 
@@ -54,6 +58,25 @@ export interface ServerPackageLayerSelection {
 
 function sha256Hex(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function isNativePlatformEntry(entry: LockfileEntry): boolean {
+  return entry.kind === "native_platform" || entry.kind === "native_wasm";
+}
+
+function packageLayerRoot(packageClass: SupportedServerPackageClass): string {
+  return path.join(
+    repoRoot,
+    "artifacts",
+    "engine",
+    "package-layers",
+    packageClass === "pure_python" ? "pure-python" : "native-platform",
+  );
+}
+
+function artifactFilename(artifactUrl: string): string {
+  const parsed = new URL(artifactUrl);
+  return path.basename(parsed.pathname);
 }
 
 function normalizeRequestedPackages(packages?: string[]): string[] {
@@ -69,15 +92,18 @@ function normalizeRequestedPackages(packages?: string[]): string[] {
 }
 
 function packageSetVersion(
+  prefix: string,
   requestedPackages: string[],
-  lockfile: Lockfile,
+  entries: LockfileEntry[],
+  target?: Pick<NormalizedBundleTarget, "os" | "arch" | "pythonAbi">,
 ): string {
   const input = JSON.stringify({
     requestedPackages,
-    entries: [...lockfile.entries]
+    entries: [...entries]
       .map((entry) => ({
         name: entry.name,
         version: entry.version,
+        kind: entry.kind,
         artifactUrl: entry.artifactUrl,
         sha256: entry.sha256,
       }))
@@ -86,8 +112,9 @@ function packageSetVersion(
           `${right.name}@${right.version}`,
         ),
       ),
+    target: target ?? null,
   });
-  return `pure-python-${sha256Hex(input).slice(0, 16)}`;
+  return `${prefix}-${sha256Hex(input).slice(0, 16)}`;
 }
 
 function ensureDir(dirPath: string): void {
@@ -151,6 +178,86 @@ function extractTarGz(content: Uint8Array, destination: string): void {
     }
 
     offset = payloadStart + Math.ceil(size / 512) * 512;
+  }
+}
+
+function readUInt16LE(bytes: Uint8Array, offset: number): number {
+  return bytes[offset]! | (bytes[offset + 1]! << 8);
+}
+
+function readUInt32LE(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset]! |
+      (bytes[offset + 1]! << 8) |
+      (bytes[offset + 2]! << 16) |
+      (bytes[offset + 3]! << 24)) >>>
+    0
+  );
+}
+
+function findZipEndOfCentralDirectory(bytes: Uint8Array): number {
+  const minimumSize = 22;
+  const maxCommentLength = 0xffff;
+  const start = Math.max(0, bytes.length - minimumSize - maxCommentLength);
+  for (let offset = bytes.length - minimumSize; offset >= start; offset -= 1) {
+    if (readUInt32LE(bytes, offset) === 0x06054b50) {
+      return offset;
+    }
+  }
+  throw new Error("zip end of central directory not found");
+}
+
+function extractZip(content: Uint8Array, destination: string): void {
+  const eocdOffset = findZipEndOfCentralDirectory(content);
+  const totalEntries = readUInt16LE(content, eocdOffset + 10);
+  let offset = readUInt32LE(content, eocdOffset + 16);
+
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (readUInt32LE(content, offset) !== 0x02014b50) {
+      throw new Error("zip central directory entry invalid");
+    }
+
+    const compressionMethod = readUInt16LE(content, offset + 10);
+    const compressedSize = readUInt32LE(content, offset + 20);
+    const fileNameLength = readUInt16LE(content, offset + 28);
+    const extraLength = readUInt16LE(content, offset + 30);
+    const commentLength = readUInt16LE(content, offset + 32);
+    const localHeaderOffset = readUInt32LE(content, offset + 42);
+    const entryName = Buffer.from(
+      content.subarray(offset + 46, offset + 46 + fileNameLength),
+    ).toString("utf8");
+    const safePath = sanitizeArchivePath(entryName);
+    const targetPath = path.join(destination, safePath);
+
+    if (readUInt32LE(content, localHeaderOffset) !== 0x04034b50) {
+      throw new Error("zip local file header invalid");
+    }
+    const localFileNameLength = readUInt16LE(content, localHeaderOffset + 26);
+    const localExtraLength = readUInt16LE(content, localHeaderOffset + 28);
+    const dataStart =
+      localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+    const dataEnd = dataStart + compressedSize;
+    const compressedBytes = content.subarray(dataStart, dataEnd);
+
+    if (entryName.endsWith("/")) {
+      ensureDir(targetPath);
+    } else {
+      ensureDir(path.dirname(targetPath));
+      const extractedBytes =
+        compressionMethod === 0
+          ? compressedBytes
+          : compressionMethod === 8
+            ? inflateRawSync(compressedBytes)
+            : null;
+      if (extractedBytes === null) {
+        throw new Error(
+          `zip compression method unsupported: ${compressionMethod}`,
+        );
+      }
+      fs.writeFileSync(targetPath, extractedBytes);
+    }
+
+    offset += 46 + fileNameLength + extraLength + commentLength;
   }
 }
 
@@ -227,11 +334,17 @@ function manifestPath(cacheRoot: string): string {
   return path.join(cacheRoot, "manifest.json");
 }
 
-function createStageRoot(packageSet: string): string {
+function createStageRoot(
+  packageClass: SupportedServerPackageClass,
+  packageSet: string,
+): string {
   const token = `${process.pid}-${Date.now()}-${Math.random()
     .toString(16)
     .slice(2, 10)}`;
-  return path.join(packageLayerRoot, `.stage-${packageSet}-${token}`);
+  return path.join(
+    packageLayerRoot(packageClass),
+    `.stage-${packageSet}-${token}`,
+  );
 }
 
 function removeDirectory(root: string): Promise<void> {
@@ -274,6 +387,86 @@ function rebaseStagePath(
   return path.join(cacheRoot, path.relative(stageRoot, targetPath));
 }
 
+function currentTarget(): NormalizedBundleTarget {
+  return normalizeBundleTarget();
+}
+
+function parseWheelTags(entry: LockfileEntry): {
+  artifactFilename: string;
+  pythonTags: string[];
+  abiTags: string[];
+  platformTags: string[];
+} {
+  const filename = artifactFilename(entry.artifactUrl);
+  if (!filename.endsWith(".whl")) {
+    throw new Error(`wheel filename invalid for ${entry.name}`);
+  }
+  const baseName = filename.slice(0, -4);
+  const parts = baseName.split("-");
+  if (parts.length < 5) {
+    throw new Error(`wheel filename invalid for ${entry.name}`);
+  }
+  return {
+    artifactFilename: filename,
+    pythonTags: parts[parts.length - 3]!.split("."),
+    abiTags: parts[parts.length - 2]!.split("."),
+    platformTags: parts[parts.length - 1]!.split("."),
+  };
+}
+
+function matchesPythonAbi(
+  pythonTag: string,
+  abiTag: string,
+  pythonAbi: string,
+): boolean {
+  if (pythonAbi !== "cpython-3.14") return false;
+  return pythonTag === "cp314" && abiTag === "cp314";
+}
+
+function matchesPlatformTag(
+  platformTag: string,
+  target: Pick<NormalizedBundleTarget, "os" | "arch">,
+): boolean {
+  if (target.os === "linux" && target.arch === "x64") {
+    return platformTag.includes("linux") && platformTag.includes("x86_64");
+  }
+  if (target.os === "linux" && target.arch === "arm64") {
+    return platformTag.includes("linux") && platformTag.includes("aarch64");
+  }
+  if (target.os === "darwin" && target.arch === "x64") {
+    return platformTag.startsWith("macosx_") && platformTag.endsWith("_x86_64");
+  }
+  if (target.os === "darwin" && target.arch === "arm64") {
+    return platformTag.startsWith("macosx_") && platformTag.endsWith("_arm64");
+  }
+  if (target.os === "windows" && target.arch === "x64") {
+    return platformTag === "win_amd64";
+  }
+  if (target.os === "windows" && target.arch === "arm64") {
+    return platformTag === "win_arm64";
+  }
+  return false;
+}
+
+function wheelMatchesTarget(
+  entry: LockfileEntry,
+  target: NormalizedBundleTarget,
+): { artifactFilename: string; matches: boolean } {
+  const tags = parseWheelTags(entry);
+  const pythonCompatible = tags.pythonTags.some((pythonTag) =>
+    tags.abiTags.some((abiTag) =>
+      matchesPythonAbi(pythonTag, abiTag, target.pythonAbi),
+    ),
+  );
+  const platformCompatible = tags.platformTags.some((platformTag) =>
+    matchesPlatformTag(platformTag, target),
+  );
+  return {
+    artifactFilename: tags.artifactFilename,
+    matches: pythonCompatible && platformCompatible,
+  };
+}
+
 function readManifest(cacheRoot: string): ServerPackageLayerManifest | null {
   const manifestFile = manifestPath(cacheRoot);
   if (!fs.existsSync(manifestFile)) return null;
@@ -284,20 +477,31 @@ function readManifest(cacheRoot: string): ServerPackageLayerManifest | null {
 
 function verifyManifest(
   cacheRoot: string,
+  packageClass: SupportedServerPackageClass,
   packageSet: string,
   requestedPackages: string[],
   lockfile: Lockfile,
+  target?: Pick<NormalizedBundleTarget, "os" | "arch" | "pythonAbi">,
 ): ServerPackageLayerSelection | null {
   const manifest = readManifest(cacheRoot);
   if (!manifest) return null;
   if (manifest.version !== 1) return null;
-  if (manifest.packageClass !== "pure_python") return null;
+  if (manifest.packageClass !== packageClass) return null;
   if (manifest.packageSetVersion !== packageSet) return null;
   if (
     JSON.stringify(manifest.requestedPackages) !==
     JSON.stringify(requestedPackages)
   ) {
     return null;
+  }
+  if (packageClass === "native_platform") {
+    if (
+      manifest.target?.os !== target?.os ||
+      manifest.target?.arch !== target?.arch ||
+      manifest.target?.pythonAbi !== target?.pythonAbi
+    ) {
+      return null;
+    }
   }
 
   const expectedEntries = [...lockfile.entries]
@@ -306,14 +510,20 @@ function verifyManifest(
         `${right.name}@${right.version}`,
       ),
     )
-    .map((entry) => `${entry.name}@${entry.version}:${entry.sha256}`);
+    .map(
+      (entry) =>
+        `${entry.name}@${entry.version}:${entry.sha256}:${artifactFilename(entry.artifactUrl)}`,
+    );
   const actualEntries = [...manifest.entries]
     .sort((left, right) =>
       `${left.name}@${left.version}`.localeCompare(
         `${right.name}@${right.version}`,
       ),
     )
-    .map((entry) => `${entry.name}@${entry.version}:${entry.lockfileSha256}`);
+    .map(
+      (entry) =>
+        `${entry.name}@${entry.version}:${entry.lockfileSha256}:${entry.artifactFilename}`,
+    );
 
   if (JSON.stringify(expectedEntries) !== JSON.stringify(actualEntries)) {
     return null;
@@ -321,6 +531,23 @@ function verifyManifest(
 
   const packageRoots = manifest.entries.map((entry) => entry.importRoot);
   if (packageRoots.some((root) => !fs.existsSync(root))) {
+    return null;
+  }
+  if (
+    manifest.entries.some((entry) => {
+      const cachedArtifactPath = path.join(
+        cacheRoot,
+        "downloads",
+        entry.artifactFilename,
+      );
+      if (!fs.existsSync(cachedArtifactPath)) {
+        return true;
+      }
+      return (
+        sha256Hex(fs.readFileSync(cachedArtifactPath)) !== entry.archiveSha256
+      );
+    })
+  ) {
     return null;
   }
   if (
@@ -345,7 +572,7 @@ async function fetchArtifact(url: string): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-function assertPurePythonLockfile(
+function assertServerPackageLockfile(
   requestedPackages: string[],
   lockfile?: Lockfile,
 ): Lockfile {
@@ -377,28 +604,46 @@ function assertPurePythonLockfile(
     });
   }
 
-  const nonPureEntries = lockfile.entries.filter(
-    (entry) => entry.kind !== "pure_python",
+  const unsupportedEntries = lockfile.entries.filter(
+    (entry) => entry.kind !== "pure_python" && !isNativePlatformEntry(entry),
   );
-  if (nonPureEntries.length > 0) {
+  if (unsupportedEntries.length > 0) {
     throw makeAegisPyError("AEG-ENGINE", "server package kind unsupported", {
-      reason: `package_kind_unsupported:${nonPureEntries[0]!.name}`,
-      failures: nonPureEntries.map(
+      reason: `package_kind_unsupported:${unsupportedEntries[0]!.name}`,
+      failures: unsupportedEntries.map(
         (entry) => `package_kind_unsupported:${entry.name}:${entry.kind}`,
       ),
     });
   }
 
-  const unsupportedArtifacts = lockfile.entries.filter(
-    (entry) => !entry.artifactUrl.endsWith(".tar.gz"),
+  const unsupportedPureArtifacts = lockfile.entries.filter(
+    (entry) =>
+      entry.kind === "pure_python" && !entry.artifactUrl.endsWith(".tar.gz"),
   );
-  if (unsupportedArtifacts.length > 0) {
+  if (unsupportedPureArtifacts.length > 0) {
     throw makeAegisPyError(
       "AEG-ENGINE",
       "server package artifact unsupported",
       {
-        reason: `package_artifact_unsupported:${unsupportedArtifacts[0]!.name}`,
-        failures: unsupportedArtifacts.map(
+        reason: `package_artifact_unsupported:${unsupportedPureArtifacts[0]!.name}`,
+        failures: unsupportedPureArtifacts.map(
+          (entry) => `package_artifact_unsupported:${entry.name}`,
+        ),
+      },
+    );
+  }
+
+  const unsupportedNativeArtifacts = lockfile.entries.filter(
+    (entry) =>
+      isNativePlatformEntry(entry) && !entry.artifactUrl.endsWith(".whl"),
+  );
+  if (unsupportedNativeArtifacts.length > 0) {
+    throw makeAegisPyError(
+      "AEG-ENGINE",
+      "server package artifact unsupported",
+      {
+        reason: `package_artifact_unsupported:${unsupportedNativeArtifacts[0]!.name}`,
+        failures: unsupportedNativeArtifacts.map(
           (entry) => `package_artifact_unsupported:${entry.name}`,
         ),
       },
@@ -420,129 +665,236 @@ export async function resolveServerPackageLayer(
     };
   }
 
-  const lockfile = assertPurePythonLockfile(requestedPackages, packageLockfile);
-  const packageSet = packageSetVersion(requestedPackages, lockfile);
-  const cacheRoot = path.join(packageLayerRoot, packageSet);
-  ensureDir(packageLayerRoot);
-  const cached = verifyManifest(
-    cacheRoot,
-    packageSet,
+  const lockfile = assertServerPackageLockfile(
     requestedPackages,
-    lockfile,
+    packageLockfile,
   );
-  if (cached) {
-    return cached;
-  }
-  if (fs.existsSync(cacheRoot)) {
-    await removeDirectory(cacheRoot);
-  }
-  const inFlight = materializationPromises.get(packageSet);
-  if (inFlight) {
-    return inFlight;
-  }
+  const entriesByName = new Map(
+    lockfile.entries.map((entry) => [entry.name, entry]),
+  );
+  const pureRequestedPackages = requestedPackages.filter(
+    (name) => entriesByName.get(name)?.kind === "pure_python",
+  );
+  const nativeRequestedPackages = requestedPackages.filter((name) =>
+    isNativePlatformEntry(entriesByName.get(name) as LockfileEntry),
+  );
+  const pureEntries = lockfile.entries.filter(
+    (entry) => entry.kind === "pure_python",
+  );
+  const nativeEntries = lockfile.entries.filter((entry) =>
+    isNativePlatformEntry(entry),
+  );
+  const target = currentTarget();
 
-  const materialization = (async () => {
-    const freshCached = verifyManifest(
+  const selections: ServerPackageLayerSelection[] = [];
+
+  async function resolvePackageClassLayer(
+    packageClass: SupportedServerPackageClass,
+    layerRequestedPackages: string[],
+    layerEntries: LockfileEntry[],
+    layerTarget?: Pick<NormalizedBundleTarget, "os" | "arch" | "pythonAbi">,
+  ): Promise<ServerPackageLayerSelection | null> {
+    if (layerEntries.length === 0) return null;
+
+    if (packageClass === "native_platform") {
+      const unsupportedTargetEntry = layerEntries.find(
+        (entry) => !wheelMatchesTarget(entry, target).matches,
+      );
+      if (unsupportedTargetEntry) {
+        throw makeAegisPyError(
+          "AEG-ENGINE",
+          "server native package target unsupported",
+          {
+            reason: `package_target_unsupported:${unsupportedTargetEntry.name}`,
+            hostTarget: `${target.os}/${target.arch}/${target.pythonAbi}`,
+            artifactUrl: unsupportedTargetEntry.artifactUrl,
+          },
+        );
+      }
+    }
+
+    const scopedLockfile: Lockfile = {
+      ...lockfile,
+      entries: layerEntries,
+    };
+    const packageSet = packageSetVersion(
+      packageClass === "pure_python" ? "pure-python" : "native-platform",
+      layerRequestedPackages,
+      layerEntries,
+      layerTarget,
+    );
+    const cacheRoot = path.join(packageLayerRoot(packageClass), packageSet);
+    ensureDir(packageLayerRoot(packageClass));
+    const cached = verifyManifest(
       cacheRoot,
+      packageClass,
       packageSet,
-      requestedPackages,
-      lockfile,
+      layerRequestedPackages,
+      scopedLockfile,
+      layerTarget,
     );
-    if (freshCached) {
-      return freshCached;
+    if (cached) {
+      return cached;
+    }
+    if (fs.existsSync(cacheRoot)) {
+      await removeDirectory(cacheRoot);
+    }
+    const inFlight = materializationPromises.get(cacheRoot);
+    if (inFlight) {
+      return inFlight;
     }
 
-    const stageRoot = createStageRoot(packageSet);
-    const downloadsRoot = path.join(stageRoot, "downloads");
-    const extractionRoot = path.join(stageRoot, "sources");
-    ensureDir(downloadsRoot);
-    ensureDir(extractionRoot);
-
-    const manifest: ServerPackageLayerManifest = {
-      version: 1,
-      packageClass: "pure_python",
-      packageSetVersion: packageSet,
-      generatedAt: new Date().toISOString(),
-      requestedPackages,
-      entries: [],
-    };
-
-    for (const entry of lockfile.entries) {
-      const archiveBytes = await fetchArtifact(entry.artifactUrl);
-      const archiveSha256 = sha256Hex(archiveBytes);
-      const downloadPath = path.join(
-        downloadsRoot,
-        `${entry.name}-${entry.version}.tar.gz`,
+    const materialization = (async () => {
+      const freshCached = verifyManifest(
+        cacheRoot,
+        packageClass,
+        packageSet,
+        layerRequestedPackages,
+        scopedLockfile,
+        layerTarget,
       );
-      fs.writeFileSync(downloadPath, archiveBytes);
+      if (freshCached) {
+        return freshCached;
+      }
 
-      const entryExtractionRoot = path.join(
-        extractionRoot,
-        `${entry.name}-${entry.version}`,
-      );
-      fs.rmSync(entryExtractionRoot, { recursive: true, force: true });
-      ensureDir(entryExtractionRoot);
-      extractTarGz(archiveBytes, entryExtractionRoot);
+      const stageRoot = createStageRoot(packageClass, packageSet);
+      const downloadsRoot = path.join(stageRoot, "downloads");
+      const extractionRoot = path.join(stageRoot, "sources");
+      ensureDir(downloadsRoot);
+      ensureDir(extractionRoot);
 
-      const extractedRoot = resolveExtractedRoot(entryExtractionRoot);
-      const importRoot = resolveImportRoot(entryExtractionRoot, entry);
-      manifest.entries.push({
-        name: entry.name,
-        version: entry.version,
-        artifactUrl: entry.artifactUrl,
-        lockfileSha256: entry.sha256,
-        archiveSha256,
-        extractedRoot: rebaseStagePath(stageRoot, cacheRoot, extractedRoot),
-        importRoot: rebaseStagePath(stageRoot, cacheRoot, importRoot),
-        importRootSha256: directorySha256(importRoot),
-      });
-    }
+      const manifest: ServerPackageLayerManifest = {
+        version: 1,
+        packageClass,
+        packageSetVersion: packageSet,
+        generatedAt: new Date().toISOString(),
+        requestedPackages: layerRequestedPackages,
+        ...(layerTarget
+          ? {
+              target: {
+                os: layerTarget.os,
+                arch: layerTarget.arch,
+                pythonAbi: layerTarget.pythonAbi,
+              },
+            }
+          : {}),
+        entries: [],
+      };
 
-    fs.writeFileSync(
-      manifestPath(stageRoot),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      "utf8",
-    );
+      for (const entry of layerEntries) {
+        const archiveBytes = await fetchArtifact(entry.artifactUrl);
+        const archiveSha256 = sha256Hex(archiveBytes);
+        const fileName = artifactFilename(entry.artifactUrl);
+        const downloadPath = path.join(downloadsRoot, fileName);
+        fs.writeFileSync(downloadPath, archiveBytes);
 
-    const selection = {
-      packageRoots: manifest.entries.map((entry) => entry.importRoot),
-      packageSetVersion: manifest.packageSetVersion,
-    };
-
-    return promoteStageRoot(stageRoot, cacheRoot).then(
-      (status) => {
-        if (status === "promoted") {
-          return selection;
+        const entryExtractionRoot = path.join(
+          extractionRoot,
+          `${entry.name}-${entry.version}`,
+        );
+        fs.rmSync(entryExtractionRoot, { recursive: true, force: true });
+        ensureDir(entryExtractionRoot);
+        if (packageClass === "pure_python") {
+          extractTarGz(archiveBytes, entryExtractionRoot);
+        } else {
+          extractZip(archiveBytes, entryExtractionRoot);
         }
 
-        return removeDirectory(stageRoot).then(() => {
-          const promoted = verifyManifest(
-            cacheRoot,
-            packageSet,
-            requestedPackages,
-            lockfile,
-          );
-          if (promoted) {
-            return promoted;
-          }
-          throw new Error(
-            `package layer promotion did not yield a verified cache: ${packageSet}`,
-          );
+        const extractedRoot = resolveExtractedRoot(entryExtractionRoot);
+        const importRoot = resolveImportRoot(entryExtractionRoot, entry);
+        manifest.entries.push({
+          name: entry.name,
+          version: entry.version,
+          artifactUrl: entry.artifactUrl,
+          artifactFilename: fileName,
+          lockfileSha256: entry.sha256,
+          archiveSha256,
+          extractedRoot: rebaseStagePath(stageRoot, cacheRoot, extractedRoot),
+          importRoot: rebaseStagePath(stageRoot, cacheRoot, importRoot),
+          importRootSha256: directorySha256(importRoot),
         });
+      }
+
+      fs.writeFileSync(
+        manifestPath(stageRoot),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+        "utf8",
+      );
+
+      const selection = {
+        packageRoots: manifest.entries.map((entry) => entry.importRoot),
+        packageSetVersion: manifest.packageSetVersion,
+      };
+
+      return promoteStageRoot(stageRoot, cacheRoot).then(
+        (status) => {
+          if (status === "promoted") {
+            return selection;
+          }
+
+          return removeDirectory(stageRoot).then(() => {
+            const promoted = verifyManifest(
+              cacheRoot,
+              packageClass,
+              packageSet,
+              layerRequestedPackages,
+              scopedLockfile,
+              layerTarget,
+            );
+            if (promoted) {
+              return promoted;
+            }
+            throw new Error(
+              `package layer promotion did not yield a verified cache: ${packageSet}`,
+            );
+          });
+        },
+        (error: unknown) =>
+          removeDirectory(stageRoot).then(
+            () => Promise.reject(error),
+            () => Promise.reject(error),
+          ),
+      );
+    })().then(
+      (selection) => selection,
+      (error: unknown) => {
+        materializationPromises.delete(cacheRoot);
+        throw error;
       },
-      (error: unknown) =>
-        removeDirectory(stageRoot).then(
-          () => Promise.reject(error),
-          () => Promise.reject(error),
-        ),
     );
-  })().then(
-    (selection) => selection,
-    (error: unknown) => {
-      materializationPromises.delete(packageSet);
-      throw error;
-    },
+    materializationPromises.set(cacheRoot, materialization);
+    return materialization;
+  }
+
+  const pureSelection = await resolvePackageClassLayer(
+    "pure_python",
+    pureRequestedPackages,
+    pureEntries,
   );
-  materializationPromises.set(packageSet, materialization);
-  return materialization;
+  if (pureSelection) {
+    selections.push(pureSelection);
+  }
+  const nativeSelection = await resolvePackageClassLayer(
+    "native_platform",
+    nativeRequestedPackages,
+    nativeEntries,
+    target,
+  );
+  if (nativeSelection) {
+    selections.push(nativeSelection);
+  }
+
+  if (selections.length === 1) {
+    return selections[0]!;
+  }
+
+  return {
+    packageRoots: selections.flatMap((selection) => selection.packageRoots),
+    packageSetVersion: packageSetVersion(
+      "server-package-set",
+      requestedPackages,
+      lockfile.entries,
+      target,
+    ),
+  };
 }

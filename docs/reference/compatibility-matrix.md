@@ -96,5 +96,13 @@ Current server package-layer proof is narrower and remains target-scoped:
 - `deno`: `attrs`, `jinja2`, `jsonschema`, `packaging`
 - `bun`: `attrs`, `jinja2`, `jsonschema`, `packaging`
 <!-- server-package-claims:end -->
-- native package classes remain outside the supported server package-layer
-  surface until target-specific proof is published
+- current proven target-specific native package claims are:
+<!-- server-native-package-claims:start -->
+- `bun` / `linux` / `x64`: `rapidfuzz`
+- `deno` / `linux` / `x64`: `rapidfuzz`
+- `node` / `linux` / `x64`: `rapidfuzz`
+<!-- server-native-package-claims:end -->
+- those claims are package-level import and execution proof on the named target,
+  not a blanket statement about every optional native module inside a wheel
+- broader native package claims remain outside the supported server
+  package-layer surface until target-specific proof is published

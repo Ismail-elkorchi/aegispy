@@ -18,6 +18,7 @@ describe("evidence matrices", () => {
       server: {
         rows: Array<Record<string, unknown>>;
         supportedPurePythonImports: Record<string, string[]>;
+        supportedNativePlatformClaims: Array<Record<string, unknown>>;
       };
       browser: {
         rows: Array<Record<string, unknown>>;
@@ -32,6 +33,26 @@ describe("evidence matrices", () => {
       "node",
       "deno",
       "bun",
+    ]);
+    expect(doc.server.supportedNativePlatformClaims).toEqual([
+      {
+        host: "bun",
+        os: "linux",
+        arch: "x64",
+        packages: ["rapidfuzz"],
+      },
+      {
+        host: "deno",
+        os: "linux",
+        arch: "x64",
+        packages: ["rapidfuzz"],
+      },
+      {
+        host: "node",
+        os: "linux",
+        arch: "x64",
+        packages: ["rapidfuzz"],
+      },
     ]);
     expect(Array.isArray(doc.browser.rows)).toBe(true);
     expect(doc.browser.rows.length).toBeGreaterThan(0);
@@ -86,6 +107,9 @@ describe("evidence matrices", () => {
 
     expect(compatibilityMatrix).toContain(
       "<!-- server-package-claims:start -->",
+    );
+    expect(compatibilityMatrix).toContain(
+      "<!-- server-native-package-claims:start -->",
     );
     expect(compatibilityMatrix).toContain(
       "<!-- browser-fixture-claims:start -->",

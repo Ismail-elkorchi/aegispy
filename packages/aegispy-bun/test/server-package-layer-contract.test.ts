@@ -83,6 +83,23 @@ function makeServerLockfile(): Lockfile {
   };
 }
 
+function makeNativeServerLockfile(): Lockfile {
+  return {
+    version: 1,
+    generatedAt: "2026-03-18T00:00:00.000Z",
+    entries: [
+      lockEntry(
+        "rapidfuzz",
+        "3.14.3",
+        "https://files.pythonhosted.org/packages/c9/bc/ef2cee3e4d8b3fc22705ff519f0d487eecc756abdc7c25d53686689d6cf2/rapidfuzz-3.14.3-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      ),
+    ].map((entry) => ({
+      ...entry,
+      kind: "native_platform" as const,
+    })),
+  };
+}
+
 function makeRequest(host: "node" | "deno" | "bun", code: string): RunRequest {
   return {
     host,
@@ -169,4 +186,67 @@ describe("server package layer contract", () => {
       expect(result.stdoutUtf8).toContain("hello AEGISPY");
     }
   }, 900_000);
+
+  it.runIf(process.platform === "linux" && process.arch === "x64")(
+    "imports the same locked native package layer across node deno and bun",
+    async () => {
+      process.env.AEGISPY_NODE_TRANSPORT = "process";
+      process.env.AEGISPY_DENO_TRANSPORT = "process";
+      process.env.AEGISPY_BUN_TRANSPORT = "process";
+
+      const lockfile = makeNativeServerLockfile();
+      const code =
+        "import json\n" +
+        "import rapidfuzz\n" +
+        "from rapidfuzz import fuzz\n" +
+        "print(json.dumps({" +
+        '"version": getattr(rapidfuzz, "__version__", None), ' +
+        '"ratio": fuzz.ratio("kitten", "sitting")' +
+        "}, sort_keys=True))\n";
+
+      const cases: Array<{
+        host: "node" | "deno" | "bun";
+        createRuntime: () => Promise<AegisPyRuntime>;
+      }> = [
+        {
+          host: "node",
+          createRuntime: () =>
+            createNodeRuntime({
+              host: "node",
+              packages: ["rapidfuzz"],
+              packageLockfile: lockfile,
+            }),
+        },
+        {
+          host: "deno",
+          createRuntime: () =>
+            createDenoRuntime({
+              host: "deno",
+              packages: ["rapidfuzz"],
+              packageLockfile: lockfile,
+            }),
+        },
+        {
+          host: "bun",
+          createRuntime: () =>
+            createBunRuntime({
+              host: "bun",
+              packages: ["rapidfuzz"],
+              packageLockfile: lockfile,
+            }),
+        },
+      ];
+
+      for (const testCase of cases) {
+        const runtime = await testCase.createRuntime();
+        const result = await runtime.run(makeRequest(testCase.host, code));
+        await runtime.close();
+
+        expect(result.status, JSON.stringify(result, null, 2)).toBe("ok");
+        expect(result.stdoutUtf8).toContain('"version": "3.14.3"');
+        expect(result.stdoutUtf8).toContain('"ratio": 61.53846153846154');
+      }
+    },
+    900_000,
+  );
 });

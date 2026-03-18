@@ -268,6 +268,12 @@ function main() {
         });
       }
     }
+    const nativeClaims = doc.supportedNativePlatformClaims ?? [];
+    if (!Array.isArray(nativeClaims) || nativeClaims.length === 0) {
+      failures.push({
+        error: "server_native_platform_claims_missing",
+      });
+    }
   }
 
   if (!fs.existsSync(browserMatrixPath)) {

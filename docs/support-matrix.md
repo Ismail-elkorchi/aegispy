@@ -71,8 +71,12 @@ Current implementation truth for server package layers:
   - `jinja2`
   - `jsonschema`
   - `packaging`
-- native package classes remain outside the current supported server package
-  layer surface
+- current proven target-specific native package claim is:
+  - `rapidfuzz` on `node` / `deno` / `bun` for `linux` / `x64`
+- that claim is limited to package-level import and execution proof on the
+  named target
+- broader native package classes remain outside the current supported server
+  package-layer surface until target-specific proof is published
 
 ## Portable Common Isolation Floor
 
@@ -156,18 +160,21 @@ Current generated claim artifacts:
 | bun  | linux | x64  | server-wasi-component | base_interpreter | network           | portable-floor-draft-v1 | supported |
 | bun  | linux | x64  | server-wasi-component | base_interpreter | process           | portable-floor-draft-v1 | supported |
 | bun  | linux | x64  | server-wasi-component | base_interpreter | storage           | portable-floor-draft-v1 | supported |
+| bun  | linux | x64  | server-wasi-component | native_platform  | storage           | portable-floor-draft-v1 | supported |
 | bun  | linux | x64  | server-wasi-component | project_overlay  | storage           | portable-floor-draft-v1 | supported |
 | bun  | linux | x64  | server-wasi-component | pure_python      | storage           | portable-floor-draft-v1 | supported |
 | deno | linux | x64  | server-wasi-component | base_interpreter | environment       | portable-floor-draft-v1 | supported |
 | deno | linux | x64  | server-wasi-component | base_interpreter | network           | portable-floor-draft-v1 | supported |
 | deno | linux | x64  | server-wasi-component | base_interpreter | process           | portable-floor-draft-v1 | supported |
 | deno | linux | x64  | server-wasi-component | base_interpreter | storage           | portable-floor-draft-v1 | supported |
+| deno | linux | x64  | server-wasi-component | native_platform  | storage           | portable-floor-draft-v1 | supported |
 | deno | linux | x64  | server-wasi-component | project_overlay  | storage           | portable-floor-draft-v1 | supported |
 | deno | linux | x64  | server-wasi-component | pure_python      | storage           | portable-floor-draft-v1 | supported |
 | node | linux | x64  | server-wasi-component | base_interpreter | environment       | portable-floor-draft-v1 | supported |
 | node | linux | x64  | server-wasi-component | base_interpreter | network           | portable-floor-draft-v1 | supported |
 | node | linux | x64  | server-wasi-component | base_interpreter | process           | portable-floor-draft-v1 | supported |
 | node | linux | x64  | server-wasi-component | base_interpreter | storage           | portable-floor-draft-v1 | supported |
+| node | linux | x64  | server-wasi-component | native_platform  | storage           | portable-floor-draft-v1 | supported |
 | node | linux | x64  | server-wasi-component | project_overlay  | storage           | portable-floor-draft-v1 | supported |
 | node | linux | x64  | server-wasi-component | pure_python      | storage           | portable-floor-draft-v1 | supported |
 

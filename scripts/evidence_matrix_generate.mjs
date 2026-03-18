@@ -171,6 +171,8 @@ export function generateEvidenceMatrices() {
       (row) => row.evidenceStatus === "supported",
     ),
     supportedPurePythonImports: source.server.supportedPurePythonImports,
+    supportedNativePlatformClaims:
+      source.server.supportedNativePlatformClaims ?? [],
   };
   const browserDoc = {
     ok: true,

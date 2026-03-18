@@ -182,13 +182,63 @@
         "capabilityFamily": "storage",
         "isolationFloorVersion": "portable-floor-draft-v1",
         "evidenceStatus": "supported"
+      },
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "native_platform",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "native_platform",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "runtimeFamily": "server-wasi-component",
+        "packageClass": "native_platform",
+        "capabilityFamily": "storage",
+        "isolationFloorVersion": "portable-floor-draft-v1",
+        "evidenceStatus": "supported"
       }
     ],
     "supportedPurePythonImports": {
       "node": ["attrs", "jinja2", "jsonschema", "packaging"],
       "deno": ["attrs", "jinja2", "jsonschema", "packaging"],
       "bun": ["attrs", "jinja2", "jsonschema", "packaging"]
-    }
+    },
+    "supportedNativePlatformClaims": [
+      {
+        "host": "bun",
+        "os": "linux",
+        "arch": "x64",
+        "packages": ["rapidfuzz"]
+      },
+      {
+        "host": "deno",
+        "os": "linux",
+        "arch": "x64",
+        "packages": ["rapidfuzz"]
+      },
+      {
+        "host": "node",
+        "os": "linux",
+        "arch": "x64",
+        "packages": ["rapidfuzz"]
+      }
+    ]
   },
   "browser": {
     "rows": [
