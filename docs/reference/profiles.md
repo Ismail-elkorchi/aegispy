@@ -81,6 +81,10 @@ Contributor-facing compatibility model notes:
   - `available_denied`
   - `unavailable`
   - `hard_limit`
+- browser-native requests use the additive `requestedCapabilities` request
+  shape when a browser capability family is exposed
+- browser requests that mix `requestedCapabilities` with the matching legacy
+  `permissions` family are invalid
 
 Current browser capability-family states:
 

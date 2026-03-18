@@ -86,6 +86,27 @@ export interface Permissions {
   env: EnvPermission | null;
 }
 
+export interface RequestedNetworkCapability {
+  allowOrigins: string[];
+  denyOrigins?: string[];
+  maxRequests: number;
+  maxBytes: number;
+}
+
+export interface RequestedStorageCapability {
+  maxBytes: number;
+}
+
+export interface RequestedFileAccessCapability {
+  mode: "read" | "readwrite";
+}
+
+export interface RequestedCapabilities {
+  network?: RequestedNetworkCapability;
+  storage?: RequestedStorageCapability;
+  fileAccess?: RequestedFileAccessCapability;
+}
+
 export interface Limits {
   time: TimeLimits;
   bytes: ByteLimits;
@@ -97,6 +118,7 @@ export interface RunRequest {
   argv: string[];
   stdinUtf8: string;
   permissions: Permissions;
+  requestedCapabilities?: RequestedCapabilities;
   limits: Limits;
   determinism: DeterminismConfig;
 }

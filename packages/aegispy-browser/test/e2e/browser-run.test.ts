@@ -193,4 +193,33 @@ describe("browser runtime", () => {
       profile: "browser-real-engine",
     });
   });
+
+  it("rejects unavailable browser-native capability requests on the new request surface", async () => {
+    const runtime: AegisPyRuntime = await createRuntime({ host: "browser" });
+
+    const result = await runtime.run({
+      ...makeBrowserRequest('print("browser-network")'),
+      requestedCapabilities: {
+        network: {
+          allowOrigins: ["https://example.com"],
+          maxRequests: 1,
+          maxBytes: 1024,
+        },
+      },
+    });
+
+    await runtime.close();
+
+    expect(result.status).toBe("error");
+    if (result.status !== "error") {
+      throw new Error("expected browser-native capability denial");
+    }
+    expect(result.error.code).toBe("AEG-UNSUPPORTED-HOST");
+    expect(result.meta.termination).toBe("policy_denied");
+    expect(JSON.parse(result.meta.audit[2]?.detailJson ?? "{}")).toMatchObject({
+      reason: "host_profile_capability_unsupported",
+      unsupportedCapabilities: ["network"],
+      profile: "browser-real-engine",
+    });
+  });
 });

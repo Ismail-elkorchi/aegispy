@@ -6,6 +6,7 @@ import {
 } from "../contracts/validation";
 import type {
   AuditEvent,
+  BrowserCapabilityFamilies,
   HostKind,
   Permissions,
   RunRequest,
@@ -111,6 +112,40 @@ function unsupportedCapabilities(
   if (!capabilities.fs && permissions.fs !== null) out.push("fs");
   if (!capabilities.http && permissions.http !== null) out.push("http");
   if (!capabilities.env && permissions.env !== null) out.push("env");
+  return out;
+}
+
+function unsupportedRequestedCapabilities(
+  capabilities: RuntimeCapabilities,
+  req: RunRequest,
+): string[] {
+  if (req.host !== "browser" || req.requestedCapabilities === undefined) {
+    return [];
+  }
+
+  const families =
+    capabilities.capabilityFamilies ?? ({} as BrowserCapabilityFamilies);
+  const out: string[] = [];
+
+  if (
+    req.requestedCapabilities.network !== undefined &&
+    families.network !== "available_granted"
+  ) {
+    out.push("network");
+  }
+  if (
+    req.requestedCapabilities.storage !== undefined &&
+    families.storage !== "available_granted"
+  ) {
+    out.push("storage");
+  }
+  if (
+    req.requestedCapabilities.fileAccess !== undefined &&
+    families.fileAccess !== "available_granted"
+  ) {
+    out.push("fileAccess");
+  }
+
   return out;
 }
 
@@ -222,10 +257,15 @@ export function preflightRuntimeRequest(
     };
   }
 
-  const unsupported = unsupportedCapabilities(
+  const unsupportedLegacy = unsupportedCapabilities(
     context.capabilities,
     validated.value.permissions,
   );
+  const unsupportedRequested = unsupportedRequestedCapabilities(
+    context.capabilities,
+    validated.value,
+  );
+  const unsupported = [...unsupportedLegacy, ...unsupportedRequested];
   if (unsupported.length > 0) {
     return {
       ok: false,
