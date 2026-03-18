@@ -103,4 +103,48 @@ describe("runtime preflight", () => {
       profile: "browser-real-engine",
     });
   });
+
+  it("rejects unavailable browser requested capability families with stable audit ordering", () => {
+    const outcome = preflightRuntimeRequest(
+      {
+        runtimeHost: "browser",
+        capabilities: makeBrowserCapabilities(),
+        closed: false,
+      },
+      {
+        ...makeRequest(),
+        requestedCapabilities: {
+          network: {
+            allowOrigins: ["https://example.com"],
+            maxRequests: 1,
+            maxBytes: 256,
+          },
+        },
+      },
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) {
+      throw new Error("expected unavailable browser capability denial");
+    }
+
+    expect(outcome.result.status).toBe("error");
+    if (outcome.result.status !== "error") {
+      throw new Error("expected error result");
+    }
+
+    expect(outcome.result.error.code).toBe("AEG-UNSUPPORTED-HOST");
+    expect(outcome.result.meta.termination).toBe("policy_denied");
+    expect(outcome.result.meta.audit).toHaveLength(3);
+    expect(outcome.result.meta.audit[0]?.kind).toBe("runtime_channel");
+    expect(outcome.result.meta.audit[1]?.kind).toBe("runtime_binding");
+    expect(outcome.result.meta.audit[2]?.kind).toBe("policy_denied");
+    expect(
+      JSON.parse(outcome.result.meta.audit[2]?.detailJson ?? "{}"),
+    ).toMatchObject({
+      reason: "host_profile_capability_unsupported",
+      unsupportedCapabilities: ["network"],
+      profile: "browser-real-engine",
+    });
+  });
 });

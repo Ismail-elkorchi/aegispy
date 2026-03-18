@@ -153,6 +153,99 @@ function validatePermissions(
   return true;
 }
 
+function validateRequestedCapabilities(
+  path: string,
+  host: HostKind | undefined,
+  value: unknown,
+  permissions: unknown,
+  issues: ValidationIssue[],
+): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    issues.push({ path, message: "object_expected" });
+    return false;
+  }
+
+  const permissionsRecord = isRecord(permissions) ? permissions : null;
+
+  const network = value.network;
+  if (network !== undefined) {
+    if (!isRecord(network)) {
+      issues.push({
+        path: `${path}.network`,
+        message: "object_expected",
+      });
+    } else {
+      checkStringArray(
+        `${path}.network.allowOrigins`,
+        network.allowOrigins,
+        issues,
+      );
+      if (
+        network.denyOrigins !== undefined &&
+        !checkStringArray(
+          `${path}.network.denyOrigins`,
+          network.denyOrigins,
+          issues,
+        )
+      ) {
+        // keep issue emission inside checkStringArray
+      }
+      checkNumber(`${path}.network.maxRequests`, network.maxRequests, issues);
+      checkNumber(`${path}.network.maxBytes`, network.maxBytes, issues);
+    }
+    if (host === "browser" && permissionsRecord?.http !== null) {
+      issues.push({
+        path: `${path}.network`,
+        message: "conflicts_with_permissions.http",
+      });
+    }
+  }
+
+  const storage = value.storage;
+  if (storage !== undefined) {
+    if (!isRecord(storage)) {
+      issues.push({
+        path: `${path}.storage`,
+        message: "object_expected",
+      });
+    } else {
+      checkNumber(`${path}.storage.maxBytes`, storage.maxBytes, issues);
+    }
+    if (host === "browser" && permissionsRecord?.fs !== null) {
+      issues.push({
+        path: `${path}.storage`,
+        message: "conflicts_with_permissions.fs",
+      });
+    }
+  }
+
+  const fileAccess = value.fileAccess;
+  if (fileAccess !== undefined) {
+    if (!isRecord(fileAccess)) {
+      issues.push({
+        path: `${path}.fileAccess`,
+        message: "object_expected",
+      });
+    } else if (fileAccess.mode !== "read" && fileAccess.mode !== "readwrite") {
+      issues.push({
+        path: `${path}.fileAccess.mode`,
+        message: "file_access_mode_expected",
+      });
+    }
+    if (host === "browser" && permissionsRecord?.fs !== null) {
+      issues.push({
+        path: `${path}.fileAccess`,
+        message: "conflicts_with_permissions.fs",
+      });
+    }
+  }
+
+  return true;
+}
+
 function validateLimits(
   path: string,
   value: unknown,
@@ -278,6 +371,13 @@ export function validateRunRequest(
   checkString("stdinUtf8", input.stdinUtf8, issues);
 
   validatePermissions("permissions", input.permissions, issues);
+  validateRequestedCapabilities(
+    "requestedCapabilities",
+    typeof input.host === "string" ? (input.host as HostKind) : undefined,
+    input.requestedCapabilities,
+    input.permissions,
+    issues,
+  );
   validateLimits("limits", input.limits, issues);
   validateDeterminism("determinism", input.determinism, issues);
 

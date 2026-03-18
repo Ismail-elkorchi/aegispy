@@ -99,8 +99,33 @@ fails closed with `AEG-ENGINE` before guest code runs.
 - `argv`
 - `stdinUtf8`
 - `permissions`
+- `requestedCapabilities?`
 - `limits`
 - `determinism`
+
+Current additive browser-native request surface:
+
+- `requestedCapabilities.network?`
+  - `allowOrigins: string[]`
+  - `denyOrigins?: string[]`
+  - `maxRequests: number`
+  - `maxBytes: number`
+- `requestedCapabilities.storage?`
+  - `maxBytes: number`
+- `requestedCapabilities.fileAccess?`
+  - `mode: "read" | "readwrite"`
+
+Current request-shape rules:
+
+- server runtimes continue to use `permissions` for current capability control
+- browser-native capability requests use `requestedCapabilities`
+- browser requests that mix the new capability family request with the matching
+  legacy server-style permission are rejected as invalid
+  - `requestedCapabilities.network` conflicts with `permissions.http`
+  - `requestedCapabilities.storage` conflicts with `permissions.fs`
+  - `requestedCapabilities.fileAccess` conflicts with `permissions.fs`
+- until browser-native activation lands, requesting these browser capability
+  families still fails closed with `AEG-UNSUPPORTED-HOST`
 
 ## Result Shape
 
