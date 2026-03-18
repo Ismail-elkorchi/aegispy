@@ -3243,15 +3243,29 @@ fn verify_manifest(engine_dir: &Path, manifest_path: &Path) -> Result<(), String
     let manifest_text = fs::read_to_string(manifest_path)
         .map_err(|error| format!("manifest read error: {error}"))?;
 
-    let manifest: BTreeMap<String, BTreeMap<String, Value>> = serde_json::from_str(&manifest_text)
+    let manifest: Value = serde_json::from_str(&manifest_text)
         .map_err(|error| format!("manifest parse error: {error}"))?;
+    let artifact_entries = manifest
+        .get("artifacts")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "manifest missing artifacts".to_string())?;
 
-    for (name, entry) in manifest {
+    for (name, entry) in artifact_entries {
         let expected = entry
             .get("sha256")
             .and_then(Value::as_str)
             .ok_or_else(|| format!("manifest missing sha256 for {name}"))?;
-        let artifact_path = engine_dir.join(&name);
+        let artifact_rel_path = entry
+            .get("path")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("artifacts/engine/{name}"));
+        let artifact_path =
+            if let Some(rel_path) = artifact_rel_path.strip_prefix("artifacts/engine/") {
+                engine_dir.join(rel_path)
+            } else {
+                engine_dir.join(name)
+            };
         let bytes = fs::read(&artifact_path)
             .map_err(|error| format!("artifact read error for {name}: {error}"))?;
         let actual = sha256_bytes(&bytes);
@@ -3562,10 +3576,15 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_vec_pretty(&json!({
-              artifact_name: {
-                "sha256": digest,
-                "bytes": 12
-              }
+              "schemaVersion": 1,
+              "artifacts": {
+                artifact_name: {
+                  "path": format!("artifacts/engine/{artifact_name}"),
+                  "sha256": digest,
+                  "bytes": 12
+                }
+              },
+              "bundles": {}
             }))
             .expect("serialize manifest"),
         )

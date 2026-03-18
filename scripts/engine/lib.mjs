@@ -20,6 +20,45 @@ function loadJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function fileRef(filePath) {
+  return path.relative(repoRoot, filePath).replaceAll("\\", "/");
+}
+
+function normalizeEngineManifest(value) {
+  if (
+    value &&
+    value.schemaVersion === 1 &&
+    typeof value.artifacts === "object" &&
+    value.artifacts !== null &&
+    typeof value.bundles === "object" &&
+    value.bundles !== null
+  ) {
+    return value;
+  }
+
+  const artifacts = {};
+  for (const [name, entry] of Object.entries(value ?? {})) {
+    if (
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof entry.sha256 === "string" &&
+      typeof entry.bytes === "number"
+    ) {
+      artifacts[name] = {
+        path: `artifacts/engine/${name}`,
+        sha256: entry.sha256,
+        bytes: entry.bytes,
+      };
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    artifacts,
+    bundles: {},
+  };
+}
+
 export function writeEngineArtifact(name, payload, sourceTag) {
   const engineDir = path.join(repoRoot, "artifacts", "engine");
   const artifactPath = path.join(engineDir, name);
@@ -29,9 +68,10 @@ export function writeEngineArtifact(name, payload, sourceTag) {
   ensureDir(artifactPath);
   fs.writeFileSync(artifactPath, payload);
 
-  const manifest = loadJson(manifestPath);
+  const manifest = normalizeEngineManifest(loadJson(manifestPath));
   const hash = sha256(payload);
-  manifest[name] = {
+  manifest.artifacts[name] = {
+    path: fileRef(artifactPath),
     sha256: hash,
     bytes: payload.byteLength,
   };
@@ -61,14 +101,27 @@ export function writeEngineArtifact(name, payload, sourceTag) {
   };
 }
 
+export function writeEngineBundle(bundleId, bundleRecord) {
+  const engineDir = path.join(repoRoot, "artifacts", "engine");
+  const manifestPath = path.join(engineDir, "manifest.json");
+  const manifest = normalizeEngineManifest(loadJson(manifestPath));
+  manifest.bundles[bundleId] = bundleRecord;
+  ensureDir(manifestPath);
+  fs.writeFileSync(
+    manifestPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 export function verifyEngineArtifacts() {
   const engineDir = path.join(repoRoot, "artifacts", "engine");
   const manifestPath = path.join(engineDir, "manifest.json");
-  const manifest = loadJson(manifestPath);
+  const manifest = normalizeEngineManifest(loadJson(manifestPath));
   const failures = [];
 
-  for (const [name, entry] of Object.entries(manifest)) {
-    const artifactPath = path.join(engineDir, name);
+  for (const [name, entry] of Object.entries(manifest.artifacts)) {
+    const artifactPath = path.join(repoRoot, entry.path);
     if (!fs.existsSync(artifactPath)) {
       failures.push({ error: "missing_artifact", name });
       continue;

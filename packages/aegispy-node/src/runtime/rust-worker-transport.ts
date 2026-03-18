@@ -23,6 +23,10 @@ import {
   type WorkerExecutionBackendInfo,
   type WorkerExecutionMode,
 } from "./worker-execution-mode";
+import {
+  resolveCurrentServerBundle,
+  type ServerBundleRecord,
+} from "./server-bundle-manifest";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,18 +36,6 @@ const defaultWorkerBinary = path.join(
   "target",
   "debug",
   "aegispy_worker",
-);
-const defaultComponentManifest = path.join(
-  repoRoot,
-  "artifacts",
-  "component",
-  "build.json",
-);
-const defaultComponentBinary = path.join(
-  repoRoot,
-  "artifacts",
-  "component",
-  "aegispy.component.wasm",
 );
 const workerBuildInputs = [
   path.join(repoRoot, "Cargo.lock"),
@@ -65,6 +57,8 @@ export interface RustWorkerTransportOptions {
 export class RustWorkerTransport implements WorkerTransport {
   private readonly options: RustWorkerTransportOptions;
 
+  public readonly bundle: ServerBundleRecord;
+
   public readonly isolationProfile: IsolationProfile;
 
   public readonly executionMode: WorkerExecutionMode;
@@ -84,12 +78,16 @@ export class RustWorkerTransport implements WorkerTransport {
     },
   ) {
     this.options = options;
+    this.bundle = resolveCurrentServerBundle();
     this.isolationProfile =
       options.isolationProfile ?? resolveIsolationProfile();
     const launchSpec = resolveWorkerLaunchSpec({
       command: this.options.command,
       args: this.options.args,
-      componentBinaryPath: defaultComponentBinary,
+      componentBinaryPath: path.join(
+        repoRoot,
+        this.bundle.component.binaryPath,
+      ),
       repoRoot,
       workerBinaryPath: this.options.command,
     });
@@ -131,10 +129,15 @@ export class RustWorkerTransport implements WorkerTransport {
   }
 
   private ensureComponentArtifact(env: NodeJS.ProcessEnv): void {
-    if (
-      existsSync(defaultComponentManifest) &&
-      existsSync(defaultComponentBinary)
-    )
+    const componentManifestPath = path.join(
+      repoRoot,
+      this.bundle.component.buildManifestPath,
+    );
+    const componentBinaryPath = path.join(
+      repoRoot,
+      this.bundle.component.binaryPath,
+    );
+    if (existsSync(componentManifestPath) && existsSync(componentBinaryPath))
       return;
 
     const build = spawnSync("node", ["scripts/component/build.mjs"], {
@@ -192,10 +195,23 @@ export class RustWorkerTransport implements WorkerTransport {
     const launchSpec = resolveWorkerLaunchSpec({
       command: this.options.command,
       args: this.options.args,
-      componentBinaryPath: defaultComponentBinary,
+      componentBinaryPath: path.join(
+        repoRoot,
+        this.bundle.component.binaryPath,
+      ),
       repoRoot,
       workerBinaryPath: this.options.command,
-      env,
+      env: {
+        ...env,
+        AEGISPY_WORKER_WASI_COMPONENT: path.join(
+          repoRoot,
+          this.bundle.component.binaryPath,
+        ),
+        AEGISPY_WORKER_WASI_COMPILED_COMPONENT: path.join(
+          repoRoot,
+          this.bundle.component.compiledBinaryPath,
+        ),
+      },
     });
     if (!launchSpec.backend.available) {
       throw new Error(

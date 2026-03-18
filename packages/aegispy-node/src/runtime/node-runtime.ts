@@ -15,6 +15,11 @@ import type {
   WorkerExecutionBackendInfo,
   WorkerExecutionMode,
 } from "./worker-execution-mode";
+import {
+  resolveCurrentServerBundle,
+  type ServerBundleRecord,
+} from "./server-bundle-manifest";
+import { createServerRuntimeCapabilities } from "./server-runtime-capabilities";
 
 function engineErrorResult(message: string): RunResult {
   const now = Date.now();
@@ -45,6 +50,7 @@ export type NodeTransportMode = "process" | "inprocess";
 interface TransportSelection {
   transport: WorkerTransport;
   mode: NodeTransportMode;
+  bundle: ServerBundleRecord;
   isolationProfile: IsolationProfile | null;
   executionMode: WorkerExecutionMode | null;
   executionBackend: WorkerExecutionBackendInfo | null;
@@ -68,6 +74,7 @@ function createTransport(): TransportSelection {
     return {
       transport,
       mode,
+      bundle: transport.bundle,
       isolationProfile: transport.isolationProfile,
       executionMode: transport.executionMode,
       executionBackend: transport.executionBackend,
@@ -76,6 +83,7 @@ function createTransport(): TransportSelection {
   return {
     transport: new InProcessTransport(),
     mode,
+    bundle: resolveCurrentServerBundle(),
     isolationProfile: null,
     executionMode: null,
     executionBackend: null,
@@ -86,6 +94,8 @@ export class NodeRuntime implements AegisPyRuntime {
   public readonly host = "node" as const;
 
   private readonly transport: WorkerTransport;
+
+  private readonly bundle: ServerBundleRecord;
 
   public readonly transportKind: NodeTransportMode;
 
@@ -100,24 +110,18 @@ export class NodeRuntime implements AegisPyRuntime {
   public constructor(selection: TransportSelection = createTransport()) {
     this.transport = selection.transport;
     this.transportKind = selection.mode;
+    this.bundle = selection.bundle;
     this.isolationProfile = selection.isolationProfile;
     this.executionMode = selection.executionMode;
     this.executionBackend = selection.executionBackend;
   }
 
   public capabilities(): RuntimeCapabilities {
-    const hardened = this.transportKind === "process";
-    return {
-      host: this.host,
-      profile: "server-hardened",
-      transport: this.transportKind,
-      capabilityChannel: hardened ? "component-wit" : "none",
-      fs: true,
-      http: true,
-      env: true,
-      deterministic: true,
-      hardened,
-    };
+    return createServerRuntimeCapabilities(
+      this.host,
+      this.transportKind,
+      this.bundle,
+    );
   }
 
   public async run(req: RunRequest): Promise<RunResult> {

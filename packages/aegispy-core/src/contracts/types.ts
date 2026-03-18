@@ -137,6 +137,10 @@ export interface RuntimeCapabilities {
   profile: ConformanceProfile;
   transport: "process" | "simulation" | "inprocess" | "worker";
   capabilityChannel: "component-wit" | "worker-timeout" | "none";
+  runtimeFamily?: string;
+  bundleId?: string;
+  pythonAbi?: string;
+  packageSetVersion?: string;
   fs: boolean;
   http: boolean;
   env: boolean;
