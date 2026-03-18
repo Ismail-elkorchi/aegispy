@@ -42,6 +42,7 @@
     "native_platform",
     "project_overlay"
   ],
+  "nativeProofDepths": ["package", "module"],
   "browserCapabilityStates": [
     "available_granted",
     "available_denied",

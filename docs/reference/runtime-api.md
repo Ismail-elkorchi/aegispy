@@ -32,6 +32,9 @@ When process transport is active:
 - the current server package-layer path is limited to locked `pure_python`
   packages projected into read-only guest import roots plus target-specific
   `native_platform` packages on supported targets
+- generated native support claims render explicit proof depth:
+  - `package`
+  - `module`
 - the runtime audit includes:
   - `runtime_projection`
   - `runtime_temp_root`

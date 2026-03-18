@@ -73,8 +73,10 @@ Current implementation truth for server package layers:
   - `packaging`
 - current proven target-specific native package claim is:
   - `rapidfuzz` on `node` / `deno` / `bun` for `linux` / `x64`
-- that claim is limited to package-level import and execution proof on the
-  named target
+- current native proof depth is `package`
+- proof depth means the current claim is limited to package-level import and
+  execution proof on the named target unless a generated claim row explicitly
+  upgrades it to `module`
 - broader native package classes remain outside the current supported server
   package-layer surface until target-specific proof is published
 

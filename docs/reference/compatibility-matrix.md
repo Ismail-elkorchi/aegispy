@@ -13,6 +13,9 @@ The compatibility surface is generated from automated host runs and written to:
 Those artifacts are the canonical source for workload-family coverage, host
 profiles, and stable reason codes.
 
+Server support claims inherit the current portable common isolation floor and
+must not be read as stronger than the exact generated target rows.
+
 Compatibility claims are host-specific. Any workload marked as `supported` for
 `node`, `deno`, `bun`, or `browser` must pass on that host in the generated
 artifacts. Unsupported-by-profile cases are only valid when the artifact
@@ -98,11 +101,14 @@ Current server package-layer proof is narrower and remains target-scoped:
 <!-- server-package-claims:end -->
 - current proven target-specific native package claims are:
 <!-- server-native-package-claims:start -->
-- `bun` / `linux` / `x64`: `rapidfuzz`
-- `deno` / `linux` / `x64`: `rapidfuzz`
-- `node` / `linux` / `x64`: `rapidfuzz`
+- `bun` / `linux` / `x64` / proof depth `package`: `rapidfuzz`
+- `deno` / `linux` / `x64` / proof depth `package`: `rapidfuzz`
+- `node` / `linux` / `x64` / proof depth `package`: `rapidfuzz`
 <!-- server-native-package-claims:end -->
-- those claims are package-level import and execution proof on the named target,
-  not a blanket statement about every optional native module inside a wheel
+- proof depth is part of the native claim itself:
+  - `package` means package-level import and execution proof on the named target
+  - `module` means deeper module-level proof on the named target
+- current native claims remain at proof depth `package`, not a blanket
+  statement about every optional native module inside a wheel
 - broader native package claims remain outside the supported server
   package-layer surface until target-specific proof is published

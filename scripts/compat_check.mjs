@@ -273,6 +273,17 @@ function main() {
       failures.push({
         error: "server_native_platform_claims_missing",
       });
+    } else {
+      for (const claim of nativeClaims) {
+        if (claim?.proofDepth !== "package" && claim?.proofDepth !== "module") {
+          failures.push({
+            error: "server_native_platform_claim_proof_depth_missing",
+            host: claim?.host ?? null,
+            os: claim?.os ?? null,
+            arch: claim?.arch ?? null,
+          });
+        }
+      }
     }
   }
 

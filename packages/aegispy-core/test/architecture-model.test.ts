@@ -24,6 +24,7 @@ describe("architecture model", () => {
       serverCapabilityFamilies: string[];
       browserCapabilityFamilies: string[];
       packageClasses: string[];
+      nativeProofDepths: string[];
       browserCapabilityStates: string[];
       browserFeatureStates: string[];
       browserPermissionStates: string[];
@@ -52,6 +53,7 @@ describe("architecture model", () => {
       "native_platform",
       "project_overlay",
     ]);
+    expect(doc.nativeProofDepths).toEqual(["package", "module"]);
     expect(doc.browserCapabilityStates).toEqual([
       "available_granted",
       "available_denied",
@@ -93,6 +95,9 @@ describe("architecture model", () => {
     const runtimeApi = readDoc("docs/reference/runtime-api.md");
     const supportMatrix = readDoc("docs/support-matrix.md");
     const profiles = readDoc("docs/reference/profiles.md");
+    const compatibilityMatrix = readDoc(
+      "docs/reference/compatibility-matrix.md",
+    );
 
     expect(architecture).toContain("portable common isolation floor");
     expect(architecture).toContain("OS-specific strengthening claims");
@@ -109,9 +114,12 @@ describe("architecture model", () => {
     expect(supportMatrix).toContain("matrix-backed");
     expect(supportMatrix).toContain("Current Browser Capability States");
     expect(supportMatrix).toContain("unavailable");
+    expect(supportMatrix).toContain("proof depth");
 
     expect(profiles).toContain("portable common isolation floor");
     expect(profiles).toContain("OS-specific strengthening");
     expect(profiles).toContain("available_denied");
+
+    expect(compatibilityMatrix).toContain("proof depth");
   });
 });
