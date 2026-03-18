@@ -4,6 +4,38 @@ export type HostKind = "node" | "deno" | "bun" | "browser";
 
 export type ConformanceProfile = "server-hardened" | "browser-real-engine";
 
+export type ServerCapabilityFamily =
+  | "storage"
+  | "network"
+  | "environment"
+  | "process"
+  | "handles";
+
+export type BrowserCapabilityFamily =
+  | "storage"
+  | "network"
+  | "fileAccess"
+  | "worker"
+  | "handles";
+
+export type BrowserCapabilityState =
+  | "available_granted"
+  | "available_denied"
+  | "unavailable"
+  | "hard_limit";
+
+export type BrowserFeatureState = "available" | "unavailable" | "hard_limit";
+
+export type BrowserPermissionState =
+  | "granted"
+  | "denied"
+  | "not_requested"
+  | "not_applicable";
+
+export type BrowserCapabilityFamilies = Partial<
+  Record<BrowserCapabilityFamily, BrowserCapabilityState>
+>;
+
 export type TerminationReason =
   | "ok"
   | "engine_error"
@@ -147,6 +179,7 @@ export interface RuntimeCapabilities {
   packageSetVersion?: string;
   portableIsolationFloorVersion?: string;
   hostStrengthening?: string[];
+  capabilityFamilies?: BrowserCapabilityFamilies;
   fs: boolean;
   http: boolean;
   env: boolean;

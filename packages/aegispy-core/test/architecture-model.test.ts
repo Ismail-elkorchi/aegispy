@@ -101,12 +101,17 @@ describe("architecture model", () => {
 
     expect(runtimeApi).toContain("current implementation truth");
     expect(runtimeApi).toContain("capability families");
+    expect(runtimeApi).toContain("capabilityFamilies");
+    expect(runtimeApi).toContain("available_granted");
 
     expect(supportMatrix).toContain("portable common isolation floor");
     expect(supportMatrix).toContain("package classes");
     expect(supportMatrix).toContain("matrix-backed");
+    expect(supportMatrix).toContain("Current Browser Capability States");
+    expect(supportMatrix).toContain("unavailable");
 
     expect(profiles).toContain("portable common isolation floor");
     expect(profiles).toContain("OS-specific strengthening");
+    expect(profiles).toContain("available_denied");
   });
 });

@@ -38,6 +38,13 @@ function makeBrowserCapabilities(): RuntimeCapabilities {
     profile: "browser-real-engine",
     transport: "worker",
     capabilityChannel: "worker-timeout",
+    capabilityFamilies: {
+      storage: "unavailable",
+      network: "unavailable",
+      fileAccess: "unavailable",
+      worker: "available_granted",
+      handles: "unavailable",
+    },
     fs: false,
     http: false,
     env: false,

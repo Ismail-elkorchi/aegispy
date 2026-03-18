@@ -83,6 +83,13 @@ describe("browser runtime", () => {
     expect(capabilities.fs).toBe(false);
     expect(capabilities.http).toBe(false);
     expect(capabilities.env).toBe(false);
+    expect(capabilities.capabilityFamilies).toEqual({
+      storage: "unavailable",
+      network: "unavailable",
+      fileAccess: "unavailable",
+      worker: "available_granted",
+      handles: "unavailable",
+    });
     expect(okResult.status).toBe("ok");
     expect(okResult.stdoutUtf8).toContain("browser-real-engine");
     expect(okResult.stdoutUtf8).toContain("2");
@@ -101,6 +108,7 @@ describe("browser runtime", () => {
         fs: capabilities.fs,
         http: capabilities.http,
         env: capabilities.env,
+        capabilityFamilies: capabilities.capabilityFamilies,
       },
       okTermination: okResult.meta.termination,
       timeoutTermination: timeoutResult.meta.termination,

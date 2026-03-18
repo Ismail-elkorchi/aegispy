@@ -214,7 +214,7 @@
         "browserEngine": "pyodide",
         "browserVersionBand": "0.29.x",
         "capabilityFamily": "storage",
-        "featureState": "hard_limit",
+        "featureState": "unavailable",
         "permissionState": "not_applicable",
         "packageClass": "base_interpreter",
         "evidenceStatus": "unsupported"
@@ -223,7 +223,7 @@
         "browserEngine": "pyodide",
         "browserVersionBand": "0.29.x",
         "capabilityFamily": "network",
-        "featureState": "hard_limit",
+        "featureState": "unavailable",
         "permissionState": "not_applicable",
         "packageClass": "base_interpreter",
         "evidenceStatus": "unsupported"
@@ -232,7 +232,7 @@
         "browserEngine": "pyodide",
         "browserVersionBand": "0.29.x",
         "capabilityFamily": "fileAccess",
-        "featureState": "hard_limit",
+        "featureState": "unavailable",
         "permissionState": "not_applicable",
         "packageClass": "base_interpreter",
         "evidenceStatus": "unsupported"
@@ -241,10 +241,10 @@
         "browserEngine": "pyodide",
         "browserVersionBand": "0.29.x",
         "capabilityFamily": "handles",
-        "featureState": "available",
+        "featureState": "unavailable",
         "permissionState": "not_applicable",
         "packageClass": "base_interpreter",
-        "evidenceStatus": "prototype"
+        "evidenceStatus": "unsupported"
       }
     ],
     "browserExecutedFixtureFamilies": [

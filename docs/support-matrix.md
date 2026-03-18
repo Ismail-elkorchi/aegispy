@@ -33,6 +33,26 @@ This page keeps two truths separate:
 These booleans remain current implementation truth while the contributor-facing
 compatibility model expands through additive capability families.
 
+## Current Browser Capability States
+
+| Capability family | Current state       | Current meaning                                                                     |
+| ----------------- | ------------------- | ----------------------------------------------------------------------------------- |
+| storage           | `unavailable`       | Browser storage primitives are not yet exposed through the current runtime surface. |
+| network           | `unavailable`       | Browser networking is not yet exposed as a typed runtime capability family.         |
+| fileAccess        | `unavailable`       | Browser file-picker and file-handle flows are not yet exposed.                      |
+| worker            | `available_granted` | The current browser runtime already executes through a worker-backed engine path.   |
+| handles           | `unavailable`       | No public browser handle/FFI object-capability surface is exposed yet.              |
+
+State interpretation:
+
+- `available_granted`: the runtime exposes the capability family and can use it
+  now
+- `available_denied`: the runtime exposes the capability family, but a
+  permission or user gesture blocks it
+- `unavailable`: the capability family is technically possible in browsers but
+  not exposed by the current runtime
+- `hard_limit`: the capability family is blocked by a real browser hard limit
+
 ## Frozen Package Classes
 
 Future package evidence and support rows are grouped by package classes:
@@ -175,9 +195,9 @@ Current browser rows stay equally conservative:
 
 - the worker-backed browser lane is published as the current supported browser
   execution surface
-- storage, network, and file-access capability families remain outside the
-  current supported browser claim rows until typed capability-state reporting
-  lands publicly
+- storage, network, file-access, and handle capability families remain outside
+  the current supported browser claim rows because the current runtime reports
+  them as `unavailable`, not because the browser platform makes them impossible
 
 ## Parity Evidence
 
