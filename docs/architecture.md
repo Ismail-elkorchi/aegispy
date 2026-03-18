@@ -1,5 +1,30 @@
 # Architecture
 
+## Compatibility Foundation
+
+`aegispy` keeps one public runtime API across `node`, `deno`, `bun`, and
+`browser`, while separating current implementation truth from the frozen
+compatibility vocabulary that future work must follow.
+
+Current implementation truth:
+
+- `server-hardened` remains the current server profile
+- `browser-real-engine` remains the current browser profile
+- `runtime.capabilities()` still exposes `fs/http/env` booleans
+
+Frozen compatibility-model truth:
+
+- long-term server claim family: `server bundled compatibility runtime`
+- long-term browser claim family: `browser native capability runtime`
+- future support claims must be matrix-backed
+- future cross-OS claims must start from a portable common isolation floor with
+  OS-specific strengthening claims above it
+- future package evidence must be grouped by explicit package classes:
+  - `base_interpreter`
+  - `pure_python`
+  - `native_platform`
+  - `project_overlay`
+
 ## Repository Layout
 
 - `packages/aegispy-core` contains contracts, validation, policy evaluation, limits, determinism logic, and runtime factory.
@@ -26,8 +51,51 @@
    worker-backed Python engine, and keeps filesystem, HTTP, and environment
    access denied at the runtime boundary.
    Browser package requests are bound to verified lockfile entries, and
-   `assetBaseUrl` runs verify pinned Pyodide asset hashes before execution.
+   `assetBaseUrl` verifies pinned browser engine assets before execution.
 7. Runtime returns `RunResult` with `meta` and `audit`.
+
+## Compatibility Matrices
+
+The frozen architecture model defines future evidence rows for:
+
+- server:
+  - `host`
+  - `os`
+  - `arch`
+  - `runtimeFamily`
+  - `packageClass`
+  - `capabilityFamily`
+  - `isolationFloorVersion`
+  - `evidenceStatus`
+- browser:
+  - `browserEngine`
+  - `browserVersionBand`
+  - `capabilityFamily`
+  - `featureState`
+  - `permissionState`
+  - `packageClass`
+  - `evidenceStatus`
+
+Only `supported` matrix rows may feed public support claims.
+
+## Isolation Claims
+
+The contributor-facing architecture now distinguishes:
+
+- portable common isolation floor
+- OS-specific strengthening claims
+
+The portable common isolation floor is frozen around:
+
+- `process_boundary`
+- `immutable_runtime_image`
+- `projected_roots`
+- `guest_temp_root`
+- `environment_allowlist`
+- `resource_ceilings`
+- `brokered_capabilities`
+- `audit_trail`
+- `artifact_integrity`
 
 ## Capability Channel
 
@@ -46,6 +114,24 @@
 - Frame format: 4-byte unsigned big-endian length prefix plus UTF-8 JSON bytes.
 - Request envelope: `type=run`, `requestId`, `run` payload.
 - Response envelope: `type=run_result`, `requestId`, `result` payload.
+
+## Frozen Capability Families
+
+The current public booleans remain current implementation truth. Future work is
+constrained by frozen capability families:
+
+- server:
+  - `storage`
+  - `network`
+  - `environment`
+  - `process`
+  - `handles`
+- browser:
+  - `storage`
+  - `network`
+  - `fileAccess`
+  - `worker`
+  - `handles`
 
 ## Evidence Map
 
