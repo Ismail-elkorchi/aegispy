@@ -29,6 +29,18 @@ const workloadMatrixPath = path.join(
   "compat",
   "workload-compatibility-matrix.json",
 );
+const serverMatrixPath = path.join(
+  repoRoot,
+  "artifacts",
+  "compat",
+  "server-compatibility-matrix.json",
+);
+const browserMatrixPath = path.join(
+  repoRoot,
+  "artifacts",
+  "compat",
+  "browser-capability-matrix.json",
+);
 const packageFixturesPath = path.join(
   repoRoot,
   "artifacts",
@@ -222,6 +234,68 @@ function main() {
       "unsupportedByProfileFailures",
       "workload_compatibility_unsupported_by_profile_failure",
     );
+  }
+
+  if (!fs.existsSync(serverMatrixPath)) {
+    failures.push({
+      error: "missing_server_compatibility_matrix_artifact",
+      path: "artifacts/compat/server-compatibility-matrix.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(serverMatrixPath, "utf8"));
+    if (doc.ok !== true)
+      failures.push({ error: "server_compatibility_matrix_not_ok" });
+    if (!Array.isArray(doc.dimensions) || doc.dimensions.length !== 8) {
+      failures.push({
+        error: "server_compatibility_matrix_dimensions_invalid",
+      });
+    }
+    if (!Array.isArray(doc.rows) || doc.rows.length === 0) {
+      failures.push({ error: "server_compatibility_rows_missing" });
+    }
+    if (!Array.isArray(doc.supportedRows) || doc.supportedRows.length === 0) {
+      failures.push({ error: "server_compatibility_supported_rows_missing" });
+    }
+    const packageClaims = doc.supportedPurePythonImports ?? {};
+    for (const host of ["node", "deno", "bun"]) {
+      if (
+        !Array.isArray(packageClaims?.[host]) ||
+        packageClaims[host].length < 4
+      ) {
+        failures.push({
+          error: "server_pure_python_import_claims_missing",
+          host,
+        });
+      }
+    }
+  }
+
+  if (!fs.existsSync(browserMatrixPath)) {
+    failures.push({
+      error: "missing_browser_capability_matrix_artifact",
+      path: "artifacts/compat/browser-capability-matrix.json",
+    });
+  } else {
+    const doc = JSON.parse(fs.readFileSync(browserMatrixPath, "utf8"));
+    if (doc.ok !== true)
+      failures.push({ error: "browser_capability_matrix_not_ok" });
+    if (!Array.isArray(doc.dimensions) || doc.dimensions.length !== 7) {
+      failures.push({ error: "browser_capability_matrix_dimensions_invalid" });
+    }
+    if (!Array.isArray(doc.rows) || doc.rows.length === 0) {
+      failures.push({ error: "browser_capability_rows_missing" });
+    }
+    if (!Array.isArray(doc.supportedRows) || doc.supportedRows.length === 0) {
+      failures.push({ error: "browser_capability_supported_rows_missing" });
+    }
+    if (
+      !Array.isArray(doc.browserExecutedFixtureFamilies) ||
+      doc.browserExecutedFixtureFamilies.length < 3
+    ) {
+      failures.push({
+        error: "browser_capability_fixture_families_missing",
+      });
+    }
   }
 
   if (!fs.existsSync(packageFixturesPath)) {
