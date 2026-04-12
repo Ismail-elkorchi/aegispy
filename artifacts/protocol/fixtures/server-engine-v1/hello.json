@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "1",
+  "type": "hello",
+  "requestId": "fixture-hello",
+  "client": {
+    "name": "reference-client",
+    "host": "node"
+  },
+  "maxFrameBytes": 1048576
+}

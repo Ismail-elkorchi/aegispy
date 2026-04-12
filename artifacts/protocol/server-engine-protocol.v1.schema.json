@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegispy.dev/schemas/server-engine-protocol.v1.schema.json",
+  "title": "AegisPy Server Engine Protocol v1 Candidate",
+  "type": "object",
+  "required": ["protocolVersion", "type", "requestId"],
+  "properties": {
+    "protocolVersion": { "const": "1" },
+    "type": {
+      "enum": [
+        "hello",
+        "hello_result",
+        "run",
+        "run_result",
+        "cancel",
+        "cancel_result",
+        "shutdown",
+        "shutdown_result",
+        "error"
+      ]
+    },
+    "requestId": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "hello" } } },
+      "then": { "required": ["client", "maxFrameBytes"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "hello_result" } } },
+      "then": {
+        "required": [
+          "engine",
+          "supportedProtocolVersions",
+          "maxFrameBytes",
+          "bundle",
+          "capabilityFamilies",
+          "limits"
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "run" } } },
+      "then": { "required": ["run"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "run_result" } } },
+      "then": { "required": ["result"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "cancel" } } },
+      "then": { "required": ["targetRequestId"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "cancel_result" } } },
+      "then": { "required": ["targetRequestId", "accepted", "reason"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "shutdown_result" } } },
+      "then": { "required": ["accepted"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "error" } } },
+      "then": { "required": ["error"] }
+    }
+  ]
+}

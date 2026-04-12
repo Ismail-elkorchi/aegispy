@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "1",
+  "type": "run_result",
+  "requestId": "fixture-policy-denied",
+  "result": {
+    "status": "error",
+    "exitCode": 1,
+    "stdoutUtf8": "",
+    "stderrUtf8": "capability denied",
+    "meta": {
+      "startedTsMs": 0,
+      "endedTsMs": 1,
+      "durationMs": 1,
+      "cpuMs": 1,
+      "memoryPeakBytes": 0,
+      "stdoutBytes": 0,
+      "stderrBytes": 17,
+      "termination": "policy_denied",
+      "audit": []
+    },
+    "error": {
+      "code": "AEG-POLICY-DENIED",
+      "message": "capability denied",
+      "detailJson": "{\"termination\":\"policy_denied\"}"
+    }
+  }
+}

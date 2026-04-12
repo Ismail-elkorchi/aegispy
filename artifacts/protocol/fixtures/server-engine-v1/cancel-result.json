@@ -1,0 +1,8 @@
+{
+  "protocolVersion": "1",
+  "type": "cancel_result",
+  "requestId": "fixture-cancel",
+  "targetRequestId": "fixture-run",
+  "accepted": false,
+  "reason": "not_cancelable"
+}

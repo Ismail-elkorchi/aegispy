@@ -79,6 +79,7 @@ async function createTransport(
       opts.packageLockfile,
     );
     const transport = new RustWorkerTransport({
+      host: "bun",
       projectRoots: opts.projectRoots,
       packageRoots: packageLayer.packageRoots,
       tempRoot: opts.tempRoot,

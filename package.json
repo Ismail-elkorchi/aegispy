@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "check": "bash scripts/check",
-    "check:portable": "node scripts/workflow_policy_check.mjs && bash scripts/docs_check && node scripts/portable_isolation_floor_smoke.mjs && bash scripts/portable_isolation_floor_check && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:portable",
+    "check:portable": "node scripts/workflow_policy_check.mjs && bash scripts/docs_check && node scripts/server_engine_protocol_check.mjs && node scripts/portable_isolation_floor_smoke.mjs && bash scripts/portable_isolation_floor_check && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:portable",
     "lint": "eslint .",
     "format:check": "prettier -c .",
     "format": "prettier -w .",
@@ -34,13 +34,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.5.0",
-    "eslint": "^10.0.3",
+    "@types/node": "^25.6.0",
+    "eslint": "^10.2.0",
     "fast-check": "^4.6.0",
-    "prettier": "^3.8.1",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.57.0",
-    "vitest": "^4.1.0"
+    "prettier": "^3.8.2",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.1",
+    "vitest": "^4.1.4"
   },
   "pnpm": {
     "overrides": {

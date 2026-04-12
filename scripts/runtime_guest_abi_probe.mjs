@@ -45,6 +45,7 @@ function decodeFrames(buffer) {
 
 function buildProbeRequest() {
   return {
+    protocolVersion: "1",
     type: "run",
     requestId: randomUUID(),
     run: {

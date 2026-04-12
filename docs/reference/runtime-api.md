@@ -179,6 +179,22 @@ Current request-shape rules:
 These fields remain current implementation truth during the current
 compatibility sequence.
 
+## Server Engine Protocol
+
+The process-launched server path has a `server-engine-protocol-v1`
+freeze-readiness candidate. It uses 4-byte unsigned big-endian length-prefixed
+UTF-8 JSON frames and versioned lifecycle messages:
+
+- `hello` / `hello_result`
+- `run` / `run_result`
+- `cancel` / `cancel_result`
+- `shutdown` / `shutdown_result`
+- `error`
+
+The browser worker protocol is not part of this freeze-readiness boundary.
+Legacy `fs`, `http`, and `env` booleans remain JS SDK compatibility fields; the
+candidate external protocol centers server capability families instead.
+
 Current portable-floor reporting rules:
 
 - server process transport reports `portableIsolationFloorVersion` for the

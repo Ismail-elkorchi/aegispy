@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "1",
+  "type": "run_result",
+  "requestId": "fixture-timeout",
+  "result": {
+    "status": "error",
+    "exitCode": 1,
+    "stdoutUtf8": "",
+    "stderrUtf8": "wall time reached",
+    "meta": {
+      "startedTsMs": 0,
+      "endedTsMs": 5000,
+      "durationMs": 5000,
+      "cpuMs": 5000,
+      "memoryPeakBytes": 0,
+      "stdoutBytes": 0,
+      "stderrBytes": 17,
+      "termination": "timeout",
+      "audit": []
+    },
+    "error": {
+      "code": "AEG-TIMEOUT",
+      "message": "wall time reached",
+      "detailJson": "{\"termination\":\"timeout\"}"
+    }
+  }
+}

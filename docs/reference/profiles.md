@@ -19,6 +19,8 @@ Properties:
   packages on supported targets
 - capability enforcement at the runtime boundary
 - `component-wit` capability channel
+- `server-engine-protocol-v1` freeze-readiness candidate for the process
+  worker boundary
 - explicit denial semantics for filesystem, HTTP, and environment permissions
 - projected server project roots under stable internal guest paths when
   configured through `createRuntime`
@@ -49,6 +51,7 @@ Contributor-facing compatibility model notes:
   - `rapidfuzz` on `node` / `deno` / `bun` for `linux` / `x64`
 - current native proof depth:
   - `package`
+- browser worker protocol is not part of this freeze-readiness boundary
 
 ## `browser-real-engine`
 

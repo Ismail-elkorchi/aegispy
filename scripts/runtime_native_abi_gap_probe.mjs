@@ -59,6 +59,7 @@ function buildProbeRequest() {
     'print(getattr(aegispy, "__file__", ""))',
   ].join("\n");
   return {
+    protocolVersion: "1",
     type: "run",
     requestId: randomUUID(),
     run: {
