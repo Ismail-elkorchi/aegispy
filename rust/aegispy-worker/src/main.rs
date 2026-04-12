@@ -34,6 +34,9 @@ mod component_host_bindings {
     });
 }
 
+const SERVER_ENGINE_PROTOCOL_VERSION: &str = "1";
+const SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 struct RunRequestEnvelope {
     #[serde(rename = "type")]
@@ -45,11 +48,26 @@ struct RunRequestEnvelope {
 
 #[derive(Debug, Serialize)]
 struct RunResponseEnvelope {
+    #[serde(rename = "protocolVersion")]
+    protocol_version: &'static str,
     #[serde(rename = "type")]
     kind: &'static str,
     #[serde(rename = "requestId")]
     request_id: String,
     result: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolRequestEnvelope {
+    #[serde(rename = "protocolVersion")]
+    protocol_version: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    #[serde(rename = "requestId")]
+    request_id: Option<String>,
+    run: Option<Value>,
+    #[serde(rename = "targetRequestId")]
+    target_request_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -824,6 +842,13 @@ fn encode_frame(payload: &[u8]) -> Vec<u8> {
 }
 
 fn read_frame(reader: &mut dyn Read) -> io::Result<Option<Vec<u8>>> {
+    read_frame_with_limit(reader, SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES)
+}
+
+fn read_frame_with_limit(
+    reader: &mut dyn Read,
+    max_frame_bytes: usize,
+) -> io::Result<Option<Vec<u8>>> {
     let mut header = [0_u8; 4];
     match reader.read_exact(&mut header) {
         Ok(()) => {}
@@ -832,6 +857,9 @@ fn read_frame(reader: &mut dyn Read) -> io::Result<Option<Vec<u8>>> {
     }
 
     let len = u32::from_be_bytes(header) as usize;
+    if len > max_frame_bytes {
+        return Err(io::Error::new(ErrorKind::InvalidData, "frame_too_large"));
+    }
     let mut payload = vec![0_u8; len];
     reader.read_exact(&mut payload)?;
     Ok(Some(payload))
@@ -3432,6 +3460,7 @@ fn handle_request_with_executor(
     );
 
     RunResponseEnvelope {
+        protocol_version: SERVER_ENGINE_PROTOCOL_VERSION,
         kind: "run_result",
         request_id: req.request_id,
         result,
@@ -3548,6 +3577,168 @@ fn ensure_wasi_engine_ready() -> Result<(), String> {
     Ok(())
 }
 
+fn request_id_or_invalid(request_id: Option<String>) -> String {
+    request_id.unwrap_or_else(|| "invalid-request-id".to_string())
+}
+
+fn protocol_error(request_id: Option<String>, code: &str, message: &str) -> Value {
+    json!({
+      "protocolVersion": SERVER_ENGINE_PROTOCOL_VERSION,
+      "type": "error",
+      "requestId": request_id_or_invalid(request_id),
+      "error": {
+        "code": code,
+        "message": message
+      }
+    })
+}
+
+fn worker_bundle_metadata() -> Value {
+    std::env::var("AEGISPY_WORKER_BUNDLE_METADATA_JSON")
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+fn hello_result(
+    request_id: String,
+    isolation_profile: &IsolationProfile,
+    executor_mode: WorkerExecutorMode,
+) -> Value {
+    json!({
+      "protocolVersion": SERVER_ENGINE_PROTOCOL_VERSION,
+      "type": "hello_result",
+      "requestId": request_id,
+      "engine": {
+        "name": "aegispy-worker",
+        "executorMode": executor_mode.as_str()
+      },
+      "supportedProtocolVersions": [SERVER_ENGINE_PROTOCOL_VERSION],
+      "maxFrameBytes": SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES,
+      "bundle": worker_bundle_metadata(),
+      "capabilityFamilies": {
+        "server": ["storage", "network", "environment", "process", "handles"]
+      },
+      "limits": {
+        "wallMs": isolation_profile.max_wall_ms,
+        "cpuMs": isolation_profile.max_cpu_ms,
+        "memoryBytes": isolation_profile.max_memory_bytes,
+        "stdoutBytes": isolation_profile.max_stdout_bytes,
+        "stderrBytes": isolation_profile.max_stderr_bytes
+      }
+    })
+}
+
+fn cancel_result(request_id: String, target_request_id: String) -> Value {
+    json!({
+      "protocolVersion": SERVER_ENGINE_PROTOCOL_VERSION,
+      "type": "cancel_result",
+      "requestId": request_id,
+      "targetRequestId": target_request_id,
+      "accepted": false,
+      "reason": "not_cancelable"
+    })
+}
+
+fn shutdown_result(request_id: String) -> Value {
+    json!({
+      "protocolVersion": SERVER_ENGINE_PROTOCOL_VERSION,
+      "type": "shutdown_result",
+      "requestId": request_id,
+      "accepted": true
+    })
+}
+
+fn handle_protocol_request_with_executor(
+    frame: &[u8],
+    isolation_profile: &IsolationProfile,
+    kernel_isolation: &KernelIsolationEnvelope,
+    executor_mode: WorkerExecutorMode,
+    wasi_executor: Option<&WasiExecutor>,
+) -> (Value, bool) {
+    let parsed = match serde_json::from_slice::<ProtocolRequestEnvelope>(frame) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            return (
+                protocol_error(None, "invalid_json", "request decode failure"),
+                false,
+            )
+        }
+    };
+
+    let request_id = parsed.request_id.clone();
+    if parsed.protocol_version.as_deref() != Some(SERVER_ENGINE_PROTOCOL_VERSION) {
+        return (
+            protocol_error(
+                request_id,
+                "unsupported_protocol_version",
+                "unsupported protocol version",
+            ),
+            false,
+        );
+    }
+
+    let Some(kind) = parsed.kind.as_deref() else {
+        return (
+            protocol_error(request_id, "invalid_message", "missing message type"),
+            false,
+        );
+    };
+    let Some(request_id) = parsed.request_id else {
+        return (
+            protocol_error(None, "invalid_message", "missing requestId"),
+            false,
+        );
+    };
+
+    match kind {
+        "hello" => (
+            hello_result(request_id, isolation_profile, executor_mode),
+            false,
+        ),
+        "run" => {
+            let Some(run) = parsed.run else {
+                return (
+                    protocol_error(Some(request_id), "invalid_message", "missing run payload"),
+                    false,
+                );
+            };
+            let response = handle_request_with_executor(
+                RunRequestEnvelope {
+                    kind: "run".to_string(),
+                    request_id,
+                    run,
+                },
+                isolation_profile,
+                kernel_isolation,
+                executor_mode,
+                wasi_executor,
+            );
+            (
+                serde_json::to_value(response).unwrap_or_else(|_| {
+                    protocol_error(None, "invalid_message", "response encode failure")
+                }),
+                false,
+            )
+        }
+        "cancel" => {
+            let target_request_id = parsed
+                .target_request_id
+                .unwrap_or_else(|| "invalid-request-id".to_string());
+            (cancel_result(request_id, target_request_id), false)
+        }
+        "shutdown" => (shutdown_result(request_id), true),
+        _ => (
+            protocol_error(
+                Some(request_id),
+                "unknown_message_type",
+                "unknown message type",
+            ),
+            false,
+        ),
+    }
+}
+
 fn run_worker() -> io::Result<()> {
     verify_engine_if_present()
         .map_err(|error| io::Error::new(ErrorKind::PermissionDenied, error))?;
@@ -3588,32 +3779,20 @@ fn run_worker() -> io::Result<()> {
     let mut writer = stdout.lock();
 
     while let Some(frame) = read_frame(&mut reader)? {
-        let parsed = serde_json::from_slice::<RunRequestEnvelope>(&frame);
-        let response = match parsed {
-            Ok(req) => handle_request_with_executor(
-                req,
-                &isolation_profile,
-                &kernel_isolation,
-                executor_mode,
-                wasi_executor.as_ref(),
-            ),
-            Err(_) => RunResponseEnvelope {
-                kind: "run_result",
-                request_id: "invalid-request-id".to_string(),
-                result: make_error_result(
-                    "AEG-INVALID-REQUEST",
-                    "request decode failure",
-                    "internal_error",
-                    0,
-                    0,
-                    Vec::new(),
-                ),
-            },
-        };
+        let (response, should_shutdown) = handle_protocol_request_with_executor(
+            &frame,
+            &isolation_profile,
+            &kernel_isolation,
+            executor_mode,
+            wasi_executor.as_ref(),
+        );
 
         let payload = serde_json::to_vec(&response)
             .map_err(|error| io::Error::new(ErrorKind::InvalidData, error.to_string()))?;
         write_frame(&mut writer, &payload)?;
+        if should_shutdown {
+            break;
+        }
     }
 
     Ok(())

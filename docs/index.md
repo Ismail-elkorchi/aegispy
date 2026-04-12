@@ -14,6 +14,8 @@ an experimental real-engine browser profile with explicit capability limits.
 
 - Runtime API: `docs/reference/runtime-api.md`
 - Profiles and host contract: `docs/reference/profiles.md`
+- Server engine protocol v1 candidate:
+  `docs/reference/server-engine-protocol-v1.md`
 - Support matrix: `docs/support-matrix.md`
 - Compatibility matrix and reason codes: `docs/reference/compatibility-matrix.md`
 

@@ -1,6 +1,10 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
+  SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES,
+  SERVER_ENGINE_PROTOCOL_VERSION,
+} from "../src/protocol/messages";
+import {
   decodeFrames,
   decodeJsonFrame,
   encodeFrame,
@@ -17,11 +21,13 @@ const jsonDecodeIterations = 120;
 describe("protocol framing", () => {
   it("encodes and decodes length-prefixed json", () => {
     const messageA = {
+      protocolVersion: SERVER_ENGINE_PROTOCOL_VERSION,
       type: "run",
       requestId: "one",
       run: { code: 'print("x")' },
     };
     const messageB = {
+      protocolVersion: SERVER_ENGINE_PROTOCOL_VERSION,
       type: "run_result",
       requestId: "one",
       result: { status: "ok" },
@@ -72,6 +78,20 @@ describe("protocol framing", () => {
     );
   });
 
+  it("rejects oversized frames before JSON parsing", () => {
+    const header = Buffer.allocUnsafe(4);
+    header.writeUInt32BE(SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES + 1, 0);
+    expect(decodeFrames(header)).toMatchObject({ error: "frame_too_large" });
+    expect(() => decodeFrames(header, { throwOnOversized: true })).toThrow(
+      /frame_too_large/,
+    );
+    expect(() =>
+      encodeFrame(
+        Buffer.allocUnsafe(SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES + 1),
+      ),
+    ).toThrow(/frame_too_large/);
+  });
+
   it("round-trips arbitrary json values", () => {
     fc.assert(
       fc.property(fc.jsonValue(), (value) => {
@@ -98,7 +118,9 @@ describe("protocol framing", () => {
     fc.assert(
       fc.property(fc.uint8Array({ maxLength: 256 }), (payload) => {
         frameRuns += 1;
-        const decoded = decodeFrames(Buffer.from(payload));
+        const decoded = decodeFrames(Buffer.from(payload), {
+          maxFrameBytes: Number.MAX_SAFE_INTEGER,
+        });
         decodedFrames += decoded.frames.length;
         trailingBytes += decoded.remaining.length;
 

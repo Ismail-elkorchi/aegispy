@@ -1,0 +1,6 @@
+{
+  "protocolVersion": "1",
+  "type": "cancel",
+  "requestId": "fixture-cancel",
+  "targetRequestId": "fixture-run"
+}

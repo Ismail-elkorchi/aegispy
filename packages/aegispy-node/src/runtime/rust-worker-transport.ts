@@ -11,7 +11,16 @@ import {
   decodeJsonFrame,
   encodeJsonFrame,
 } from "../protocol/framing";
-import type { WorkerRunRequest, WorkerRunResponse } from "../protocol/messages";
+import {
+  SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES,
+  SERVER_ENGINE_PROTOCOL_VERSION,
+  type WorkerHelloRequest,
+  type WorkerRequest,
+  type WorkerResponse,
+  type WorkerRunRequest,
+  type WorkerRunResponse,
+  type WorkerShutdownRequest,
+} from "../protocol/messages";
 import type { WorkerTransport } from "./worker-transport";
 import {
   resolveIsolationProfile,
@@ -44,13 +53,15 @@ const workerBuildInputs = [
 ];
 
 interface PendingRequest {
-  resolve: (result: RunResult) => void;
+  expectedType: WorkerResponse["type"];
+  resolve: (message: WorkerResponse) => void;
   reject: (error: Error) => void;
 }
 
 export interface RustWorkerTransportOptions {
   command: string;
   args: string[];
+  host: "node" | "deno" | "bun";
   isolationProfile?: IsolationProfile;
   projectRoots?: string[];
   packageRoots?: string[];
@@ -58,9 +69,9 @@ export interface RustWorkerTransportOptions {
 }
 
 type RustWorkerTransportOptionsInput = Partial<
-  Pick<RustWorkerTransportOptions, "command" | "args">
+  Pick<RustWorkerTransportOptions, "command" | "args" | "host">
 > &
-  Omit<RustWorkerTransportOptions, "command" | "args">;
+  Omit<RustWorkerTransportOptions, "command" | "args" | "host">;
 
 export class RustWorkerTransport implements WorkerTransport {
   private readonly options: RustWorkerTransportOptions;
@@ -79,10 +90,13 @@ export class RustWorkerTransport implements WorkerTransport {
 
   private frameRemainder: Uint8Array = new Uint8Array();
 
+  private helloPromise: Promise<void> | null = null;
+
   public constructor(options: RustWorkerTransportOptionsInput = {}) {
     this.options = {
       command: options.command ?? defaultWorkerBinary,
       args: options.args ?? [],
+      host: options.host ?? "node",
       isolationProfile: options.isolationProfile,
       projectRoots: options.projectRoots,
       packageRoots: options.packageRoots,
@@ -221,6 +235,14 @@ export class RustWorkerTransport implements WorkerTransport {
           repoRoot,
           this.bundle.component.compiledBinaryPath,
         ),
+        AEGISPY_WORKER_BUNDLE_METADATA_JSON: JSON.stringify({
+          runtimeFamily: this.bundle.runtimeFamily,
+          bundleId: this.bundle.bundleId,
+          os: this.bundle.os,
+          arch: this.bundle.arch,
+          pythonAbi: this.bundle.pythonAbi,
+          packageSetVersion: this.bundle.packageSetVersion,
+        }),
         ...(this.options.projectRoots
           ? {
               AEGISPY_WORKER_PROJECT_ROOTS_JSON: JSON.stringify(
@@ -257,15 +279,42 @@ export class RustWorkerTransport implements WorkerTransport {
 
     child.stdout.on("data", (chunk: Buffer) => {
       const merged = Buffer.concat([Buffer.from(this.frameRemainder), chunk]);
-      const decoded = decodeFrames(merged);
+      const decoded = decodeFrames(merged, {
+        maxFrameBytes: SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES,
+      });
+      if (decoded.error !== undefined) {
+        const failure = new Error(decoded.error);
+        for (const pending of this.pending.values()) {
+          pending.reject(failure);
+        }
+        this.pending.clear();
+        child.kill("SIGTERM");
+        return;
+      }
       this.frameRemainder = decoded.remaining;
 
       for (const frame of decoded.frames) {
-        const parsed = decodeJsonFrame(frame) as WorkerRunResponse;
+        const parsed = decodeJsonFrame(frame) as WorkerResponse;
         const pending = this.pending.get(parsed.requestId);
         if (!pending) continue;
         this.pending.delete(parsed.requestId);
-        pending.resolve(parsed.result);
+        if (parsed.type === "error") {
+          pending.reject(
+            new Error(
+              `worker protocol error ${parsed.error.code}: ${parsed.error.message}`,
+            ),
+          );
+          continue;
+        }
+        if (parsed.type !== pending.expectedType) {
+          pending.reject(
+            new Error(
+              `worker protocol response mismatch: expected ${pending.expectedType}, received ${parsed.type}`,
+            ),
+          );
+          continue;
+        }
+        pending.resolve(parsed);
       }
     });
 
@@ -285,13 +334,46 @@ export class RustWorkerTransport implements WorkerTransport {
     });
 
     this.child = child;
+    this.helloPromise = this.sendProtocolMessage(
+      {
+        protocolVersion: SERVER_ENGINE_PROTOCOL_VERSION,
+        type: "hello",
+        requestId: randomUUID(),
+        client: {
+          name: "aegispy-js-adapter",
+          host: this.options.host,
+        },
+        maxFrameBytes: SERVER_ENGINE_PROTOCOL_MAX_FRAME_BYTES,
+      } satisfies WorkerHelloRequest,
+      "hello_result",
+    ).then(() => undefined);
     return child;
   }
 
-  public async run(req: RunRequest): Promise<RunResult> {
+  private async sendProtocolMessage<T extends WorkerResponse>(
+    message: WorkerRequest,
+    expectedType: T["type"],
+  ): Promise<T> {
     const child = this.ensureStarted();
+    const requestId = message.requestId;
+    const promise = new Promise<WorkerResponse>((resolve, reject) => {
+      this.pending.set(requestId, {
+        expectedType,
+        resolve,
+        reject,
+      });
+    });
+
+    child.stdin.write(encodeJsonFrame(message));
+    return (await promise) as T;
+  }
+
+  public async run(req: RunRequest): Promise<RunResult> {
+    this.ensureStarted();
+    await this.helloPromise;
     const requestId = randomUUID();
     const message: WorkerRunRequest = {
+      protocolVersion: SERVER_ENGINE_PROTOCOL_VERSION,
       type: "run",
       requestId,
       run: {
@@ -304,19 +386,31 @@ export class RustWorkerTransport implements WorkerTransport {
       },
     };
 
-    const promise = new Promise<RunResult>((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
-    });
-
-    child.stdin.write(encodeJsonFrame(message));
-    return promise;
+    const response = await this.sendProtocolMessage<WorkerRunResponse>(
+      message,
+      "run_result",
+    );
+    return response.result;
   }
 
   public async close(): Promise<void> {
-    if (this.child === null) return;
-    this.child.kill("SIGTERM");
+    const child = this.child;
+    if (child === null) return;
+    const message: WorkerShutdownRequest = {
+      protocolVersion: SERVER_ENGINE_PROTOCOL_VERSION,
+      type: "shutdown",
+      requestId: randomUUID(),
+    };
+    await Promise.race([
+      this.sendProtocolMessage(message, "shutdown_result").catch(() => null),
+      new Promise((resolve) => setTimeout(resolve, 1000)),
+    ]);
+    if (this.child !== null) {
+      child.kill("SIGTERM");
+    }
     this.child = null;
     this.pending.clear();
     this.frameRemainder = new Uint8Array();
+    this.helloPromise = null;
   }
 }

@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "1",
+  "type": "run_result",
+  "requestId": "fixture-engine-error",
+  "result": {
+    "status": "error",
+    "exitCode": 1,
+    "stdoutUtf8": "",
+    "stderrUtf8": "engine error",
+    "meta": {
+      "startedTsMs": 0,
+      "endedTsMs": 1,
+      "durationMs": 1,
+      "cpuMs": 1,
+      "memoryPeakBytes": 0,
+      "stdoutBytes": 0,
+      "stderrBytes": 12,
+      "termination": "engine_error",
+      "audit": []
+    },
+    "error": {
+      "code": "AEG-ENGINE",
+      "message": "engine error",
+      "detailJson": "{\"termination\":\"engine_error\"}"
+    }
+  }
+}

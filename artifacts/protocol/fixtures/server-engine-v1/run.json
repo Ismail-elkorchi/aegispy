@@ -1,0 +1,31 @@
+{
+  "protocolVersion": "1",
+  "type": "run",
+  "requestId": "fixture-run",
+  "run": {
+    "code": "print(\"hello\")",
+    "argv": ["python"],
+    "stdinUtf8": "",
+    "permissions": {
+      "fs": null,
+      "http": null,
+      "env": null
+    },
+    "limits": {
+      "time": {
+        "wallMs": 5000,
+        "cpuMs": 5000
+      },
+      "bytes": {
+        "memoryBytes": 536870912,
+        "stdoutBytes": 4096,
+        "stderrBytes": 4096
+      }
+    },
+    "determinism": {
+      "enabled": true,
+      "epochMs": 0,
+      "rngSeedHex": "00"
+    }
+  }
+}

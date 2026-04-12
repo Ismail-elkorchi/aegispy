@@ -1,0 +1,6 @@
+{
+  "ok": true,
+  "schema": "artifacts/protocol/server-engine-protocol.v1.schema.json",
+  "fixtures": 13,
+  "errors": []
+}

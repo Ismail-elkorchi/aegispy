@@ -7,3 +7,5 @@
 References:
 
 - docs/decisions/ADR-TEMPLATE.md
+- docs/decisions/ADR-0001\_\_compatibility-model-foundation.md
+- docs/decisions/ADR-0002\_\_server-engine-protocol-v1-pre-freeze.md

@@ -1,0 +1,29 @@
+{
+  "protocolVersion": "1",
+  "type": "hello_result",
+  "requestId": "fixture-hello",
+  "engine": {
+    "name": "aegispy-worker",
+    "executorMode": "simulation"
+  },
+  "supportedProtocolVersions": ["1"],
+  "maxFrameBytes": 1048576,
+  "bundle": {
+    "runtimeFamily": "server-wasi-component",
+    "bundleId": "server-wasi-component-linux-x64-cpython-3.14-base",
+    "os": "linux",
+    "arch": "x64",
+    "pythonAbi": "cpython-3.14",
+    "packageSetVersion": "base"
+  },
+  "capabilityFamilies": {
+    "server": ["storage", "network", "environment", "process", "handles"]
+  },
+  "limits": {
+    "wallMs": 5000,
+    "cpuMs": 5000,
+    "memoryBytes": 536870912,
+    "stdoutBytes": 2097152,
+    "stderrBytes": 2097152
+  }
+}

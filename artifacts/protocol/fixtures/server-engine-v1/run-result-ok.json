@@ -1,0 +1,22 @@
+{
+  "protocolVersion": "1",
+  "type": "run_result",
+  "requestId": "fixture-run",
+  "result": {
+    "status": "ok",
+    "exitCode": 0,
+    "stdoutUtf8": "hello\n",
+    "stderrUtf8": "",
+    "meta": {
+      "startedTsMs": 0,
+      "endedTsMs": 1,
+      "durationMs": 1,
+      "cpuMs": 1,
+      "memoryPeakBytes": 0,
+      "stdoutBytes": 6,
+      "stderrBytes": 0,
+      "termination": "ok",
+      "audit": []
+    }
+  }
+}

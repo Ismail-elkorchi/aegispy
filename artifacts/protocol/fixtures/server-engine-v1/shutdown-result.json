@@ -1,0 +1,6 @@
+{
+  "protocolVersion": "1",
+  "type": "shutdown_result",
+  "requestId": "fixture-shutdown",
+  "accepted": true
+}

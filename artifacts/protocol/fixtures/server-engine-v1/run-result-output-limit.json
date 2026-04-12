@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "1",
+  "type": "run_result",
+  "requestId": "fixture-output-limit",
+  "result": {
+    "status": "error",
+    "exitCode": 1,
+    "stdoutUtf8": "",
+    "stderrUtf8": "output budget reached",
+    "meta": {
+      "startedTsMs": 0,
+      "endedTsMs": 1,
+      "durationMs": 1,
+      "cpuMs": 1,
+      "memoryPeakBytes": 0,
+      "stdoutBytes": 0,
+      "stderrBytes": 21,
+      "termination": "output_limit",
+      "audit": []
+    },
+    "error": {
+      "code": "AEG-OUTPUT-LIMIT",
+      "message": "output budget reached",
+      "detailJson": "{\"termination\":\"output_limit\"}"
+    }
+  }
+}

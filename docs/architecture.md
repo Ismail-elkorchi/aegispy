@@ -129,9 +129,23 @@ The portable common isolation floor is frozen around:
 
 ## Worker Protocol
 
+The server worker protocol is now tracked as the
+`server-engine-protocol-v1` freeze-readiness candidate. It is server-only; the
+browser worker protocol is not part of this freeze-readiness boundary.
+
 - Frame format: 4-byte unsigned big-endian length prefix plus UTF-8 JSON bytes.
-- Request envelope: `type=run`, `requestId`, `run` payload.
-- Response envelope: `type=run_result`, `requestId`, `result` payload.
+- Maximum v1 frame size: 1,048,576 bytes.
+- Every v1 message carries `protocolVersion: "1"`.
+- Lifecycle messages:
+  - `hello` / `hello_result`
+  - `run` / `run_result`
+  - `cancel` / `cancel_result`
+  - `shutdown` / `shutdown_result`
+  - `error`
+- Schema source of truth:
+  `artifacts/protocol/server-engine-protocol.v1.schema.json`
+- Golden fixtures:
+  `artifacts/protocol/fixtures/server-engine-v1/*.json`
 
 ## Frozen Capability Families
 
