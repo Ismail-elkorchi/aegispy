@@ -233,6 +233,7 @@ export class RustWorkerTransport implements WorkerTransport {
               AEGISPY_WORKER_PACKAGE_ROOTS_JSON: JSON.stringify(
                 this.options.packageRoots,
               ),
+              PYTHONDONTWRITEBYTECODE: "1",
             }
           : {}),
         ...(this.options.tempRoot

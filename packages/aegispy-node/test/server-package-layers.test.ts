@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime } from "../src/index";
 import type { Lockfile, LockfileEntry } from "../../aegispy-pack/src/index";
 import type { RunRequest } from "@aegispy/core";
+import { resolveServerPackageLayer } from "../src/runtime/server-package-layer";
 
 const sharedLimits = {
   time: {
@@ -195,5 +198,70 @@ describe("server package layers", () => {
       expect(result.status, JSON.stringify(result, null, 2)).toBe("ok");
       expect(result.stdoutUtf8).toContain(testCase.expectStdout);
     }
+  }, 600_000);
+
+  it("revalidates a mutated pure-python package layer before reuse", async () => {
+    process.env.AEGISPY_NODE_TRANSPORT = "process";
+
+    const lockfile = makeServerLockfile();
+    const selection = await resolveServerPackageLayer(["packaging"], lockfile);
+    const versionModule = path.join(
+      selection.packageRoots[0]!,
+      "packaging",
+      "version.py",
+    );
+    const originalSource = fs.readFileSync(versionModule, "utf8");
+    fs.writeFileSync(versionModule, "def broken(:\n", "utf8");
+
+    const runtime = await createRuntime({
+      host: "node",
+      packages: ["packaging"],
+      packageLockfile: lockfile,
+    });
+    const result = await runtime.run(
+      makeRequest(
+        'from packaging.version import Version\nprint(Version("2.3.4"))\n',
+      ),
+    );
+    await runtime.close();
+
+    expect(result.status, JSON.stringify(result, null, 2)).toBe("ok");
+    expect(result.stdoutUtf8).toContain("2.3.4");
+    expect(fs.readFileSync(versionModule, "utf8")).toBe(originalSource);
+  }, 600_000);
+
+  it("keeps shared pure-python package roots free of bytecode write-back", async () => {
+    process.env.AEGISPY_NODE_TRANSPORT = "process";
+
+    const lockfile = makeServerLockfile();
+    const selection = await resolveServerPackageLayer(["packaging"], lockfile);
+    const cacheRoot = path.resolve(selection.packageRoots[0]!, "..");
+    const pycacheRoot = path.join(
+      selection.packageRoots[0]!,
+      "packaging",
+      "__pycache__",
+    );
+    fs.rmSync(cacheRoot, { recursive: true, force: true });
+
+    const refreshedSelection = await resolveServerPackageLayer(
+      ["packaging"],
+      lockfile,
+    );
+    const runtime = await createRuntime({
+      host: "node",
+      packages: ["packaging"],
+      packageLockfile: lockfile,
+    });
+    const result = await runtime.run(
+      makeRequest(
+        'from packaging.version import Version\nprint(Version("2.3.4"))\n',
+      ),
+    );
+    await runtime.close();
+
+    expect(result.status, JSON.stringify(result, null, 2)).toBe("ok");
+    expect(result.stdoutUtf8).toContain("2.3.4");
+    expect(refreshedSelection.packageRoots[0]).toBeTruthy();
+    expect(fs.existsSync(pycacheRoot)).toBe(false);
   }, 600_000);
 });
