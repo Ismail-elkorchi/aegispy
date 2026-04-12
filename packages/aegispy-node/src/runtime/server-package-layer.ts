@@ -18,7 +18,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../../../../");
 type SupportedServerPackageClass = "pure_python" | "native_platform";
-const materializationPromises = new Map<
+const inFlightMaterializations = new Map<
   string,
   Promise<ServerPackageLayerSelection>
 >();
@@ -739,7 +739,7 @@ export async function resolveServerPackageLayer(
     if (fs.existsSync(cacheRoot)) {
       await removeDirectory(cacheRoot);
     }
-    const inFlight = materializationPromises.get(cacheRoot);
+    const inFlight = inFlightMaterializations.get(cacheRoot);
     if (inFlight) {
       return inFlight;
     }
@@ -856,13 +856,16 @@ export async function resolveServerPackageLayer(
           ),
       );
     })().then(
-      (selection) => selection,
+      (selection) => {
+        inFlightMaterializations.delete(cacheRoot);
+        return selection;
+      },
       (error: unknown) => {
-        materializationPromises.delete(cacheRoot);
+        inFlightMaterializations.delete(cacheRoot);
         throw error;
       },
     );
-    materializationPromises.set(cacheRoot, materialization);
+    inFlightMaterializations.set(cacheRoot, materialization);
     return materialization;
   }
 
