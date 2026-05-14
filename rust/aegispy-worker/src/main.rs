@@ -1777,12 +1777,7 @@ impl NativeHostAbiStderrPipe {
         let accepted = bytes.len();
         state.frame_buffer.extend_from_slice(bytes);
 
-        loop {
-            let Some(newline_index) = state.frame_buffer.iter().position(|byte| *byte == b'\n')
-            else {
-                break;
-            };
-
+        while let Some(newline_index) = state.frame_buffer.iter().position(|byte| *byte == b'\n') {
             let frame = state
                 .frame_buffer
                 .drain(..=newline_index)
