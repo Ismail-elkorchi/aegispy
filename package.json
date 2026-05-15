@@ -40,11 +40,12 @@
     "prettier": "^3.8.2",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.6"
   },
   "pnpm": {
     "overrides": {
       "flatted": "^3.4.1",
+      "postcss": "^8.5.14",
       "rollup": "^4.59.0"
     }
   }
