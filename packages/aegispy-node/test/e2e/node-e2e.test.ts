@@ -17,6 +17,13 @@ const sharedLimits = {
   },
 };
 
+const policyProbeLimits = {
+  time: {
+    wallMs: 5_000,
+    cpuMs: 5_000,
+  },
+};
+
 function baseRequest(code: string): RunRequest {
   return {
     host: "node",
@@ -161,6 +168,7 @@ describe("node e2e", () => {
     const origin = `http://127.0.0.1:${address.port}`;
 
     const allowReq = baseRequest(`print(aegispy.http_get("${origin}/v1"))`);
+    allowReq.limits.time = structuredClone(policyProbeLimits.time);
     allowReq.permissions.http = {
       allowOrigins: [origin],
       denyOrigins: [],
@@ -171,6 +179,7 @@ describe("node e2e", () => {
     const denyReq = baseRequest(
       'aegispy.http_get("http://blocked.invalid/v1")',
     );
+    denyReq.limits.time = structuredClone(policyProbeLimits.time);
     denyReq.permissions.http = {
       allowOrigins: [origin],
       denyOrigins: ["http://blocked.invalid"],

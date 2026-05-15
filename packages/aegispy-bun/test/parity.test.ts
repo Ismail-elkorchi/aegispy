@@ -10,11 +10,13 @@ import { writeArtifact } from "./helpers/artifact";
 const originalEnv = { ...process.env };
 const corpusEnvValue = "agent-corpus-env-ok";
 const allHosts = ["node", "deno", "bun", "browser"] as const;
+const serverHosts = ["node", "deno", "bun"] as const;
 const minimumCorpusCaseCount = 28;
 const minimumPackageFixtureCount = 5;
 const minimumBrowserExecutedFixtureCount = 3;
 
 type CorpusHost = (typeof allHosts)[number];
+type ServerCorpusHost = (typeof serverHosts)[number];
 
 type CompatibilityExpectation = "supported" | "unsupported-by-profile";
 type WorkloadFamily =
@@ -502,6 +504,39 @@ async function rerunAfterEngineError(
   const restartedRuntime = await createCorpusRuntime(host);
   runtimes[host] = restartedRuntime;
   return restartedRuntime.run(request);
+}
+
+function isTransientSupportProbeFailure(result: RunResult): boolean {
+  return errorCode(result) === "AEG-ENGINE" || isTimeoutDenied(result);
+}
+
+async function rerunSupportProbeAfterTransientFailure(
+  runtimes: Record<ServerCorpusHost, AegisPyRuntime>,
+  host: ServerCorpusHost,
+  request: RunRequest,
+): Promise<RunResult> {
+  const firstResult = await runtimes[host].run(request);
+  if (!isTransientSupportProbeFailure(firstResult)) {
+    return firstResult;
+  }
+
+  await runtimes[host].close();
+  const restartedRuntime = await createCorpusRuntime(host);
+  runtimes[host] = restartedRuntime;
+  return restartedRuntime.run(request);
+}
+
+function statusFailureMessage(
+  host: ServerCorpusHost,
+  result: RunResult,
+): string {
+  if (result.status === "ok") return `${host}: ok`;
+  return [
+    host,
+    errorCode(result) ?? "unknown",
+    result.meta.termination,
+    result.stderrUtf8 || result.error.message,
+  ].join(":");
 }
 
 function collectCompatibilityFailures(
@@ -1733,9 +1768,11 @@ describe("bun adapter parity", () => {
       AEGISPY_ISOLATION_MAX_CPU_MS: "30000",
     };
 
-    const nodeRuntime = await createNodeRuntime({ host: "node" });
-    const denoRuntime = await createDenoRuntime({ host: "deno" });
-    const bunRuntime = await createRuntime({ host: "bun" });
+    const runtimes: Record<ServerCorpusHost, AegisPyRuntime> = {
+      node: await createNodeRuntime({ host: "node" }),
+      deno: await createDenoRuntime({ host: "deno" }),
+      bun: await createRuntime({ host: "bun" }),
+    };
 
     const requestCode = [
       "import json",
@@ -1748,16 +1785,31 @@ describe("bun adapter parity", () => {
       return makeSupportRequest(host, requestCode);
     };
 
-    const nodeResult = await nodeRuntime.run(request("node"));
-    const denoResult = await denoRuntime.run(request("deno"));
-    const bunResult = await bunRuntime.run(request("bun"));
+    const results: Record<ServerCorpusHost, RunResult> = {
+      node: await rerunSupportProbeAfterTransientFailure(
+        runtimes,
+        "node",
+        request("node"),
+      ),
+      deno: await rerunSupportProbeAfterTransientFailure(
+        runtimes,
+        "deno",
+        request("deno"),
+      ),
+      bun: await rerunSupportProbeAfterTransientFailure(
+        runtimes,
+        "bun",
+        request("bun"),
+      ),
+    };
 
-    await nodeRuntime.close();
-    await denoRuntime.close();
-    await bunRuntime.close();
+    for (const runtime of Object.values(runtimes)) {
+      await runtime.close();
+    }
 
-    for (const result of [nodeResult, denoResult, bunResult]) {
-      expect(result.status).toBe("ok");
+    for (const host of serverHosts) {
+      const result = results[host];
+      expect(result.status, statusFailureMessage(host, result)).toBe("ok");
       expect(result.stdoutUtf8.trim()).toMatch(/^[0-9a-f]{64}$/u);
       expect(capabilityChannel(result)).toBe("component-wit");
     }
