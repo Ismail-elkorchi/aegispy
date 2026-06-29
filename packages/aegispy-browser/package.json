@@ -16,6 +16,6 @@
   "dependencies": {
     "@aegispy/core": "workspace:*",
     "@aegispy/pack": "workspace:*",
-    "pyodide": "^0.29.4"
+    "pyodide": "^314.0.1"
   }
 }
