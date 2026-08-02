@@ -45,7 +45,7 @@
   "pnpm": {
     "overrides": {
       "flatted": "^3.4.1",
-      "postcss": "^8.5.14",
+      "postcss": "^8.5.25",
       "rollup": "^4.59.0"
     }
   }
